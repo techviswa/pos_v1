@@ -212,7 +212,9 @@ class OutletsService {
         where: { businessId: business.id },
         select: {
           orderId: true,
+          status: true,
           total: true,
+          metadata: true,
           createdAt: true,
         },
       }),
@@ -241,7 +243,12 @@ class OutletsService {
     });
 
     bills.filter(isRevenueBill).forEach((bill) => {
-      const outletId = orderOutletMap.get(bill.orderId);
+      const metadata = bill.metadata && typeof bill.metadata === "object" ? bill.metadata : {};
+      const outletId =
+        orderOutletMap.get(bill.orderId) ||
+        metadata.outlet_id ||
+        metadata.outletId ||
+        null;
       if (!outletId) {
         return;
       }
