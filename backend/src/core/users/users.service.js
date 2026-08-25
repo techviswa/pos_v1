@@ -14,6 +14,7 @@ import {
 } from "../../shared/constants/access.constants.js";
 import { DEFAULT_USER_ROLE } from "../../shared/constants/domain.constants.js";
 import { hashPassword, isPasswordHash } from "../auth/passwords.js";
+import { admincoreChangeSyncService } from "../admincore/admincore-change-sync.service.js";
 
 const getUserInclude = () => ({
   business: true,
@@ -58,7 +59,22 @@ class UsersService {
       include: getUserInclude(),
     });
 
-    return serializeUser(user);
+    const serializedUser = serializeUser(user);
+    await admincoreChangeSyncService.notifyChange({
+      resource: "staff",
+      action: "created",
+      recordId: serializedUser.id,
+      tenantId,
+      businessId: business.id,
+      metadata: {
+        name: serializedUser.name,
+        email: serializedUser.email,
+        role: serializedUser.role,
+        active: serializedUser.active,
+      },
+    });
+
+    return serializedUser;
   }
 
   async createUser({ tenantId, businessId, payload }) {
@@ -89,7 +105,22 @@ class UsersService {
       include: getUserInclude(),
     });
 
-    return serializeUser(user);
+    const serializedUser = serializeUser(user);
+    await admincoreChangeSyncService.notifyChange({
+      resource: "staff",
+      action: "updated",
+      recordId: serializedUser.id,
+      tenantId,
+      businessId: business.id,
+      metadata: {
+        name: serializedUser.name,
+        email: serializedUser.email,
+        role: serializedUser.role,
+        active: serializedUser.active,
+      },
+    });
+
+    return serializedUser;
   }
 
   async updateUser({ tenantId, businessId, userId, payload }) {
@@ -154,7 +185,22 @@ class UsersService {
       where: { id: userId },
     });
 
-    return serializeUser(deletedUser);
+    const serializedUser = serializeUser(deletedUser);
+    await admincoreChangeSyncService.notifyChange({
+      resource: "staff",
+      action: "deleted",
+      recordId: serializedUser.id,
+      tenantId,
+      businessId: business.id,
+      metadata: {
+        name: serializedUser.name,
+        email: serializedUser.email,
+        role: serializedUser.role,
+        active: serializedUser.active,
+      },
+    });
+
+    return serializedUser;
   }
 
   async updateOwnProfile({ tenantId, businessId, userId, payload }) {

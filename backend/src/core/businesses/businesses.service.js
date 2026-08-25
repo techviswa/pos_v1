@@ -1,6 +1,7 @@
 import prisma from "../../database/prisma/client.js";
 import { serializeBusiness } from "../../database/prisma/helpers.js";
 import { createHttpError, createNotFoundError } from "../../shared/utils/http-error.js";
+import { admincoreChangeSyncService } from "../admincore/admincore-change-sync.service.js";
 
 const getBusinessInclude = () => ({
   users: {
@@ -32,7 +33,21 @@ class BusinessesService {
       include: getBusinessInclude(),
     });
 
-    return serializeBusiness(business);
+    const serializedBusiness = serializeBusiness(business);
+    await admincoreChangeSyncService.notifyChange({
+      resource: "businesses",
+      action: "upserted",
+      recordId: serializedBusiness.id,
+      tenantId: serializedBusiness.tenant_id,
+      businessId: serializedBusiness.id,
+      metadata: {
+        name: serializedBusiness.name,
+        status: serializedBusiness.status,
+        plan: serializedBusiness.plan,
+      },
+    });
+
+    return serializedBusiness;
   }
   async listBusinesses({ businessId } = {}) {
     const businesses = await prisma.business.findMany({

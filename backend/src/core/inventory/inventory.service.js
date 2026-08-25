@@ -5,6 +5,7 @@ import {
   toPrismaInventoryPayload,
 } from "../../database/prisma/helpers.js";
 import { getPagination } from "../../shared/utils/pagination.js";
+import { admincoreChangeSyncService } from "../admincore/admincore-change-sync.service.js";
 
 const getInventoryInclude = () => ({
   business: true,
@@ -35,7 +36,21 @@ class InventoryService {
       include: getInventoryInclude(),
     });
 
-    return serializeInventoryItem(item);
+    const serializedItem = serializeInventoryItem(item);
+    await admincoreChangeSyncService.notifyChange({
+      resource: "inventory",
+      action: "created",
+      recordId: serializedItem.id,
+      tenantId,
+      businessId: business.id,
+      metadata: {
+        name: serializedItem.name,
+        stock: serializedItem.stock,
+        unit: serializedItem.unit,
+      },
+    });
+
+    return serializedItem;
   }
 
   async createItem({ tenantId, payload }) {
@@ -48,7 +63,21 @@ class InventoryService {
       include: getInventoryInclude(),
     });
 
-    return serializeInventoryItem(item);
+    const serializedItem = serializeInventoryItem(item);
+    await admincoreChangeSyncService.notifyChange({
+      resource: "inventory",
+      action: "updated",
+      recordId: serializedItem.id,
+      tenantId,
+      businessId: business.id,
+      metadata: {
+        name: serializedItem.name,
+        stock: serializedItem.stock,
+        unit: serializedItem.unit,
+      },
+    });
+
+    return serializedItem;
   }
 
   async updateItem({ tenantId, itemId, payload }) {
@@ -96,7 +125,21 @@ class InventoryService {
       where: { id: itemId },
     });
 
-    return serializeInventoryItem(item);
+    const serializedItem = serializeInventoryItem(item);
+    await admincoreChangeSyncService.notifyChange({
+      resource: "inventory",
+      action: "deleted",
+      recordId: serializedItem.id,
+      tenantId,
+      businessId: business.id,
+      metadata: {
+        name: serializedItem.name,
+        stock: serializedItem.stock,
+        unit: serializedItem.unit,
+      },
+    });
+
+    return serializedItem;
   }
 }
 

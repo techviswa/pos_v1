@@ -7,6 +7,7 @@ import {
 import { orderFulfillmentService } from "../../services/workflows/order-fulfillment.service.js";
 import { DEFAULT_CUSTOMER_NAME, DEFAULT_ORDER_CHANNEL } from "../../shared/constants/domain.constants.js";
 import { getPagination } from "../../shared/utils/pagination.js";
+import { admincoreChangeSyncService } from "../admincore/admincore-change-sync.service.js";
 
 const getOrderInclude = () => ({
   business: true,
@@ -70,7 +71,22 @@ class OrdersService {
       return order;
     });
 
-    return serializeOrder(createdOrder);
+    const serializedOrder = serializeOrder(createdOrder);
+    await admincoreChangeSyncService.notifyChange({
+      resource: "orders",
+      action: "created",
+      recordId: serializedOrder.id,
+      tenantId,
+      businessId: business.id,
+      outletId: serializedOrder.outlet_id,
+      metadata: {
+        total: serializedOrder.total,
+        status: serializedOrder.status,
+        channel: serializedOrder.channel,
+      },
+    });
+
+    return serializedOrder;
   }
 
   async updateOrder({ tenantId, orderId, payload }) {
@@ -115,7 +131,22 @@ class OrdersService {
       include: getOrderInclude(),
     });
 
-    return serializeOrder(order);
+    const serializedOrder = serializeOrder(order);
+    await admincoreChangeSyncService.notifyChange({
+      resource: "orders",
+      action: "updated",
+      recordId: serializedOrder.id,
+      tenantId,
+      businessId: business.id,
+      outletId: serializedOrder.outlet_id,
+      metadata: {
+        total: serializedOrder.total,
+        status: serializedOrder.status,
+        channel: serializedOrder.channel,
+      },
+    });
+
+    return serializedOrder;
   }
 
   async deleteOrder({ tenantId, orderId }) {
@@ -132,7 +163,22 @@ class OrdersService {
       where: { id: orderId },
     });
 
-    return serializeOrder(order);
+    const serializedOrder = serializeOrder(order);
+    await admincoreChangeSyncService.notifyChange({
+      resource: "orders",
+      action: "deleted",
+      recordId: serializedOrder.id,
+      tenantId,
+      businessId: business.id,
+      outletId: serializedOrder.outlet_id,
+      metadata: {
+        total: serializedOrder.total,
+        status: serializedOrder.status,
+        channel: serializedOrder.channel,
+      },
+    });
+
+    return serializedOrder;
   }
 }
 

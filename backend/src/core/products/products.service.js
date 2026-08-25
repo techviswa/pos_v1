@@ -10,6 +10,7 @@ import {
   DEFAULT_PRODUCT_DIETARY_TYPE,
 } from "../../shared/constants/domain.constants.js";
 import { getPagination } from "../../shared/utils/pagination.js";
+import { admincoreChangeSyncService } from "../admincore/admincore-change-sync.service.js";
 
 const getProductInclude = (outletId = null) => ({
   business: true,
@@ -73,7 +74,21 @@ class ProductsService {
       include: getProductInclude(),
     });
 
-    return serializeProduct(product);
+    const serializedProduct = serializeProduct(product);
+    await admincoreChangeSyncService.notifyChange({
+      resource: "products",
+      action: "created",
+      recordId: serializedProduct.id,
+      tenantId,
+      businessId: business.id,
+      metadata: {
+        name: serializedProduct.name,
+        price: serializedProduct.price,
+        active: serializedProduct.active,
+      },
+    });
+
+    return serializedProduct;
   }
 
   async createProduct({ tenantId, payload }) {
@@ -104,7 +119,21 @@ class ProductsService {
       include: getProductInclude(),
     });
 
-    return serializeProduct(product);
+    const serializedProduct = serializeProduct(product);
+    await admincoreChangeSyncService.notifyChange({
+      resource: "products",
+      action: "updated",
+      recordId: serializedProduct.id,
+      tenantId,
+      businessId: business.id,
+      metadata: {
+        name: serializedProduct.name,
+        price: serializedProduct.price,
+        active: serializedProduct.active,
+      },
+    });
+
+    return serializedProduct;
   }
 
   async updateProduct({ tenantId, productId, payload }) {
@@ -148,7 +177,21 @@ class ProductsService {
       include: getProductInclude(),
     });
 
-    return serializeProduct(product);
+    const serializedProduct = serializeProduct(product);
+    await admincoreChangeSyncService.notifyChange({
+      resource: "products",
+      action: "deleted",
+      recordId: serializedProduct.id,
+      tenantId,
+      businessId: business.id,
+      metadata: {
+        name: serializedProduct.name,
+        price: serializedProduct.price,
+        active: serializedProduct.active,
+      },
+    });
+
+    return serializedProduct;
   }
 
   async deleteProduct({ tenantId, productId }) {

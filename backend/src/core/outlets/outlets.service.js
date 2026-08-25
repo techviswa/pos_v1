@@ -16,6 +16,7 @@ import {
   isRevenueBill,
   toAnalyticsNumber,
 } from "../billing/bill-analytics.utils.js";
+import { admincoreChangeSyncService } from "../admincore/admincore-change-sync.service.js";
 
 const DEFAULT_OUTLET_NAME = "Main Outlet";
 const DEFAULT_OUTLET_CODE = "MAIN";
@@ -460,10 +461,25 @@ class OutletsService {
       skipDuplicates: true,
     });
 
-    return this.getOutletById({
+    const outlet = await this.getOutletById({
       tenantId,
       outletId: createdOutlet.id,
     });
+    await admincoreChangeSyncService.notifyChange({
+      resource: "outlets",
+      action: "created",
+      recordId: outlet.id,
+      tenantId,
+      businessId: business.id,
+      outletId: outlet.id,
+      metadata: {
+        name: outlet.name,
+        code: outlet.code,
+        status: outlet.status,
+      },
+    });
+
+    return outlet;
   }
 
   async updateOutlet({ tenantId, outletId, payload }) {
@@ -485,7 +501,22 @@ class OutletsService {
       await syncOutletAssignments(outletId, payload.assigned_user_ids || []);
     }
 
-    return this.getOutletById({ tenantId, outletId });
+    const outletResult = await this.getOutletById({ tenantId, outletId });
+    await admincoreChangeSyncService.notifyChange({
+      resource: "outlets",
+      action: "updated",
+      recordId: outletResult.id,
+      tenantId,
+      businessId: outlet.businessId,
+      outletId: outletResult.id,
+      metadata: {
+        name: outletResult.name,
+        code: outletResult.code,
+        status: outletResult.status,
+      },
+    });
+
+    return outletResult;
   }
 
   async deleteOutlet({ tenantId, outletId }) {
@@ -511,7 +542,20 @@ class OutletsService {
       validUserIds.map((user) => user.id),
     );
 
-    return this.listOutletStaff({ tenantId, outletId });
+    const staff = await this.listOutletStaff({ tenantId, outletId });
+    await admincoreChangeSyncService.notifyChange({
+      resource: "outlets",
+      action: "staff_assigned",
+      recordId: outletId,
+      tenantId,
+      businessId: business.id,
+      outletId,
+      metadata: {
+        assigned_user_count: staff.length,
+      },
+    });
+
+    return staff;
   }
 
   async listOutletStaff({ tenantId, outletId }) {
@@ -565,7 +609,20 @@ class OutletsService {
       });
     }
 
-    return this.listOutletProducts({ tenantId, outletId });
+    const products = await this.listOutletProducts({ tenantId, outletId });
+    await admincoreChangeSyncService.notifyChange({
+      resource: "outlets",
+      action: "products_updated",
+      recordId: outletId,
+      tenantId,
+      businessId: business.id,
+      outletId,
+      metadata: {
+        product_count: products.length,
+      },
+    });
+
+    return products;
   }
 
   async listOutletProducts({ tenantId, outletId }) {
@@ -643,7 +700,20 @@ class OutletsService {
       });
     }
 
-    return this.listOutletInventory({ tenantId, outletId });
+    const inventory = await this.listOutletInventory({ tenantId, outletId });
+    await admincoreChangeSyncService.notifyChange({
+      resource: "outlets",
+      action: "inventory_updated",
+      recordId: outletId,
+      tenantId,
+      businessId: business.id,
+      outletId,
+      metadata: {
+        inventory_line_count: inventory.length,
+      },
+    });
+
+    return inventory;
   }
 
   async listOutletInventory({ tenantId, outletId }) {
@@ -678,7 +748,7 @@ class OutletsService {
   }
 
   async updateOutletFeatures({ tenantId, outletId, items = [] }) {
-    await this.getOutletRecord({ tenantId, outletId });
+    const { outlet } = await this.getOutletRecord({ tenantId, outletId });
 
     for (const item of items || []) {
       const featureKey = item.feature_key || item.featureKey;
@@ -704,7 +774,20 @@ class OutletsService {
       });
     }
 
-    return this.listOutletFeatures({ tenantId, outletId });
+    const features = await this.listOutletFeatures({ tenantId, outletId });
+    await admincoreChangeSyncService.notifyChange({
+      resource: "outlets",
+      action: "features_updated",
+      recordId: outletId,
+      tenantId,
+      businessId: outlet.businessId,
+      outletId,
+      metadata: {
+        feature_count: features.length,
+      },
+    });
+
+    return features;
   }
 
   async listOutletFeatures({ tenantId, outletId }) {

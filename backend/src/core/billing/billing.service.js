@@ -18,6 +18,7 @@ import {
 import { orderFulfillmentService } from "../../services/workflows/order-fulfillment.service.js";
 import { DEFAULT_BILLING_CURRENCY, DEFAULT_CUSTOMER_NAME } from "../../shared/constants/domain.constants.js";
 import { getPagination } from "../../shared/utils/pagination.js";
+import { admincoreChangeSyncService } from "../admincore/admincore-change-sync.service.js";
 
 const getBillInclude = () => ({
   business: true,
@@ -203,7 +204,22 @@ class BillingService {
       return bill;
     });
 
-    return serializeBill(createdBill);
+    const serializedBill = serializeBill(createdBill);
+    await admincoreChangeSyncService.notifyChange({
+      resource: "bills",
+      action: "created",
+      recordId: serializedBill.id,
+      tenantId,
+      businessId: business.id,
+      outletId: serializedBill.outlet_id,
+      metadata: {
+        total: serializedBill.total,
+        status: serializedBill.status,
+        invoice_number: serializedBill.invoice_number,
+      },
+    });
+
+    return serializedBill;
   }
 
   async updateInvoice({ tenantId, invoiceId, payload }) {
@@ -269,7 +285,22 @@ class BillingService {
       include: getBillInclude(),
     });
 
-    return serializeBill(bill);
+    const serializedBill = serializeBill(bill);
+    await admincoreChangeSyncService.notifyChange({
+      resource: "bills",
+      action: "updated",
+      recordId: serializedBill.id,
+      tenantId,
+      businessId: business.id,
+      outletId: serializedBill.outlet_id,
+      metadata: {
+        total: serializedBill.total,
+        status: serializedBill.status,
+        invoice_number: serializedBill.invoice_number,
+      },
+    });
+
+    return serializedBill;
   }
 
   getCurrentShift({ businessId, outletId = null, openedBy = null, openedByName = null }) {
@@ -538,7 +569,22 @@ class BillingService {
       where: { id: invoiceId },
     });
 
-    return serializeBill(bill);
+    const serializedBill = serializeBill(bill);
+    await admincoreChangeSyncService.notifyChange({
+      resource: "bills",
+      action: "deleted",
+      recordId: serializedBill.id,
+      tenantId,
+      businessId: business.id,
+      outletId: serializedBill.outlet_id,
+      metadata: {
+        total: serializedBill.total,
+        status: serializedBill.status,
+        invoice_number: serializedBill.invoice_number,
+      },
+    });
+
+    return serializedBill;
   }
 
   async getBillingSummary({ tenantId }) {

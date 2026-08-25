@@ -66,6 +66,7 @@ export const env = {
     apiBaseUrl: process.env.ADMINCORE_API_BASE_URL || "",
     apiKey: process.env.ADMINCORE_API_KEY || "",
     posBaseUrl: process.env.POS_BASE_URL || `http://localhost:${backendPort}`,
+    syncWebhookUrl: process.env.ADMINCORE_SYNC_WEBHOOK_URL || "",
   },
   qrOrdering: {
     publicBaseUrl:

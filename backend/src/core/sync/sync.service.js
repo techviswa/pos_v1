@@ -9,13 +9,17 @@ import { usersService } from "../users/users.service.js";
 import { inventoryService } from "../inventory/inventory.service.js";
 import { tableManagementService } from "../../features/sales-extensions/table-management/table-management.service.js";
 import { createHttpError } from "../../shared/utils/http-error.js";
+import {
+  listAdminCoreSyncLogs,
+  normalizeAdminCoreSyncResource,
+  recordAdminCoreSyncLog,
+} from "./admincore-sync-log.repository.js";
 import { createSyncEnvelope } from "./sync-contract.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const dataDirectory = path.resolve(__dirname, "../../../data");
 const eventsPath = path.join(dataDirectory, "offline-sync-events.json");
-const admincoreLogsPath = path.join(dataDirectory, "admincore-sync-logs.json");
 
 const nowIso = () => new Date().toISOString();
 
@@ -28,31 +32,13 @@ const readEvents = async () => {
   }
 };
 
-const readAdminCoreLogs = async () => {
-  try {
-    const raw = await readFile(admincoreLogsPath, "utf8");
-    return JSON.parse(raw);
-  } catch {
-    return [];
-  }
-};
-
 const writeEvents = async (events) => {
   await mkdir(dataDirectory, { recursive: true });
   await writeFile(eventsPath, JSON.stringify(events, null, 2), "utf8");
 };
 
-const writeAdminCoreLogs = async (logs) => {
-  await mkdir(dataDirectory, { recursive: true });
-  await writeFile(admincoreLogsPath, JSON.stringify(logs, null, 2), "utf8");
-};
-
 const normalizeResource = (resource) => {
-  const normalized = String(resource || "").trim().toLowerCase();
-  if (["users", "user", "staffs"].includes(normalized)) return "staff";
-  if (["table", "table-management", "dining-tables"].includes(normalized)) return "tables";
-  if (["reservation", "table-reservations", "reservations"].includes(normalized)) return "reservations";
-  return normalized;
+  return normalizeAdminCoreSyncResource(resource);
 };
 
 const normalizeExportData = (resource, data) => {
@@ -120,33 +106,11 @@ class SyncService {
   }
 
   async listAdminCoreLogs({ tenantId, resource, status } = {}) {
-    const logs = await readAdminCoreLogs();
-    return logs
-      .filter((log) => !tenantId || log.tenant_id === tenantId)
-      .filter((log) => !resource || log.resource === normalizeResource(resource))
-      .filter((log) => !status || log.status === status)
-      .sort((a, b) => String(b.synced_at).localeCompare(String(a.synced_at)));
+    return listAdminCoreSyncLogs({ tenantId, resource, status });
   }
 
   async recordAdminCoreLog(payload = {}) {
-    const logs = await readAdminCoreLogs();
-    const log = {
-      id: payload.id || `admincore_sync_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
-      tenant_id: payload.tenant_id || payload.tenantId || null,
-      business_id: payload.business_id || payload.businessId || null,
-      outlet_id: payload.outlet_id || payload.outletId || null,
-      resource: normalizeResource(payload.resource || "unknown"),
-      direction: payload.direction || "pos_to_admincore",
-      status: payload.status || "success",
-      synced_count: Number(payload.synced_count || 0),
-      error_count: Number(payload.error_count || 0),
-      message: payload.message || "",
-      synced_at: payload.synced_at || new Date().toISOString(),
-    };
-
-    logs.push(log);
-    await writeAdminCoreLogs(logs.slice(-1000));
-    return log;
+    return recordAdminCoreSyncLog(payload);
   }
 
   async exportResource({ resource, tenantId, businessId, query = {} }) {

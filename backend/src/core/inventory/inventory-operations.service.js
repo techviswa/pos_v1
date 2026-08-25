@@ -6,6 +6,7 @@ import {
   serializePurchaseOrder,
 } from "../../database/prisma/helpers.js";
 import { createHttpError } from "../../shared/utils/http-error.js";
+import { admincoreChangeSyncService } from "../admincore/admincore-change-sync.service.js";
 
 const toNumber = (value, fallback = 0) => {
   const parsed = Number(value);
@@ -173,6 +174,18 @@ class InventoryOperationsService {
       return { purchaseOrder, receivedItems };
     });
 
+    await admincoreChangeSyncService.notifyChange({
+      resource: "inventory",
+      action: "purchase_received",
+      recordId: result.purchaseOrder.id,
+      tenantId,
+      businessId: business.id,
+      outletId: result.purchaseOrder.outletId,
+      metadata: {
+        received_item_count: result.receivedItems.length,
+      },
+    });
+
     return {
       record: serializePurchaseOrder(result.purchaseOrder, tenantId),
       received_items: result.receivedItems,
@@ -213,6 +226,19 @@ class InventoryOperationsService {
       },
     });
 
+    await admincoreChangeSyncService.notifyChange({
+      resource: "inventory",
+      action: "vendor_bill_created",
+      recordId: vendorBill.id,
+      tenantId,
+      businessId: business.id,
+      outletId,
+      metadata: {
+        total_amount: totalAmount,
+        vendor_name: payload.vendor_name || null,
+      },
+    });
+
     return {
       ...serializePurchaseOrder(vendorBill, tenantId),
       vendor_name: payload.vendor_name || null,
@@ -236,6 +262,19 @@ class InventoryOperationsService {
       quantity: -quantity,
       reason: payload.reason || `Recorded by ${user?.name || "system"}`,
       expiryDate: payload.expiry_date || null,
+    });
+
+    await admincoreChangeSyncService.notifyChange({
+      resource: "inventory",
+      action: "wastage_recorded",
+      recordId: item.id,
+      tenantId,
+      businessId: business.id,
+      metadata: {
+        movement_id: result.movement.id,
+        quantity,
+        type,
+      },
     });
 
     return {
@@ -268,6 +307,18 @@ class InventoryOperationsService {
           ...item,
           requested_quantity: toNumber(item.requested_quantity ?? item.quantity, 0),
         })),
+      },
+    });
+
+    await admincoreChangeSyncService.notifyChange({
+      resource: "inventory",
+      action: "transfer_requested",
+      recordId: allocation.id,
+      tenantId,
+      businessId: business.id,
+      outletId: destinationOutletId,
+      metadata: {
+        status: allocation.status,
       },
     });
 
@@ -312,7 +363,20 @@ class InventoryOperationsService {
       });
     });
 
-    return serializeAllocation(approved, tenantId);
+    const serializedAllocation = serializeAllocation(approved, tenantId);
+    await admincoreChangeSyncService.notifyChange({
+      resource: "inventory",
+      action: "transfer_approved",
+      recordId: serializedAllocation.id,
+      tenantId,
+      businessId: business.id,
+      outletId: serializedAllocation.outlet_id,
+      metadata: {
+        status: serializedAllocation.status,
+      },
+    });
+
+    return serializedAllocation;
   }
 
   async receiveTransfer({ tenantId, allocationId, user }) {
@@ -372,7 +436,20 @@ class InventoryOperationsService {
       });
     });
 
-    return serializeAllocation(received, tenantId);
+    const serializedAllocation = serializeAllocation(received, tenantId);
+    await admincoreChangeSyncService.notifyChange({
+      resource: "inventory",
+      action: "transfer_received",
+      recordId: serializedAllocation.id,
+      tenantId,
+      businessId: business.id,
+      outletId: serializedAllocation.outlet_id,
+      metadata: {
+        status: serializedAllocation.status,
+      },
+    });
+
+    return serializedAllocation;
   }
 
   async createStockAudit({ tenantId, payload, user }) {
@@ -436,6 +513,18 @@ class InventoryOperationsService {
       });
 
       return { record, adjustments };
+    });
+
+    await admincoreChangeSyncService.notifyChange({
+      resource: "inventory",
+      action: "stock_audit_completed",
+      recordId: audit.record.id,
+      tenantId,
+      businessId: business.id,
+      outletId: audit.record.outletId,
+      metadata: {
+        adjustment_count: audit.adjustments.length,
+      },
     });
 
     return {

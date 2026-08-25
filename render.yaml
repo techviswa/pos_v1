@@ -40,3 +40,5 @@ services:
         sync: false
       - key: ADMINCORE_API_KEY
         sync: false
+      - key: ADMINCORE_SYNC_WEBHOOK_URL
+        sync: false

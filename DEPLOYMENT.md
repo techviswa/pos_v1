@@ -20,9 +20,11 @@ QR_PUBLIC_BASE_URL=https://YOUR-VERCEL-FRONTEND.vercel.app
 ADMINCORE_ENABLED=false
 ADMINCORE_API_BASE_URL=
 ADMINCORE_API_KEY=
+ADMINCORE_SYNC_WEBHOOK_URL=
 ```
 
 Keep `ADMINCORE_ENABLED=false` for a public demo unless your AdminCore backend is also deployed and reachable.
+When AdminCore is live, set `ADMINCORE_ENABLED=true`, point `ADMINCORE_API_BASE_URL` to AdminCore, and optionally set `ADMINCORE_SYNC_WEBHOOK_URL` to AdminCore's POS bridge receiver. If the webhook URL is blank, the POS backend uses `/api/pos-bridge/sync-status` on the AdminCore base URL.
 
 Backend health URL:
 

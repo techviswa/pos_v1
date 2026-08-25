@@ -2,6 +2,7 @@ import { tableManagementRepository } from "./table-management.repository.js";
 import { tableManagementValidation } from "./table-management.validation.js";
 import { createHttpError, createNotFoundError } from "../../../shared/utils/http-error.js";
 import { randomBytes } from "node:crypto";
+import { admincoreChangeSyncService } from "../../../core/admincore/admincore-change-sync.service.js";
 
 const CORE_STATUSES = new Set(["available", "reserved", "occupied"]);
 const ACTIVE_RESERVATION_STATUSES = new Set(["reserved", "occupied"]);
@@ -286,7 +287,20 @@ class TableManagementService {
       },
     });
 
-    return this.serializeTable(created, business.tenantId);
+    const serializedTable = this.serializeTable(created, business.tenantId);
+    await admincoreChangeSyncService.notifyChange({
+      resource: "tables",
+      action: "created",
+      recordId: serializedTable.id,
+      tenantId: business.tenantId,
+      businessId: business.id,
+      metadata: {
+        name: serializedTable.name,
+        status: serializedTable.status,
+      },
+    });
+
+    return serializedTable;
   }
 
   async updateTable({ tenantId, businessId, tableId, payload }) {
@@ -315,7 +329,20 @@ class TableManagementService {
       tableId,
     });
 
-    return this.serializeTable(attachQrCode(updated, qrCode), business.tenantId);
+    const serializedTable = this.serializeTable(attachQrCode(updated, qrCode), business.tenantId);
+    await admincoreChangeSyncService.notifyChange({
+      resource: "tables",
+      action: "updated",
+      recordId: serializedTable.id,
+      tenantId: business.tenantId,
+      businessId: business.id,
+      metadata: {
+        name: serializedTable.name,
+        status: serializedTable.status,
+      },
+    });
+
+    return serializedTable;
   }
 
   async upsertTableQrCode({ tenantId, businessId, tableId, rotate = false, active = true }) {
@@ -338,7 +365,7 @@ class TableManagementService {
       rotatedAt: shouldRotate && existingToken ? new Date() : existingQrCode?.rotatedAt || null,
     });
 
-    return {
+    const serializedQrCode = {
       id: qrCode.id,
       business_id: qrCode.businessId,
       table_id: qrCode.tableId,
@@ -351,6 +378,20 @@ class TableManagementService {
       created_at: qrCode.createdAt ? qrCode.createdAt.toISOString() : null,
       rotated_at: qrCode.rotatedAt ? qrCode.rotatedAt.toISOString() : null,
     };
+    await admincoreChangeSyncService.notifyChange({
+      resource: "tables",
+      action: shouldRotate ? "qr_rotated" : "qr_updated",
+      recordId: tableId,
+      tenantId: business.tenantId,
+      businessId: business.id,
+      metadata: {
+        qr_code_id: serializedQrCode.id,
+        active: serializedQrCode.active,
+        scan_count: serializedQrCode.scan_count,
+      },
+    });
+
+    return serializedQrCode;
   }
 
   async deleteTable({ tenantId, businessId, tableId }) {
@@ -367,7 +408,20 @@ class TableManagementService {
     }
 
     const deleted = await tableManagementRepository.deleteTable({ tableId });
-    return this.serializeTable(deleted, business.tenantId);
+    const serializedTable = this.serializeTable(deleted, business.tenantId);
+    await admincoreChangeSyncService.notifyChange({
+      resource: "tables",
+      action: "deleted",
+      recordId: serializedTable.id,
+      tenantId: business.tenantId,
+      businessId: business.id,
+      metadata: {
+        name: serializedTable.name,
+        status: serializedTable.status,
+      },
+    });
+
+    return serializedTable;
   }
 
   async listAreas({ tenantId, businessId }) {
@@ -390,7 +444,19 @@ class TableManagementService {
       },
     });
 
-    return this.serializeArea(created);
+    const serializedArea = this.serializeArea(created);
+    await admincoreChangeSyncService.notifyChange({
+      resource: "tables",
+      action: "area_created",
+      recordId: serializedArea.id,
+      tenantId: business.tenantId,
+      businessId: business.id,
+      metadata: {
+        name: serializedArea.name,
+      },
+    });
+
+    return serializedArea;
   }
 
   async updateArea({ tenantId, businessId, areaId, payload }) {
@@ -410,7 +476,19 @@ class TableManagementService {
       },
     });
 
-    return this.serializeArea(updated);
+    const serializedArea = this.serializeArea(updated);
+    await admincoreChangeSyncService.notifyChange({
+      resource: "tables",
+      action: "area_updated",
+      recordId: serializedArea.id,
+      tenantId: business.tenantId,
+      businessId: business.id,
+      metadata: {
+        name: serializedArea.name,
+      },
+    });
+
+    return serializedArea;
   }
 
   async deleteArea({ tenantId, businessId, areaId }) {
@@ -418,7 +496,19 @@ class TableManagementService {
     const existing = await tableManagementRepository.getAreaById({ businessId: business.id, areaId });
     if (!existing) throw createNotFoundError("Area", { areaId });
     await tableManagementRepository.deleteArea({ areaId });
-    return this.serializeArea(existing);
+    const serializedArea = this.serializeArea(existing);
+    await admincoreChangeSyncService.notifyChange({
+      resource: "tables",
+      action: "area_deleted",
+      recordId: serializedArea.id,
+      tenantId: business.tenantId,
+      businessId: business.id,
+      metadata: {
+        name: serializedArea.name,
+      },
+    });
+
+    return serializedArea;
   }
 
   async getSettings({ tenantId, businessId }) {
@@ -433,7 +523,19 @@ class TableManagementService {
       businessId: business.id,
       data: tableManagementValidation.validateSettingsPayload(payload),
     });
-    return { business_id: business.id, ...this.serializeSettings(updated) };
+    const settings = { business_id: business.id, ...this.serializeSettings(updated) };
+    await admincoreChangeSyncService.notifyChange({
+      resource: "tables",
+      action: "settings_updated",
+      recordId: business.id,
+      tenantId: business.tenantId,
+      businessId: business.id,
+      metadata: {
+        capabilities: settings.capabilities,
+      },
+    });
+
+    return settings;
   }
 
   async listReservations({ tenantId, businessId, includeHistory = false }) {
@@ -513,7 +615,21 @@ class TableManagementService {
       return reservation;
     });
 
-    return this.serializeReservation(created, business.tenantId);
+    const serializedReservation = this.serializeReservation(created, business.tenantId);
+    await admincoreChangeSyncService.notifyChange({
+      resource: "reservations",
+      action: "created",
+      recordId: serializedReservation.id,
+      tenantId: business.tenantId,
+      businessId: business.id,
+      metadata: {
+        table_id: serializedReservation.table_id,
+        status: serializedReservation.status,
+        customer_name: serializedReservation.customer_name,
+      },
+    });
+
+    return serializedReservation;
   }
 
   async confirmReservation({ tenantId, businessId, reservationId }) {
@@ -538,7 +654,20 @@ class TableManagementService {
       return nextReservation;
     });
 
-    return this.serializeReservation(updated, business.tenantId);
+    const serializedReservation = this.serializeReservation(updated, business.tenantId);
+    await admincoreChangeSyncService.notifyChange({
+      resource: "reservations",
+      action: "confirmed",
+      recordId: serializedReservation.id,
+      tenantId: business.tenantId,
+      businessId: business.id,
+      metadata: {
+        table_id: serializedReservation.table_id,
+        status: serializedReservation.status,
+      },
+    });
+
+    return serializedReservation;
   }
 
   async undoReservation({ tenantId, businessId, reservationId }) {
@@ -558,7 +687,20 @@ class TableManagementService {
       return nextReservation;
     });
 
-    return this.serializeReservation(updated, business.tenantId);
+    const serializedReservation = this.serializeReservation(updated, business.tenantId);
+    await admincoreChangeSyncService.notifyChange({
+      resource: "reservations",
+      action: "released",
+      recordId: serializedReservation.id,
+      tenantId: business.tenantId,
+      businessId: business.id,
+      metadata: {
+        table_id: serializedReservation.table_id,
+        status: serializedReservation.status,
+      },
+    });
+
+    return serializedReservation;
   }
 
   async updateReservationStatus({ tenantId, businessId, reservationId, status }) {
@@ -586,7 +728,20 @@ class TableManagementService {
       return nextReservation;
     });
 
-    return this.serializeReservation(updated, business.tenantId);
+    const serializedReservation = this.serializeReservation(updated, business.tenantId);
+    await admincoreChangeSyncService.notifyChange({
+      resource: "reservations",
+      action: "status_updated",
+      recordId: serializedReservation.id,
+      tenantId: business.tenantId,
+      businessId: business.id,
+      metadata: {
+        table_id: serializedReservation.table_id,
+        status: serializedReservation.status,
+      },
+    });
+
+    return serializedReservation;
   }
 
   async deleteReservation({ tenantId, businessId, reservationId }) {
@@ -599,7 +754,20 @@ class TableManagementService {
     }
 
     const deleted = await tableManagementRepository.deleteReservation({ reservationId });
-    return this.serializeReservation(deleted, business.tenantId);
+    const serializedReservation = this.serializeReservation(deleted, business.tenantId);
+    await admincoreChangeSyncService.notifyChange({
+      resource: "reservations",
+      action: "deleted",
+      recordId: serializedReservation.id,
+      tenantId: business.tenantId,
+      businessId: business.id,
+      metadata: {
+        table_id: serializedReservation.table_id,
+        status: serializedReservation.status,
+      },
+    });
+
+    return serializedReservation;
   }
 
   async listLegacyReservations({ tenantId, businessId, includeHistory = false }) {
