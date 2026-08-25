@@ -14,9 +14,23 @@ jobs:
   backend:
     name: Backend checks
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: pos_ci
+          POSTGRES_PASSWORD: pos_ci_password
+          POSTGRES_DB: pos_ci
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U pos_ci -d pos_ci"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
     env:
       NODE_ENV: test
-      DATABASE_URL: file:./dev.db
+      DATABASE_URL: postgresql://pos_ci:pos_ci_password@localhost:5432/pos_ci?schema=public
       JWT_SECRET: github-actions-test-secret
       SESSION_SECRET: github-actions-session-secret
       ADMINCORE_ENABLED: "false"
