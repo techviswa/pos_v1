@@ -8,6 +8,38 @@ const ACTIVE_OUTLET_STORAGE_KEY = "cashflow-lite-active-outlet";
 
 const ActiveOutletContext = createContext(null);
 
+const unwrapApiPayload = (payload) => {
+  if (
+    payload &&
+    typeof payload === "object" &&
+    !Array.isArray(payload) &&
+    Object.prototype.hasOwnProperty.call(payload, "success") &&
+    Object.prototype.hasOwnProperty.call(payload, "data")
+  ) {
+    return payload.data;
+  }
+
+  return payload;
+};
+
+const toArrayPayload = (payload) => {
+  const unwrapped = unwrapApiPayload(payload);
+
+  if (Array.isArray(unwrapped)) {
+    return unwrapped;
+  }
+
+  if (Array.isArray(unwrapped?.items)) {
+    return unwrapped.items;
+  }
+
+  if (Array.isArray(unwrapped?.data)) {
+    return unwrapped.data;
+  }
+
+  return [];
+};
+
 const getOutletStorageKey = (user) => {
   const businessKey = user?.business_id || user?.businessId || user?.tenantId || "guest";
   return `${ACTIVE_OUTLET_STORAGE_KEY}:${businessKey}`;
@@ -60,7 +92,7 @@ export const ActiveOutletProvider = ({ children }) => {
           withCredentials: true,
         });
         if (!cancelled) {
-          setOutlets(response.data || []);
+          setOutlets(toArrayPayload(response.data));
         }
       } catch {
         if (!cancelled) {
@@ -85,13 +117,14 @@ export const ActiveOutletProvider = ({ children }) => {
       return [];
     }
 
-    const assignedOutletIds = user.assigned_outlet_ids || [];
+    const outletList = Array.isArray(outlets) ? outlets : [];
+    const assignedOutletIds = Array.isArray(user.assigned_outlet_ids) ? user.assigned_outlet_ids : [];
     if (user.role === "Owner" || user.role === "Manager" || !assignedOutletIds.length) {
-      return outlets;
+      return outletList;
     }
 
     const allowedOutletIds = new Set(assignedOutletIds);
-    return outlets.filter((outlet) => allowedOutletIds.has(outlet.id));
+    return outletList.filter((outlet) => allowedOutletIds.has(outlet.id));
   }, [outlets, user]);
 
   useEffect(() => {
@@ -122,8 +155,9 @@ export const ActiveOutletProvider = ({ children }) => {
     persistOutletId(user, normalizedOutletId);
   }, [user]);
 
+  const selectedOutletList = Array.isArray(availableOutlets) ? availableOutlets : [];
   const selectedOutlet =
-    availableOutlets.find((outlet) => outlet.id === selectedOutletId) || null;
+    selectedOutletList.find((outlet) => outlet.id === selectedOutletId) || null;
 
   const value = useMemo(
     () => ({
