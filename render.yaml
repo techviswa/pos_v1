@@ -1,0 +1,42 @@
+services:
+  - type: web
+    name: cashflow-lite-pos-backend
+    runtime: node
+    rootDir: backend
+    plan: free
+    buildCommand: npm ci && npm run prisma:generate && npm run prisma:deploy && npm run prisma:seed
+    startCommand: npm start
+    healthCheckPath: /health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: APP_NAME
+        value: CashFlow Lite POS
+      - key: PORT
+        value: 10000
+      - key: DATABASE_PROVIDER
+        value: sqlite
+      - key: DATABASE_URL
+        value: file:./dev.db
+      - key: DEFAULT_TENANT_ID
+        value: demo-tenant
+      - key: DEFAULT_BUSINESS_ID
+        value: demo-business
+      - key: ADMIN_EMAIL
+        value: owner@pos.com
+      - key: ADMIN_PASSWORD
+        sync: false
+      - key: JWT_SECRET
+        generateValue: true
+      - key: CORS_ORIGINS
+        sync: false
+      - key: POS_BASE_URL
+        sync: false
+      - key: QR_PUBLIC_BASE_URL
+        sync: false
+      - key: ADMINCORE_ENABLED
+        value: false
+      - key: ADMINCORE_API_BASE_URL
+        sync: false
+      - key: ADMINCORE_API_KEY
+        sync: false
