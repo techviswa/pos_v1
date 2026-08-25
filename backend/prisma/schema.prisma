@@ -1,0 +1,532 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model Business {
+  id             String          @id @default(cuid())
+  name           String
+  tenantId       String          @unique
+  users          User[]
+  outlets        Outlet[]
+  products       Product[]
+  orders         Order[]
+  bills          Bill[]
+  inventoryItems InventoryItem[]
+  purchaseOrders PurchaseOrder[]
+  allocations    Allocation[]
+  routePlans     RoutePlan[]
+  kitchenTickets KitchenTicket[]
+  batches        Batch[]
+  tableManagementSettings TableManagementSettings?
+  diningAreas    DiningArea[]
+  diningTables   DiningTable[]
+  tableQrCodes    TableQrCode[]
+  tableReservations TableReservation[]
+  feedback       Feedback[]
+  featureToggles FeatureToggle[]
+  createdAt      DateTime        @default(now())
+  updatedAt      DateTime        @updatedAt
+}
+
+model Role {
+  id          String           @id @default(cuid())
+  name        String           @unique
+  users       User[]
+  permissions RolePermission[]
+  createdAt   DateTime         @default(now())
+  updatedAt   DateTime         @updatedAt
+}
+
+model Permission {
+  id          String           @id @default(cuid())
+  key         String           @unique
+  label       String
+  roles       RolePermission[]
+  users       UserPermission[]
+  createdAt   DateTime         @default(now())
+  updatedAt   DateTime         @updatedAt
+}
+
+model RolePermission {
+  roleId       String
+  permissionId String
+  role         Role       @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  permission   Permission @relation(fields: [permissionId], references: [id], onDelete: Cascade)
+
+  @@id([roleId, permissionId])
+}
+
+model UserPermission {
+  userId       String
+  permissionId String
+  user         User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  permission   Permission @relation(fields: [permissionId], references: [id], onDelete: Cascade)
+
+  @@id([userId, permissionId])
+}
+
+model User {
+  id                String               @id @default(cuid())
+  businessId        String
+  roleId            String?
+  name              String
+  email             String
+  passwordHash      String
+  profileRequired   Boolean              @default(true)
+  active            Boolean              @default(true)
+  bio               Json?
+  role              Role?                @relation(fields: [roleId], references: [id])
+  business          Business             @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  permissions       UserPermission[]
+  outletAssignments UserOutletAssignment[]
+  activities        StaffActivity[]
+  purchaseOrders    PurchaseOrder[]
+  createdAt         DateTime             @default(now())
+  updatedAt         DateTime             @updatedAt
+
+  @@unique([businessId, email])
+}
+
+model Outlet {
+  id                String               @id @default(cuid())
+  businessId        String
+  name              String
+  code              String
+  location          String?
+  managerName       String?
+  phone             String?
+  status            String               @default("active")
+  business          Business             @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  userAssignments   UserOutletAssignment[]
+  productLinks      OutletProduct[]
+  inventoryLinks    OutletInventory[]
+  featureToggles    OutletFeatureToggle[]
+  purchaseOrders    PurchaseOrder[]
+  allocations       Allocation[]
+  routeStops        RouteStop[]
+  orders            Order[]
+  createdAt         DateTime             @default(now())
+  updatedAt         DateTime             @updatedAt
+
+  @@unique([businessId, code])
+}
+
+model UserOutletAssignment {
+  userId   String
+  outletId String
+  user     User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  outlet   Outlet @relation(fields: [outletId], references: [id], onDelete: Cascade)
+
+  @@id([userId, outletId])
+}
+
+model Product {
+  id             String        @id @default(cuid())
+  businessId     String
+  name           String
+  price          Float
+  costPrice      Float         @default(0)
+  stock          Int           @default(0)
+  active         Boolean       @default(true)
+  category       String
+  dietaryType    String        @default("Veg")
+  channelSettings Json?
+  outletOverrides Json?
+  removalOptions Json?
+  recipeLines    Json?
+  business       Business      @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  variations     Variation[]
+  addons         Addon[]
+  outletLinks    OutletProduct[]
+  orderItems     OrderItem[]
+  billItems      BillItem[]
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
+
+  @@unique([businessId, name])
+}
+
+model Variation {
+  id          String   @id @default(cuid())
+  productId   String
+  name        String
+  price       Float    @default(0)
+  recipeLines Json?
+  product     Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+model Addon {
+  id              String   @id @default(cuid())
+  productId       String
+  linkedProductId String?
+  name            String
+  price           Float    @default(0)
+  recipeLines     Json?
+  product         Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+}
+
+model Order {
+  id           String      @id @default(cuid())
+  businessId   String
+  outletId     String?
+  trackingToken String?    @unique
+  customerName String
+  channel      String
+  total        Float       @default(0)
+  status       String
+  metadata     Json?
+  business     Business    @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  outlet       Outlet?     @relation(fields: [outletId], references: [id])
+  items        OrderItem[]
+  bill         Bill?
+  kitchenTickets KitchenTicket[]
+  createdAt    DateTime    @default(now())
+  updatedAt    DateTime    @updatedAt
+}
+
+model OrderItem {
+  id         String   @id @default(cuid())
+  orderId    String
+  productId  String?
+  name       String
+  quantity   Int
+  price      Float
+  variation  String?
+  addons     Json?
+  order      Order    @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  product    Product? @relation(fields: [productId], references: [id])
+}
+
+model Bill {
+  id           String      @id @default(cuid())
+  businessId   String
+  orderId      String?     @unique
+  customerName String
+  currency     String
+  subtotal     Float       @default(0)
+  tax          Float       @default(0)
+  total        Float       @default(0)
+  status       String
+  kitchenStatus String?
+  metadata     Json?
+  business     Business    @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  order        Order?      @relation(fields: [orderId], references: [id])
+  items        BillItem[]
+  feedback     Feedback[]
+  createdAt    DateTime    @default(now())
+  updatedAt    DateTime    @updatedAt
+}
+
+model BillItem {
+  id         String   @id @default(cuid())
+  billId     String
+  productId  String?
+  name       String
+  quantity   Int
+  price      Float
+  variation  String?
+  addons     Json?
+  bill       Bill     @relation(fields: [billId], references: [id], onDelete: Cascade)
+  product    Product? @relation(fields: [productId], references: [id])
+}
+
+model InventoryItem {
+  id              String               @id @default(cuid())
+  businessId      String
+  name            String
+  stock           Float                @default(0)
+  unit            String
+  reorderLevel    Float                @default(0)
+  vendor          String?
+  storageLocation String?
+  notes           String?
+  expiryDate      DateTime?
+  conversionCost  Float                @default(0)
+  business        Business             @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  outletLinks     OutletInventory[]
+  movements       InventoryMovement[]
+  createdAt       DateTime             @default(now())
+  updatedAt       DateTime             @updatedAt
+
+  @@unique([businessId, name])
+}
+
+model OutletProduct {
+  id            String   @id @default(cuid())
+  outletId      String
+  productId     String
+  enabled       Boolean  @default(true)
+  priceOverride Float?
+  outlet        Outlet   @relation(fields: [outletId], references: [id], onDelete: Cascade)
+  product       Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@unique([outletId, productId])
+}
+
+model OutletInventory {
+  id              String        @id @default(cuid())
+  outletId        String
+  inventoryItemId String
+  stock           Float         @default(0)
+  reorderLevel    Float         @default(0)
+  enabled         Boolean       @default(true)
+  outlet          Outlet        @relation(fields: [outletId], references: [id], onDelete: Cascade)
+  inventoryItem   InventoryItem @relation(fields: [inventoryItemId], references: [id], onDelete: Cascade)
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+
+  @@unique([outletId, inventoryItemId])
+}
+
+model OutletFeatureToggle {
+  id         String   @id @default(cuid())
+  outletId   String
+  featureKey String
+  enabled    Boolean  @default(true)
+  outlet     Outlet   @relation(fields: [outletId], references: [id], onDelete: Cascade)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@unique([outletId, featureKey])
+}
+
+model InventoryMovement {
+  id              String        @id @default(cuid())
+  businessId      String
+  inventoryItemId String
+  movementType    String
+  quantity        Float
+  reason          String?
+  expiryDate      DateTime?
+  inventoryItem   InventoryItem @relation(fields: [inventoryItemId], references: [id], onDelete: Cascade)
+  createdAt       DateTime      @default(now())
+}
+
+model PurchaseOrder {
+  id          String   @id @default(cuid())
+  businessId  String
+  outletId    String
+  requestedById String?
+  priority    String?
+  requiredBy  DateTime?
+  notes       String?
+  status      String
+  items       Json
+  business    Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  outlet      Outlet   @relation(fields: [outletId], references: [id], onDelete: Cascade)
+  requestedBy User?    @relation(fields: [requestedById], references: [id])
+  allocations Allocation[]
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+model Allocation {
+  id             String    @id @default(cuid())
+  businessId     String
+  outletId       String
+  purchaseOrderId String?
+  routePlanId    String?
+  sourceLocation String
+  status         String
+  items          Json
+  business       Business  @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  outlet         Outlet    @relation(fields: [outletId], references: [id], onDelete: Cascade)
+  purchaseOrder  PurchaseOrder? @relation(fields: [purchaseOrderId], references: [id])
+  routePlan      RoutePlan? @relation(fields: [routePlanId], references: [id])
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+}
+
+model RoutePlan {
+  id            String      @id @default(cuid())
+  businessId    String
+  routeName     String
+  dispatchDate  DateTime?
+  driverName    String?
+  vehicleNumber String?
+  status        String
+  business      Business    @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  stops         RouteStop[]
+  allocations   Allocation[]
+  createdAt     DateTime    @default(now())
+  updatedAt     DateTime    @updatedAt
+}
+
+model RouteStop {
+  id         String   @id @default(cuid())
+  routePlanId String
+  outletId   String
+  sequence   Int
+  eta        String?
+  routePlan  RoutePlan @relation(fields: [routePlanId], references: [id], onDelete: Cascade)
+  outlet     Outlet    @relation(fields: [outletId], references: [id], onDelete: Cascade)
+}
+
+model KitchenTicket {
+  id         String   @id @default(cuid())
+  businessId String
+  orderId    String
+  status     String
+  business   Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  order      Order    @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+}
+
+model Batch {
+  id         String   @id @default(cuid())
+  businessId String
+  sku        String
+  batchNo    String
+  expiryDate DateTime
+  business   Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+}
+
+model TableManagementSettings {
+  id               String   @id @default(cuid())
+  businessId       String   @unique
+  nichePreset      String   @default("restaurant")
+  serviceMode      String   @default("full_service")
+  capabilities     Json?
+  reservationRules Json?
+  uiPreferences    Json?
+  business         Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+}
+
+model DiningArea {
+  id         String        @id @default(cuid())
+  businessId String
+  name       String
+  code       String?
+  sortOrder  Int           @default(0)
+  active     Boolean       @default(true)
+  meta       Json?
+  business   Business      @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  tables     DiningTable[]
+  createdAt  DateTime      @default(now())
+  updatedAt  DateTime      @updatedAt
+
+  @@unique([businessId, name])
+}
+
+model DiningTable {
+  id         String             @id @default(cuid())
+  businessId String
+  areaId     String?
+  name       String
+  code       String?
+  seats      Int                @default(4)
+  status     String             @default("available")
+  active     Boolean            @default(true)
+  shape      String?
+  sortOrder  Int                @default(0)
+  meta       Json?
+  business   Business           @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  area       DiningArea?        @relation(fields: [areaId], references: [id], onDelete: SetNull)
+  qrCode     TableQrCode?
+  reservations TableReservation[]
+  createdAt  DateTime           @default(now())
+  updatedAt  DateTime           @updatedAt
+
+  @@unique([businessId, name])
+}
+
+model TableQrCode {
+  id        String      @id @default(cuid())
+  businessId String
+  tableId   String      @unique
+  token     String      @unique
+  active    Boolean     @default(true)
+  scanCount Int         @default(0)
+  lastScannedAt DateTime?
+  business  Business    @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  table     DiningTable @relation(fields: [tableId], references: [id], onDelete: Cascade)
+  scanEvents TableQrScanEvent[]
+  createdAt DateTime    @default(now())
+  updatedAt DateTime    @updatedAt
+  rotatedAt DateTime?
+}
+
+model TableQrScanEvent {
+  id          String      @id @default(cuid())
+  qrCodeId    String
+  qrCode      TableQrCode @relation(fields: [qrCodeId], references: [id], onDelete: Cascade)
+  businessId  String
+  tableId     String
+  userAgent   String?
+  referrer    String?
+  ipHash      String?
+  scannedAt   DateTime    @default(now())
+
+  @@index([qrCodeId, scannedAt])
+  @@index([businessId, scannedAt])
+  @@index([tableId, scannedAt])
+}
+
+model TableReservation {
+  id              String      @id @default(cuid())
+  businessId      String
+  tableId         String?
+  customerName    String?
+  customerPhone   String?
+  reservationDate DateTime?
+  status          String      @default("reserved")
+  guestsCount     Int?
+  notes           String?
+  source          String?
+  meta            Json?
+  confirmedAt     DateTime?
+  releasedAt      DateTime?
+  canceledAt      DateTime?
+  business        Business    @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  table           DiningTable? @relation(fields: [tableId], references: [id], onDelete: SetNull)
+  createdAt       DateTime    @default(now())
+  updatedAt       DateTime    @updatedAt
+}
+
+model Feedback {
+  id           String   @id @default(cuid())
+  businessId   String
+  billId       String?
+  token        String?  @unique
+  customerName String?
+  rating       Int?
+  comment      String?
+  business     Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  bill         Bill?    @relation(fields: [billId], references: [id])
+  createdAt    DateTime @default(now())
+}
+
+model FeatureToggle {
+  id         String   @id @default(cuid())
+  businessId String
+  featureKey String
+  enabled    Boolean  @default(true)
+  business   Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+
+  @@unique([businessId, featureKey])
+}
+
+model StaffActivity {
+  id        String   @id @default(cuid())
+  userId     String
+  action    String
+  actorName String?
+  createdAt DateTime @default(now())
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}

@@ -1,0 +1,1 @@
+ALTER TABLE "Bill" ADD COLUMN "metadata" JSONB;

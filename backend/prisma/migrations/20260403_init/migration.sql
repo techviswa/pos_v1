@@ -1,0 +1,339 @@
+-- Initial PostgreSQL schema for POS SaaS backend.
+-- Generated manually to mirror prisma/schema.prisma.
+-- Use `npx prisma migrate dev --name init` after installing Prisma to regenerate as needed.
+
+CREATE TABLE IF NOT EXISTS "Business" (
+  "id" TEXT PRIMARY KEY,
+  "name" TEXT NOT NULL,
+  "tenantId" TEXT NOT NULL UNIQUE,
+  "createdAt" TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  "updatedAt" TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS "Role" (
+  "id" TEXT PRIMARY KEY,
+  "name" TEXT NOT NULL UNIQUE,
+  "createdAt" TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  "updatedAt" TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS "Permission" (
+  "id" TEXT PRIMARY KEY,
+  "key" TEXT NOT NULL UNIQUE,
+  "label" TEXT NOT NULL,
+  "createdAt" TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  "updatedAt" TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS "User" (
+  "id" TEXT PRIMARY KEY,
+  "businessId" TEXT NOT NULL REFERENCES "Business"("id") ON DELETE CASCADE,
+  "roleId" TEXT REFERENCES "Role"("id"),
+  "name" TEXT NOT NULL,
+  "email" TEXT NOT NULL,
+  "passwordHash" TEXT NOT NULL,
+  "profileRequired" BOOLEAN NOT NULL DEFAULT TRUE,
+  "active" BOOLEAN NOT NULL DEFAULT TRUE,
+  "bio" JSONB,
+  "createdAt" TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  "updatedAt" TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE ("businessId","email")
+);
+
+CREATE TABLE IF NOT EXISTS "RolePermission" (
+  "roleId" TEXT NOT NULL REFERENCES "Role"("id") ON DELETE CASCADE,
+  "permissionId" TEXT NOT NULL REFERENCES "Permission"("id") ON DELETE CASCADE,
+  PRIMARY KEY ("roleId","permissionId")
+);
+
+CREATE TABLE IF NOT EXISTS "UserPermission" (
+  "userId" TEXT NOT NULL REFERENCES "User"("id") ON DELETE CASCADE,
+  "permissionId" TEXT NOT NULL REFERENCES "Permission"("id") ON DELETE CASCADE,
+  PRIMARY KEY ("userId","permissionId")
+);
+
+CREATE TABLE IF NOT EXISTS "Outlet" (
+  "id" TEXT PRIMARY KEY,
+  "businessId" TEXT NOT NULL REFERENCES "Business"("id") ON DELETE CASCADE,
+  "name" TEXT NOT NULL,
+  "code" TEXT NOT NULL,
+  "location" TEXT,
+  "managerName" TEXT,
+  "phone" TEXT,
+  "status" TEXT NOT NULL DEFAULT 'active',
+  "createdAt" TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  "updatedAt" TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE ("businessId","code")
+);
+
+CREATE TABLE IF NOT EXISTS "UserOutletAssignment" (
+  "userId" TEXT NOT NULL REFERENCES "User"("id") ON DELETE CASCADE,
+  "outletId" TEXT NOT NULL REFERENCES "Outlet"("id") ON DELETE CASCADE,
+  PRIMARY KEY ("userId","outletId")
+);
+
+CREATE TABLE IF NOT EXISTS "Product" (
+  "id" TEXT PRIMARY KEY,
+  "businessId" TEXT NOT NULL REFERENCES "Business"("id") ON DELETE CASCADE,
+  "name" TEXT NOT NULL,
+  "price" DOUBLE PRECISION NOT NULL,
+  "costPrice" DOUBLE PRECISION NOT NULL DEFAULT 0,
+  "stock" INTEGER NOT NULL DEFAULT 0,
+  "active" BOOLEAN NOT NULL DEFAULT TRUE,
+  "category" TEXT NOT NULL,
+  "dietaryType" TEXT NOT NULL DEFAULT 'Veg',
+  "channelSettings" JSONB,
+  "outletOverrides" JSONB,
+  "removalOptions" JSONB,
+  "recipeLines" JSONB,
+  "createdAt" TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  "updatedAt" TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE ("businessId","name")
+);
+
+CREATE TABLE IF NOT EXISTS "Variation" (
+  "id" TEXT PRIMARY KEY,
+  "productId" TEXT NOT NULL REFERENCES "Product"("id") ON DELETE CASCADE,
+  "name" TEXT NOT NULL,
+  "price" DOUBLE PRECISION NOT NULL DEFAULT 0,
+  "recipeLines" JSONB,
+  "createdAt" TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  "updatedAt" TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS "Addon" (
+  "id" TEXT PRIMARY KEY,
+  "productId" TEXT NOT NULL REFERENCES "Product"("id") ON DELETE CASCADE,
+  "linkedProductId" TEXT,
+  "name" TEXT NOT NULL,
+  "price" DOUBLE PRECISION NOT NULL DEFAULT 0,
+  "recipeLines" JSONB,
+  "createdAt" TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  "updatedAt" TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS "Order" (
+  "id" TEXT PRIMARY KEY,
+  "businessId" TEXT NOT NULL REFERENCES "Business"("id") ON DELETE CASCADE,
+  "outletId" TEXT REFERENCES "Outlet"("id"),
+  "customerName" TEXT NOT NULL,
+  "channel" TEXT NOT NULL,
+  "total" DOUBLE PRECISION NOT NULL DEFAULT 0,
+  "status" TEXT NOT NULL,
+  "createdAt" TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  "updatedAt" TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS "OrderItem" (
+  "id" TEXT PRIMARY KEY,
+  "orderId" TEXT NOT NULL REFERENCES "Order"("id") ON DELETE CASCADE,
+  "productId" TEXT REFERENCES "Product"("id"),
+  "name" TEXT NOT NULL,
+  "quantity" INTEGER NOT NULL,
+  "price" DOUBLE PRECISION NOT NULL,
+  "variation" TEXT,
+  "addons" JSONB
+);
+
+CREATE TABLE IF NOT EXISTS "Bill" (
+  "id" TEXT PRIMARY KEY,
+  "businessId" TEXT NOT NULL REFERENCES "Business"("id") ON DELETE CASCADE,
+  "orderId" TEXT UNIQUE REFERENCES "Order"("id"),
+  "customerName" TEXT NOT NULL,
+  "currency" TEXT NOT NULL,
+  "subtotal" DOUBLE PRECISION NOT NULL DEFAULT 0,
+  "tax" DOUBLE PRECISION NOT NULL DEFAULT 0,
+  "total" DOUBLE PRECISION NOT NULL DEFAULT 0,
+  "status" TEXT NOT NULL,
+  "kitchenStatus" TEXT,
+  "createdAt" TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  "updatedAt" TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS "BillItem" (
+  "id" TEXT PRIMARY KEY,
+  "billId" TEXT NOT NULL REFERENCES "Bill"("id") ON DELETE CASCADE,
+  "productId" TEXT REFERENCES "Product"("id"),
+  "name" TEXT NOT NULL,
+  "quantity" INTEGER NOT NULL,
+  "price" DOUBLE PRECISION NOT NULL,
+  "variation" TEXT,
+  "addons" JSONB
+);
+
+CREATE TABLE IF NOT EXISTS "InventoryItem" (
+  "id" TEXT PRIMARY KEY,
+  "businessId" TEXT NOT NULL REFERENCES "Business"("id") ON DELETE CASCADE,
+  "name" TEXT NOT NULL,
+  "stock" DOUBLE PRECISION NOT NULL DEFAULT 0,
+  "unit" TEXT NOT NULL,
+  "reorderLevel" DOUBLE PRECISION NOT NULL DEFAULT 0,
+  "vendor" TEXT,
+  "storageLocation" TEXT,
+  "notes" TEXT,
+  "expiryDate" TIMESTAMP,
+  "conversionCost" DOUBLE PRECISION NOT NULL DEFAULT 0,
+  "createdAt" TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  "updatedAt" TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE ("businessId","name")
+);
+
+CREATE TABLE IF NOT EXISTS "InventoryMovement" (
+  "id" TEXT PRIMARY KEY,
+  "businessId" TEXT NOT NULL,
+  "inventoryItemId" TEXT NOT NULL REFERENCES "InventoryItem"("id") ON DELETE CASCADE,
+  "movementType" TEXT NOT NULL,
+  "quantity" DOUBLE PRECISION NOT NULL,
+  "reason" TEXT,
+  "expiryDate" TIMESTAMP,
+  "createdAt" TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS "PurchaseOrder" (
+  "id" TEXT PRIMARY KEY,
+  "businessId" TEXT NOT NULL REFERENCES "Business"("id") ON DELETE CASCADE,
+  "outletId" TEXT NOT NULL REFERENCES "Outlet"("id") ON DELETE CASCADE,
+  "requestedById" TEXT REFERENCES "User"("id"),
+  "priority" TEXT,
+  "requiredBy" TIMESTAMP,
+  "notes" TEXT,
+  "status" TEXT NOT NULL,
+  "items" JSONB NOT NULL,
+  "createdAt" TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  "updatedAt" TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS "RoutePlan" (
+  "id" TEXT PRIMARY KEY,
+  "businessId" TEXT NOT NULL REFERENCES "Business"("id") ON DELETE CASCADE,
+  "routeName" TEXT NOT NULL,
+  "dispatchDate" TIMESTAMP,
+  "driverName" TEXT,
+  "vehicleNumber" TEXT,
+  "status" TEXT NOT NULL,
+  "createdAt" TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  "updatedAt" TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS "Allocation" (
+  "id" TEXT PRIMARY KEY,
+  "businessId" TEXT NOT NULL REFERENCES "Business"("id") ON DELETE CASCADE,
+  "outletId" TEXT NOT NULL REFERENCES "Outlet"("id") ON DELETE CASCADE,
+  "purchaseOrderId" TEXT REFERENCES "PurchaseOrder"("id"),
+  "routePlanId" TEXT REFERENCES "RoutePlan"("id"),
+  "sourceLocation" TEXT NOT NULL,
+  "status" TEXT NOT NULL,
+  "items" JSONB NOT NULL,
+  "createdAt" TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  "updatedAt" TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS "RouteStop" (
+  "id" TEXT PRIMARY KEY,
+  "routePlanId" TEXT NOT NULL REFERENCES "RoutePlan"("id") ON DELETE CASCADE,
+  "outletId" TEXT NOT NULL REFERENCES "Outlet"("id") ON DELETE CASCADE,
+  "sequence" INTEGER NOT NULL,
+  "eta" TEXT
+);
+
+CREATE TABLE IF NOT EXISTS "KitchenTicket" (
+  "id" TEXT PRIMARY KEY,
+  "businessId" TEXT NOT NULL REFERENCES "Business"("id") ON DELETE CASCADE,
+  "orderId" TEXT NOT NULL REFERENCES "Order"("id") ON DELETE CASCADE,
+  "status" TEXT NOT NULL,
+  "createdAt" TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  "updatedAt" TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS "Batch" (
+  "id" TEXT PRIMARY KEY,
+  "businessId" TEXT NOT NULL REFERENCES "Business"("id") ON DELETE CASCADE,
+  "sku" TEXT NOT NULL,
+  "batchNo" TEXT NOT NULL,
+  "expiryDate" TIMESTAMP NOT NULL,
+  "createdAt" TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  "updatedAt" TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS "DiningTable" (
+  "id" TEXT PRIMARY KEY,
+  "businessId" TEXT NOT NULL REFERENCES "Business"("id") ON DELETE CASCADE,
+  "name" TEXT NOT NULL,
+  "seats" INTEGER NOT NULL,
+  "status" TEXT NOT NULL,
+  "createdAt" TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  "updatedAt" TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS "TableReservation" (
+  "id" TEXT PRIMARY KEY,
+  "businessId" TEXT NOT NULL REFERENCES "Business"("id") ON DELETE CASCADE,
+  "tableId" TEXT REFERENCES "DiningTable"("id"),
+  "customerName" TEXT,
+  "reservationDate" TIMESTAMP,
+  "status" TEXT NOT NULL,
+  "guestsCount" INTEGER,
+  "notes" TEXT,
+  "createdAt" TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  "updatedAt" TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS "Feedback" (
+  "id" TEXT PRIMARY KEY,
+  "businessId" TEXT NOT NULL REFERENCES "Business"("id") ON DELETE CASCADE,
+  "billId" TEXT REFERENCES "Bill"("id"),
+  "token" TEXT UNIQUE,
+  "customerName" TEXT,
+  "rating" INTEGER,
+  "comment" TEXT,
+  "createdAt" TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS "FeatureToggle" (
+  "id" TEXT PRIMARY KEY,
+  "businessId" TEXT NOT NULL REFERENCES "Business"("id") ON DELETE CASCADE,
+  "featureKey" TEXT NOT NULL,
+  "enabled" BOOLEAN NOT NULL DEFAULT TRUE,
+  UNIQUE ("businessId","featureKey")
+);
+
+CREATE TABLE IF NOT EXISTS "OutletProduct" (
+  "id" TEXT PRIMARY KEY,
+  "outletId" TEXT NOT NULL REFERENCES "Outlet"("id") ON DELETE CASCADE,
+  "productId" TEXT NOT NULL REFERENCES "Product"("id") ON DELETE CASCADE,
+  "enabled" BOOLEAN NOT NULL DEFAULT TRUE,
+  "priceOverride" DOUBLE PRECISION,
+  "createdAt" TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  "updatedAt" TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE ("outletId","productId")
+);
+
+CREATE TABLE IF NOT EXISTS "OutletInventory" (
+  "id" TEXT PRIMARY KEY,
+  "outletId" TEXT NOT NULL REFERENCES "Outlet"("id") ON DELETE CASCADE,
+  "inventoryItemId" TEXT NOT NULL REFERENCES "InventoryItem"("id") ON DELETE CASCADE,
+  "stock" DOUBLE PRECISION NOT NULL DEFAULT 0,
+  "reorderLevel" DOUBLE PRECISION NOT NULL DEFAULT 0,
+  "enabled" BOOLEAN NOT NULL DEFAULT TRUE,
+  "createdAt" TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  "updatedAt" TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE ("outletId","inventoryItemId")
+);
+
+CREATE TABLE IF NOT EXISTS "OutletFeatureToggle" (
+  "id" TEXT PRIMARY KEY,
+  "outletId" TEXT NOT NULL REFERENCES "Outlet"("id") ON DELETE CASCADE,
+  "featureKey" TEXT NOT NULL,
+  "enabled" BOOLEAN NOT NULL DEFAULT TRUE,
+  "createdAt" TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  "updatedAt" TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE ("outletId","featureKey")
+);
+
+CREATE TABLE IF NOT EXISTS "StaffActivity" (
+  "id" TEXT PRIMARY KEY,
+  "userId" TEXT NOT NULL REFERENCES "User"("id") ON DELETE CASCADE,
+  "action" TEXT NOT NULL,
+  "actorName" TEXT,
+  "createdAt" TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);

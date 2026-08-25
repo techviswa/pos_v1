@@ -1,0 +1,33 @@
+import {
+  ChartBar,
+  Gear,
+  Package,
+  Drop,
+  Receipt,
+  Truck,
+  UserList,
+  FileText,
+  ChefHat,
+  Storefront,
+  UsersThree,
+  ClipboardText,
+  QrCode,
+  CalendarCheck,
+} from "@phosphor-icons/react";
+
+export const APP_NAV_ITEMS = [
+  { path: "/dashboard", label: "Dashboard", icon: Storefront, group: "Main", permission: "dashboard", module: "restaurant", feature: "reports" },
+  { path: "/reservations", label: "Reservations", icon: CalendarCheck, group: "Main", roles: ["Owner", "Manager"], module: "restaurant", feature: "tables" },
+  { path: "/qr-management", label: "QR", icon: QrCode, group: "Main", roles: ["Owner", "Manager"], module: "restaurant", feature: "tables" },
+  { path: "/manager", label: "Manager", icon: UsersThree, group: "Role Screens", roles: ["Owner", "Manager"], module: "restaurant", feature: "reports" },
+  { path: "/waiter", label: "Waiter", icon: ClipboardText, group: "Role Screens", roles: ["Owner", "Waiter"], module: "restaurant", feature: "tables" },
+  { path: "/chef", label: "Chef", icon: ChefHat, group: "Role Screens", roles: ["Owner", "Chef"], module: "restaurant", feature: "kot" },
+  { path: "/billing", label: "Billing", icon: Receipt, group: "Main", permission: "billing", module: "restaurant", feature: "billing" },
+  { path: "/central-kitchen", label: "Central Kitchen", icon: Truck, group: "Main", permission: "central_kitchen", module: "restaurant", feature: "inventory" },
+  { path: "/inventory", label: "Inventory", icon: Drop, group: "Main", permission: "inventory", module: "restaurant", feature: "inventory" },
+  { path: "/reports", label: "Reports", icon: ChartBar, group: "Main", permission: "reports", module: "restaurant", feature: "reports" },
+  { path: "/products", label: "Products", icon: Package, group: "Manage", permission: "products", module: "restaurant", feature: "products" },
+  { path: "/bills", label: "Bills", icon: FileText, group: "Manage", permission: "bills", module: "restaurant", feature: "billing" },
+  { path: "/staff", label: "Staff", icon: UserList, group: "Manage", permission: "staff", module: "restaurant", feature: "staff" },
+  { path: "/settings", label: "Settings", icon: Gear, group: "System", permission: "settings" },
+];

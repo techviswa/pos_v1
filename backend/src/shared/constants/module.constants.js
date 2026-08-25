@@ -1,0 +1,40 @@
+﻿export const API_ROUTE_SEGMENTS = {
+  AUTH: "auth",
+  BUSINESSES: "businesses",
+  SAAS: "saas",
+  FEATURES: "features",
+  USERS: "staff",
+  PRODUCTS: "products",
+  DASHBOARD: "dashboard",
+  REPORTS: "reports",
+  FEEDBACK: "feedback",
+  ORDERS: "orders",
+  BILLING: "billing",
+  INVENTORY: "inventory",
+  OUTLETS: "outlets",
+  TABLES: "tables",
+  RESERVATIONS: "reservations",
+  ADMINCORE: "admincore",
+  PAYMENTS: "payments",
+  PRINTER: "printer",
+  SYNC: "sync",
+  KOT: "kot",
+  BARCODE: "barcode",
+  TABLE_MANAGEMENT: "table-management",
+  BATCH_TRACKING: "batch-tracking",
+  OUTLET_INVENTORY_ALLOCATION: "outlet-inventory-allocation",
+  OUTLET_PURCHASE_ORDERS: "outlet-purchase-orders",
+  DELIVERY_ROUTE_PLAN: "delivery-route-plan",
+};
+
+export const FEATURE_KEYS = {
+  KOT: API_ROUTE_SEGMENTS.KOT,
+  BARCODE: API_ROUTE_SEGMENTS.BARCODE,
+  TABLE_MANAGEMENT: API_ROUTE_SEGMENTS.TABLE_MANAGEMENT,
+  BATCH_TRACKING: API_ROUTE_SEGMENTS.BATCH_TRACKING,
+  OUTLET_INVENTORY_ALLOCATION: API_ROUTE_SEGMENTS.OUTLET_INVENTORY_ALLOCATION,
+  OUTLET_PURCHASE_ORDERS: API_ROUTE_SEGMENTS.OUTLET_PURCHASE_ORDERS,
+  DELIVERY_ROUTE_PLAN: API_ROUTE_SEGMENTS.DELIVERY_ROUTE_PLAN,
+};
+
+

@@ -1,0 +1,124 @@
+{
+  "project_name": "POS System",
+  "theme": "Light",
+  "archetype": "Archetype 4 (Swiss & High-Contrast)",
+  "colors": {
+    "background": {
+      "default": "#FFFFFF",
+      "muted": "#F4F5F7",
+      "surface": "#FFFFFF",
+      "overlay": "rgba(10, 10, 11, 0.4)"
+    },
+    "text": {
+      "primary": "#0A0A0B",
+      "secondary": "#475467",
+      "muted": "#98A2B3",
+      "inverted": "#FFFFFF"
+    },
+    "brand": {
+      "primary": "#002DF5",
+      "primary_hover": "#0022B8",
+      "accent": "#FFCC00",
+      "destructive": "#FF3B30",
+      "success": "#34C759"
+    },
+    "border": {
+      "default": "#E4E7EC",
+      "focus": "#002DF5"
+    }
+  },
+  "typography": {
+    "headings": {
+      "family": "'Outfit', sans-serif",
+      "weight": "700",
+      "letter_spacing": "tracking-tight"
+    },
+    "body": {
+      "family": "'IBM Plex Sans', sans-serif",
+      "weight": "400",
+      "letter_spacing": "tracking-normal"
+    },
+    "mono": {
+      "family": "'IBM Plex Mono', monospace"
+    },
+    "scale": {
+      "h1": "text-4xl sm:text-5xl lg:text-6xl tracking-tighter font-black text-[#0A0A0B]",
+      "h2": "text-2xl sm:text-3xl lg:text-4xl tracking-tight font-bold text-[#0A0A0B]",
+      "h3": "text-xl sm:text-2xl tracking-tight font-semibold text-[#0A0A0B]",
+      "h4": "text-lg sm:text-xl tracking-tight font-medium text-[#0A0A0B]",
+      "body": "text-base leading-relaxed text-[#475467]",
+      "small": "text-sm text-[#475467]",
+      "overline": "text-xs font-bold uppercase tracking-[0.2em] text-[#98A2B3]"
+    },
+    "imports": [
+      "@import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&family=Outfit:wght@400;500;700;900&display=swap');"
+    ]
+  },
+  "spacing_and_layout": {
+    "philosophy": "Generous Spacing Philosophy. Utilize optical alignment and stark asymmetry.",
+    "padding": {
+      "card": "p-6 sm:p-8",
+      "section": "py-12 sm:py-24"
+    },
+    "grid": {
+      "dashboard_metrics": "grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6",
+      "billing_layout": "grid-cols-1 lg:grid-cols-12 gap-8"
+    },
+    "surfaces": {
+      "card": "bg-white border border-[#E4E7EC] hover:shadow-[0_8px_30px_rgb(0,0,0,0.04)] hover:-translate-y-1 transition-all duration-300 ease-out",
+      "glass": "backdrop-blur-xl bg-white/80 border-b border-white/40 shadow-sm"
+    }
+  },
+  "components": {
+    "buttons": {
+      "primary": "bg-[#002DF5] text-white hover:bg-[#0022B8] hover:text-white px-8 py-4 rounded-none font-semibold transition-colors duration-200 shadow-sm",
+      "secondary": "bg-white text-[#0A0A0B] border border-[#E4E7EC] hover:border-[#D0D5DD] hover:bg-[#F4F5F7] hover:text-[#0A0A0B] px-8 py-4 rounded-none font-medium transition-colors duration-200",
+      "destructive": "bg-[#FF3B30] text-white hover:bg-[#D63026] hover:text-white px-8 py-4 rounded-none font-medium transition-colors duration-200"
+    },
+    "inputs": {
+      "default": "w-full border border-[#E4E7EC] bg-white px-4 py-3 text-base focus:outline-none focus:ring-2 focus:ring-[#002DF5] focus:border-transparent transition-all rounded-none text-[#0A0A0B]"
+    },
+    "tables": {
+      "container": "w-full border-collapse text-left bg-white",
+      "header": "text-xs uppercase tracking-wider text-[#475467] border-b border-[#E4E7EC] py-4 px-4 font-semibold",
+      "row": "border-b border-[#E4E7EC] hover:bg-[#F4F5F7] transition-colors",
+      "cell": "py-4 px-4 text-sm text-[#0A0A0B]"
+    },
+    "libraries": [
+      "shadcn/ui (Tables, Dialogs, Select, Tabs)",
+      "@phosphor-icons/react",
+      "recharts"
+    ]
+  },
+  "media": {
+    "images": [
+      {
+        "category": "login_background",
+        "url": "https://static.prod-images.emergentagent.com/jobs/cc371b88-4956-4ab8-bc7a-4ecc7bad2a0c/images/8c2c3c346f3a1239a6a753c081b42e8a8ff703c2180f695bf863c426f1e2032e.png",
+        "description": "Minimalist architectural abstract background for the login page, offering a high-end corporate feel. Use as full-cover background on right half of desktop layout."
+      }
+    ],
+    "icons_library": "@phosphor-icons/react"
+  },
+  "accessibility_and_interactions": {
+    "focus_states": "All interactive elements must have a high-contrast focus ring (focus:ring-2 focus:ring-[#002DF5] focus:outline-none).",
+    "hover_states": "ALWAYS explicitly set text color on hover (e.g., hover:bg-gray-100 hover:text-gray-900).",
+    "testing": "All interactive and key informational elements MUST include `data-testid` attributes (e.g., data-testid='login-submit-btn')."
+  },
+  "page_specific_instructions": {
+    "login": "Split layout. Left side: Form inside a stark white container with massive p-12 padding. Right side (hidden on mobile): `login_background` image covering the viewport with a subtle bg-black/10 overlay to increase contrast if needed.",
+    "dashboard": "Owner only. Use the 'Control Room Grid'. The top metrics should feature massive typography (using the 'Outfit' font). Inject a Recharts bar chart for 'Top Selling Items'. Strict data density.",
+    "billing": "Main Feature (Cashier). Split view: Left 70% is a grid (grid-cols-2 md:grid-cols-3 lg:grid-cols-4) of square product cards with large tap targets. Right 30% is a sticky cart pane. The 'Generate Bill' button MUST be massive (e.g., text-xl, py-6, bg-[#002DF5]).",
+    "products": "Data-heavy. Use Shadcn Table or custom pure HTML table. Keep it cardless, sharp edges (rounded-none). Top right action area for 'Add Product'.",
+    "bills": "Chronological table of generated bills. Use crisp 1px borders between rows.",
+    "staff": "Owner only. Simple list of cashiers and an 'Add Staff' dialog."
+  },
+  "instructions_to_main_agent": [
+    "Execute commands to install required dependencies: yarn add @phosphor-icons/react recharts",
+    "Ensure all fonts are imported via Google Fonts in index.css.",
+    "Update tailwind.config.js to include the custom fonts ('Outfit', 'IBM Plex Sans', 'IBM Plex Mono') and the defined brand colors.",
+    "Adhere strictly to the sharp edges (rounded-none for buttons and inputs) to maintain the Swiss Brutalist/High-Contrast aesthetic.",
+    "Never use `Inter` or `Roboto`. Always use `Outfit` for headings and `IBM Plex Sans` for body.",
+    "For the Billing Page, ensure the entire layout is usable without scrolling the main window by making the left and right panels independently scrollable (h-screen, overflow-y-auto)."
+  ]
+}
