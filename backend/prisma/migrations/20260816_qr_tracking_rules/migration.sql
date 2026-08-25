@@ -5,7 +5,7 @@ ALTER TABLE "Order" ADD COLUMN "trackingToken" TEXT;
 CREATE UNIQUE INDEX "Order_trackingToken_key" ON "Order"("trackingToken");
 
 ALTER TABLE "TableQrCode" ADD COLUMN "scanCount" INTEGER NOT NULL DEFAULT 0;
-ALTER TABLE "TableQrCode" ADD COLUMN "lastScannedAt" DATETIME;
+ALTER TABLE "TableQrCode" ADD COLUMN "lastScannedAt" TIMESTAMP;
 
 CREATE TABLE "TableQrScanEvent" (
   "id" TEXT NOT NULL PRIMARY KEY,
@@ -15,7 +15,7 @@ CREATE TABLE "TableQrScanEvent" (
   "userAgent" TEXT,
   "referrer" TEXT,
   "ipHash" TEXT,
-  "scannedAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  "scannedAt" TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
   CONSTRAINT "TableQrScanEvent_qrCodeId_fkey" FOREIGN KEY ("qrCodeId") REFERENCES "TableQrCode" ("id") ON DELETE CASCADE ON UPDATE CASCADE
 );
 

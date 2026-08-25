@@ -4,7 +4,7 @@ import {
   serializeBill,
   toPrismaBillItems,
 } from "../../database/prisma/helpers.js";
-import { extractBillingMetadataFromRequest } from "./billing-metadata.utils.js";
+import { extractBillingMetadataFromRequest, normalizeBillingMetadata } from "./billing-metadata.utils.js";
 import {
   buildGstBreakup,
   calculateInvoiceTotals,
