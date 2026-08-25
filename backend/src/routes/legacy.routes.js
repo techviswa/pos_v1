@@ -5,8 +5,15 @@ import prisma from "../database/prisma/client.js";
 import { billingService } from "../core/billing/billing.service.js";
 import { inventoryOperationsService } from "../core/inventory/inventory-operations.service.js";
 import { normalizeLegacyBillRecord, toLegacyBillRecord } from "../core/billing/billing-legacy.serializer.js";
+import {
+  getBillChannel,
+  getBillOutletId,
+  getBillRevenue as getBillNetRevenue,
+  isRevenueBill,
+} from "../core/billing/bill-analytics.utils.js";
 import { authService } from "../core/auth/auth.service.js";
 import { getSessionIdFromRequest } from "../core/auth/auth-session.js";
+import { outletsService } from "../core/outlets/outlets.service.js";
 import { tableManagementService } from "../features/sales-extensions/table-management/table-management.service.js";
 import { ensureBusiness, serializeBill, toPrismaInventoryPayload } from "../database/prisma/helpers.js";
 import {
@@ -69,17 +76,6 @@ const isBillInPeriod = (bill, periodRange) => {
   if (periodRange.end && createdAt >= periodRange.end) return false;
   return true;
 };
-
-const isRevenueBill = (bill) => !["void", "cancelled", "canceled"].includes(String(bill.status || "").toLowerCase());
-
-const getBillNetRevenue = (bill) => Math.max(0, toNumber(bill.total, 0) - toNumber(bill.refunded_amount, 0));
-
-const getBillChannel = (bill) =>
-  String(bill.order_type || bill.service_mode || bill.payment_type || "")
-    .toLowerCase()
-    .match(/online|website|web|delivery|swiggy|zomato|qr/)
-    ? "online"
-    : "dine_in";
 
 const buildProductCostMap = async (tenantId) => {
   try {
@@ -304,12 +300,7 @@ const setInventoryItems = (items) => {
 };
 const getOutlets = async (tenantId) => {
   try {
-    const business = await ensureBusiness({ tenantId });
-    const outlets = await prisma.outlet.findMany({
-      where: { businessId: business.id },
-      orderBy: { createdAt: "asc" },
-    });
-
+    const outlets = await outletsService.listOutlets({ tenantId });
     return outlets.map((outlet) =>
       normalizeOutlet({
         id: outlet.id,
@@ -360,7 +351,7 @@ const getBills = async (tenantId, limit, outletId = null) => {
   try {
     const data = await billingService.listInvoices({ tenantId, limit });
     const bills = data.map((bill) => toLegacyBillRecord(bill));
-    return outletId ? bills.filter((bill) => bill.outlet_id === outletId) : bills;
+    return outletId ? bills.filter((bill) => getBillOutletId(bill) === outletId) : bills;
   } catch {
     const bills = billingSeedData.map((bill) =>
       normalizeLegacyBillRecord({
@@ -368,7 +359,7 @@ const getBills = async (tenantId, limit, outletId = null) => {
         customer_name: bill.customerName,
       }),
     );
-    return outletId ? bills.filter((bill) => bill.outlet_id === outletId) : bills;
+    return outletId ? bills.filter((bill) => getBillOutletId(bill) === outletId) : bills;
   }
 };
 
@@ -377,11 +368,17 @@ const getAllRevenueBills = async (tenantId, outletId = null) => {
     const business = await ensureBusiness({ tenantId });
     const rows = await prisma.bill.findMany({
       where: { businessId: business.id },
-      include: { business: true, feedback: true, items: true },
+      include: { business: true, feedback: true, items: true, order: { select: { outletId: true } } },
       orderBy: { createdAt: "desc" },
     });
-    const bills = rows.map((bill) => toLegacyBillRecord(serializeBill(bill)));
-    return outletId ? bills.filter((bill) => bill.outlet_id === outletId) : bills;
+    const bills = rows.map((bill) => {
+      const serializedBill = serializeBill(bill);
+      return toLegacyBillRecord({
+        ...serializedBill,
+        outlet_id: getBillOutletId(bill) || serializedBill.outlet_id,
+      });
+    });
+    return outletId ? bills.filter((bill) => getBillOutletId(bill) === outletId) : bills;
   } catch {
     return getBills(tenantId, 250, outletId);
   }
@@ -411,7 +408,7 @@ const getDashboardStats = async (tenantId, outletId = null, period = "all") => {
     });
   });
   const salesByOutlet = outlets.map((outlet) => {
-    const outletBills = revenueBills.filter((bill) => !bill.outlet_id || bill.outlet_id === outlet.id);
+    const outletBills = revenueBills.filter((bill) => getBillOutletId(bill) === outlet.id);
     return {
       outlet_id: outlet.id,
       outlet_name: outlet.name,

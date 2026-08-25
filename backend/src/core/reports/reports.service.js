@@ -5,16 +5,22 @@ import { fileURLToPath } from "url";
 import prisma from "../../database/prisma/client.js";
 import { ensureBusiness } from "../../database/prisma/helpers.js";
 import { normalizeBillingMetadata } from "../billing/billing-metadata.utils.js";
+import {
+  getAllocatedLineRevenue,
+  getBillChannel,
+  getBillOutletId,
+  getBillRefundAmount,
+  getBillRevenue,
+  getBillSubtotal,
+  getBillTax,
+  isRevenueBill,
+  toAnalyticsNumber,
+} from "../billing/bill-analytics.utils.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const DATA_DIR = path.resolve(__dirname, "../../../data");
 const SCHEDULE_FILE = path.join(DATA_DIR, "scheduled-reports.json");
-
-const toNumber = (value, fallback = 0) => {
-  const parsed = Number(value);
-  return Number.isFinite(parsed) ? parsed : fallback;
-};
 
 const toIso = (value) => (value ? new Date(value).toISOString() : null);
 
@@ -42,39 +48,11 @@ const normalizeBill = (bill) => ({
   tax: bill.tax,
   total: bill.total,
   status: bill.status,
+  order: bill.order || null,
   created_at: bill.createdAt.toISOString(),
   updated_at: bill.updatedAt.toISOString(),
   items: bill.items || [],
 });
-
-const isRevenueBill = (bill) => !["void", "cancelled", "canceled"].includes(String(bill.status || "").toLowerCase());
-const billRefundAmount = (bill) => toNumber(bill.refunded_amount, 0);
-const billRevenue = (bill) => Math.max(0, toNumber(bill.total, 0) - billRefundAmount(bill));
-const billTax = (bill) => {
-  const total = toNumber(bill.total, 0);
-  const revenue = billRevenue(bill);
-  const ratio = total > 0 ? revenue / total : 0;
-  return toNumber(bill.tax, 0) * ratio;
-};
-const billSubtotal = (bill) => {
-  const total = toNumber(bill.total, 0);
-  const revenue = billRevenue(bill);
-  const ratio = total > 0 ? revenue / total : 0;
-  return toNumber(bill.subtotal, 0) * ratio;
-};
-const lineGrossTotal = (bill) =>
-  (bill.items || []).reduce((sum, item) => sum + toNumber(item.quantity, 0) * toNumber(item.price, 0), 0);
-const allocatedLineRevenue = (bill, item) => {
-  const gross = lineGrossTotal(bill);
-  const lineGross = toNumber(item.quantity, 0) * toNumber(item.price, 0);
-  return gross > 0 ? billRevenue(bill) * (lineGross / gross) : 0;
-};
-const billChannel = (bill) =>
-  String(bill.order_type || bill.service_mode || bill.payment_type || "")
-    .toLowerCase()
-    .match(/online|website|web|delivery|swiggy|zomato|qr/)
-    ? "online"
-    : "inhouse";
 
 class ReportsService {
   async getReportContext({ tenantId, from, to, outletId = null }) {
@@ -82,7 +60,7 @@ class ReportsService {
     const [bills, products, outlets, users, feedback] = await Promise.all([
       prisma.bill.findMany({
         where: { businessId: business.id },
-        include: { items: true },
+        include: { items: true, order: { select: { outletId: true } } },
         orderBy: { createdAt: "desc" },
       }),
       prisma.product.findMany({ where: { businessId: business.id } }),
@@ -95,7 +73,7 @@ class ReportsService {
       business,
       bills: bills
         .map(normalizeBill)
-        .filter((bill) => !outletId || bill.outlet_id === outletId)
+        .filter((bill) => !outletId || getBillOutletId(bill) === outletId)
         .filter((bill) => inRange(bill.created_at, { from, to })),
       products,
       outlets,
@@ -108,18 +86,18 @@ class ReportsService {
     const { business, bills } = await this.getReportContext(input);
     const rows = bills.filter(isRevenueBill).map((bill) => {
       const gst = bill.gst_breakup || {};
-      const taxableValue = billSubtotal(bill);
-      const taxTotal = billTax(bill);
-      const total = billRevenue(bill);
+      const taxableValue = getBillSubtotal(bill);
+      const taxTotal = getBillTax(bill);
+      const total = getBillRevenue(bill);
       return {
         invoice_number: bill.invoice_number || bill.id,
         date: bill.created_at.slice(0, 10),
         customer_name: bill.customer_name || bill.customerName || "Walk-in",
-        taxable_value: taxableValue || toNumber(gst.taxable_value, bill.subtotal),
-        cgst: taxTotal ? taxTotal / 2 : toNumber(gst.cgst, bill.tax / 2),
-        sgst: taxTotal ? taxTotal / 2 : toNumber(gst.sgst, bill.tax / 2),
-        igst: toNumber(gst.igst, 0),
-        tax_total: taxTotal || toNumber(gst.tax_total, bill.tax),
+        taxable_value: taxableValue || toAnalyticsNumber(gst.taxable_value, bill.subtotal),
+        cgst: taxTotal ? taxTotal / 2 : toAnalyticsNumber(gst.cgst, bill.tax / 2),
+        sgst: taxTotal ? taxTotal / 2 : toAnalyticsNumber(gst.sgst, bill.tax / 2),
+        igst: toAnalyticsNumber(gst.igst, 0),
+        tax_total: taxTotal || toAnalyticsNumber(gst.tax_total, bill.tax),
         invoice_total: total,
         status: bill.status,
       };
@@ -162,10 +140,10 @@ class ReportsService {
           gross_profit: 0,
           margin_percent: 0,
         };
-        const quantity = toNumber(item.quantity, 0);
+        const quantity = toAnalyticsNumber(item.quantity, 0);
         row.quantity_sold += quantity;
-        row.revenue += allocatedLineRevenue(bill, item);
-        row.cogs += quantity * toNumber(product?.costPrice, 0);
+        row.revenue += getAllocatedLineRevenue(bill, item);
+        row.cogs += quantity * toAnalyticsNumber(product?.costPrice, 0);
         row.gross_profit = row.revenue - row.cogs;
         row.margin_percent = row.revenue > 0 ? (row.gross_profit / row.revenue) * 100 : 0;
         rowsByKey.set(key, row);
@@ -194,13 +172,13 @@ class ReportsService {
     bills.filter(isRevenueBill).forEach((bill) => {
       const date = bill.created_at.slice(0, 10);
       const row = rowsByDate.get(date) || { date, bills: 0, sales: 0, tax: 0, net: 0, refunds: 0 };
-      const tax = billTax(bill);
-      const revenue = billRevenue(bill);
+      const tax = getBillTax(bill);
+      const revenue = getBillRevenue(bill);
       row.bills += 1;
       row.sales += revenue;
       row.tax += tax;
       row.net += Math.max(0, revenue - tax);
-      row.refunds += billRefundAmount(bill);
+      row.refunds += getBillRefundAmount(bill);
       rowsByDate.set(date, row);
     });
     const rows = Array.from(rowsByDate.values()).sort((a, b) => b.date.localeCompare(a.date));
@@ -234,8 +212,8 @@ class ReportsService {
     bills.filter(isRevenueBill).forEach((bill) => {
       const hour = new Date(bill.created_at).getHours();
       rows[hour].bills += 1;
-      rows[hour].sales += billRevenue(bill);
-      rows[hour].tax += billTax(bill);
+      rows[hour].sales += getBillRevenue(bill);
+      rows[hour].tax += getBillTax(bill);
       rows[hour].average_bill = rows[hour].bills ? rows[hour].sales / rows[hour].bills : 0;
     });
 
@@ -262,9 +240,9 @@ class ReportsService {
         average_bill: 0,
       };
       row.bills += 1;
-      row.sales += billRevenue(bill);
-      row.discounts += toNumber(bill.discount_amount, 0);
-      row.refunds += billRefundAmount(bill);
+      row.sales += getBillRevenue(bill);
+      row.discounts += toAnalyticsNumber(bill.discount_amount, 0);
+      row.refunds += getBillRefundAmount(bill);
       row.voids += 0;
       row.average_bill = row.bills ? row.sales / row.bills : 0;
       rowsById.set(staffId, row);
@@ -279,7 +257,7 @@ class ReportsService {
     const rowsById = new Map();
 
     bills.filter(isRevenueBill).forEach((bill) => {
-      const outletId = bill.outlet_id || "unassigned";
+      const outletId = getBillOutletId(bill) || "unassigned";
       const outlet = outletsById.get(outletId);
       const row = rowsById.get(outletId) || {
         outlet_id: outletId,
@@ -291,9 +269,9 @@ class ReportsService {
         average_bill: 0,
       };
       row.bills += 1;
-      row.sales += billRevenue(bill);
-      row.tax += billTax(bill);
-      row.refunds += billRefundAmount(bill);
+      row.sales += getBillRevenue(bill);
+      row.tax += getBillTax(bill);
+      row.refunds += getBillRefundAmount(bill);
       row.average_bill = row.bills ? row.sales / row.bills : 0;
       rowsById.set(outletId, row);
     });
@@ -314,12 +292,12 @@ class ReportsService {
         total_spent: 0,
         average_spend: 0,
         last_visit: null,
-        preferred_channel: bill.order_type || "Dine-In",
+        preferred_channel: getBillChannel(bill) === "online" ? "Online" : "Dine-In",
         feedback_count: 0,
         average_rating: 0,
       };
       row.visits += 1;
-      row.total_spent += billRevenue(bill);
+      row.total_spent += getBillRevenue(bill);
       row.average_spend = row.total_spent / row.visits;
       row.last_visit = !row.last_visit || bill.created_at > row.last_visit ? bill.created_at : row.last_visit;
       rowsByCustomer.set(key, row);
@@ -331,7 +309,7 @@ class ReportsService {
       const row = rowsByCustomer.get(key);
       row.feedback_count += 1;
       row.average_rating =
-        (row.average_rating * (row.feedback_count - 1) + toNumber(item.rating, 0)) / row.feedback_count;
+        (row.average_rating * (row.feedback_count - 1) + toAnalyticsNumber(item.rating, 0)) / row.feedback_count;
     });
 
     const rows = Array.from(rowsByCustomer.values()).sort((a, b) => b.total_spent - a.total_spent);

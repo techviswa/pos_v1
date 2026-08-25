@@ -2,6 +2,11 @@ import prisma from "../../database/prisma/client.js";
 import { isDatabaseAvailable } from "../../config/db.js";
 import { ensureBusiness } from "../../database/prisma/helpers.js";
 import {
+  getBillOutletId,
+  getBillRevenue,
+  isRevenueBill,
+} from "../billing/bill-analytics.utils.js";
+import {
   billingSeedData,
   inventorySeedData,
   outletSeedData,
@@ -118,10 +123,20 @@ class DashboardService {
         }),
       ]);
 
+      const revenueBills = bills.filter(isRevenueBill);
+      const salesByOutlet = outlets.map((outlet) => {
+        const outletBills = revenueBills.filter((bill) => getBillOutletId(bill) === outlet.id);
+        return {
+          outlet_id: outlet.id,
+          outlet_name: outlet.name,
+          sales: outletBills.reduce((sum, bill) => sum + getBillRevenue(bill), 0),
+        };
+      });
+
       const data = {
         overview: {
-          total_sales: bills.reduce((sum, bill) => sum + Number(bill.total || 0), 0),
-          total_bills: bills.length,
+          total_sales: revenueBills.reduce((sum, bill) => sum + getBillRevenue(bill), 0),
+          total_bills: revenueBills.length,
           total_products: products.length,
           total_inventory_items: inventory.length,
           total_outlets: outlets.length,
@@ -129,11 +144,7 @@ class DashboardService {
           open_purchase_orders: purchaseOrderCount,
           scheduled_routes: scheduledRoutes.length,
         },
-        outlets: outlets.map((outlet) => ({
-          outlet_id: outlet.id,
-          outlet_name: outlet.name,
-          sales: 0,
-        })),
+        outlets: salesByOutlet,
         route_plans: scheduledRoutes.map((routePlan) => ({
           id: routePlan.id,
           route_name: routePlan.routeName,

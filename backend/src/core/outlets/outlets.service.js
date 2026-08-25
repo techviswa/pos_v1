@@ -10,15 +10,18 @@ import {
 } from "../../database/prisma/helpers.js";
 import { DEFAULT_OUTLET_STATUS } from "../../shared/constants/domain.constants.js";
 import { FEATURE_REGISTRY } from "../../shared/constants/feature.constants.js";
+import {
+  getBillOutletId,
+  getBillRevenue,
+  isRevenueBill,
+  toAnalyticsNumber,
+} from "../billing/bill-analytics.utils.js";
 
 const DEFAULT_OUTLET_NAME = "Main Outlet";
 const DEFAULT_OUTLET_CODE = "MAIN";
-const toNumber = (value, fallback = 0) => {
-  const parsed = Number(value);
-  return Number.isFinite(parsed) ? parsed : fallback;
-};
-const isRevenueBill = (bill) => !["void", "cancelled", "canceled"].includes(String(bill.status || "").toLowerCase());
-const getNetBillRevenue = (bill) => Math.max(0, toNumber(bill.total, 0) - toNumber(bill.metadata?.refunded_amount, 0));
+
+const normalizeOutletName = (value) => String(value || "").trim().toLowerCase();
+const isGeneratedDefaultOutletCode = (value) => ["main", "mo1"].includes(String(value || "").trim().toLowerCase());
 
 const getOutletInclude = () => ({
   business: true,
@@ -181,12 +184,14 @@ class OutletsService {
     const business = await ensureBusiness({ tenantId, businessId });
     await this.ensureDefaultOutlet({ business });
     const recentActivityThreshold = new Date(Date.now() - 1000 * 60 * 60 * 24);
-    const [outlets, purchaseOrderCounts, allocationCounts, orders, bills] = await Promise.all([
+    const [outlets, productCount, inventoryCount, purchaseOrderCounts, allocationCounts, orders, bills] = await Promise.all([
       prisma.outlet.findMany({
         where: { businessId: business.id },
         include: getOutletListInclude(),
         orderBy: { createdAt: "asc" },
       }),
+      prisma.product.count({ where: { businessId: business.id, active: true } }),
+      prisma.inventoryItem.count({ where: { businessId: business.id } }),
       prisma.purchaseOrder.groupBy({
         by: ["outletId"],
         where: {
@@ -243,17 +248,12 @@ class OutletsService {
     });
 
     bills.filter(isRevenueBill).forEach((bill) => {
-      const metadata = bill.metadata && typeof bill.metadata === "object" ? bill.metadata : {};
-      const outletId =
-        orderOutletMap.get(bill.orderId) ||
-        metadata.outlet_id ||
-        metadata.outletId ||
-        null;
+      const outletId = getBillOutletId(bill, orderOutletMap);
       if (!outletId) {
         return;
       }
 
-      outletSalesMap.set(outletId, (outletSalesMap.get(outletId) || 0) + getNetBillRevenue(bill));
+      outletSalesMap.set(outletId, (outletSalesMap.get(outletId) || 0) + getBillRevenue(bill));
       outletBillCountMap.set(outletId, (outletBillCountMap.get(outletId) || 0) + 1);
 
       if (bill.createdAt >= recentActivityThreshold) {
@@ -261,16 +261,39 @@ class OutletsService {
       }
     });
 
-    return outlets.map((outlet) => {
+    const outletNameCounts = outlets.reduce((counts, outlet) => {
+      const name = normalizeOutletName(outlet.name);
+      counts.set(name, (counts.get(name) || 0) + 1);
+      return counts;
+    }, new Map());
+
+    const shouldHideGeneratedDuplicate = (outlet) => {
+      const name = normalizeOutletName(outlet.name);
+      if ((outletNameCounts.get(name) || 0) < 2) return false;
+      if (name !== normalizeOutletName(DEFAULT_OUTLET_NAME)) return false;
+      if (!isGeneratedDefaultOutletCode(outlet.code)) return false;
+      const hasOperationalData =
+        outlet._count.productLinks > 0 ||
+        outlet._count.inventoryLinks > 0 ||
+        (outletBillCountMap.get(outlet.id) || 0) > 0 ||
+        (outletRecentActivityMap.get(outlet.id) || 0) > 0 ||
+        (purchaseOrderMap.get(outlet.id) || 0) > 0 ||
+        (allocationMap.get(outlet.id) || 0) > 0;
+      return !hasOperationalData;
+    };
+
+    return outlets.filter((outlet) => !shouldHideGeneratedDuplicate(outlet)).map((outlet) => {
+      const activeProductCount = outlet._count.productLinks || productCount;
+      const activeInventoryCount = outlet._count.inventoryLinks || inventoryCount;
       return {
         ...serializeOutlet(outlet),
         assigned_staff_count: outlet._count.userAssignments,
-        product_count: outlet._count.productLinks,
-        inventory_line_count: outlet._count.inventoryLinks,
+        product_count: activeProductCount,
+        inventory_line_count: activeInventoryCount,
         feature_count: outlet._count.featureToggles,
         analytics: {
           assigned_staff_count: outlet._count.userAssignments,
-          active_product_count: outlet._count.productLinks,
+          active_product_count: activeProductCount,
           low_inventory_count: 0,
           enabled_feature_count: outlet._count.featureToggles,
           open_purchase_orders: purchaseOrderMap.get(outlet.id) || 0,
@@ -283,14 +306,14 @@ class OutletsService {
     });
   }
 
-  buildOutletAnalytics({ outlet, purchaseOrderCount = 0, allocationCount = 0, billTotalsByOrderId = new Map() }) {
+  buildOutletAnalytics({ outlet, purchaseOrderCount = 0, allocationCount = 0, billTotalsByOrderId = new Map(), salesTotal = null }) {
     const activeProducts = outlet.productLinks.filter((item) => item.enabled).length;
     const lowInventoryItems = outlet.inventoryLinks.filter(
-      (item) => item.enabled && toNumber(item.stock, 0) <= toNumber(item.reorderLevel, 0),
+      (item) => item.enabled && toAnalyticsNumber(item.stock, 0) <= toAnalyticsNumber(item.reorderLevel, 0),
     ).length;
     const enabledFeatures = outlet.featureToggles.filter((item) => item.enabled).length;
-    const salesTotal = (outlet.orders || []).reduce(
-      (sum, order) => sum + toNumber(billTotalsByOrderId.get(order.id), 0),
+    const resolvedSalesTotal = salesTotal ?? (outlet.orders || []).reduce(
+      (sum, order) => sum + toAnalyticsNumber(billTotalsByOrderId.get(order.id), 0),
       0,
     );
 
@@ -301,7 +324,7 @@ class OutletsService {
       enabled_feature_count: enabledFeatures,
       open_purchase_orders: purchaseOrderCount,
       allocations_count: allocationCount,
-      total_sales: salesTotal,
+      total_sales: resolvedSalesTotal,
     };
   }
 
@@ -336,21 +359,21 @@ class OutletsService {
         outletId,
       },
     });
+    const orderOutletMap = new Map((outlet.orders || []).map((order) => [order.id, outlet.id]));
     const bills = await prisma.bill.findMany({
       where: {
-        orderId: {
-          in: outlet.orders.map((order) => order.id),
-        },
+        businessId: business.id,
       },
       select: {
         orderId: true,
+        status: true,
         total: true,
+        metadata: true,
       },
     });
 
-    const billTotalsByOrderId = new Map(
-      bills.filter(isRevenueBill).map((bill) => [bill.orderId, getNetBillRevenue(bill)]),
-    );
+    const outletRevenueBills = bills.filter((bill) => isRevenueBill(bill) && getBillOutletId(bill, orderOutletMap) === outletId);
+    const billTotalsByOrderId = new Map(outletRevenueBills.map((bill) => [bill.orderId || bill.id, getBillRevenue(bill)]));
 
     return {
       ...serializeOutlet(outlet),
@@ -363,6 +386,7 @@ class OutletsService {
         purchaseOrderCount,
         allocationCount,
         billTotalsByOrderId,
+        salesTotal: outletRevenueBills.reduce((sum, bill) => sum + getBillRevenue(bill), 0),
       }),
     };
   }
