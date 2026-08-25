@@ -5,7 +5,14 @@ import { clearTabSessionId, getTabSessionHeaders, getTabSessionId, setTabSession
 const AuthContext = createContext();
 
 const API_URL = process.env.REACT_APP_BACKEND_URL;
-const unwrapApiData = (payload) => payload?.data ?? payload;
+const isWrappedApiResponse = (payload) =>
+  payload &&
+  typeof payload === 'object' &&
+  !Array.isArray(payload) &&
+  Object.prototype.hasOwnProperty.call(payload, 'success') &&
+  Object.prototype.hasOwnProperty.call(payload, 'data');
+
+const unwrapApiData = (payload) => (isWrappedApiResponse(payload) ? payload.data : payload);
 const isAuthEndpoint = (url = '') =>
   url.includes('/api/auth/login') || url.includes('/api/auth/logout') || url.includes('/api/auth/refresh') || url.includes('/api/auth/me');
 const GET_CACHE_TTL_MS = 30000;
@@ -148,18 +155,25 @@ export const AuthProvider = ({ children }) => {
         const method = String(response?.config?.method || 'get').toLowerCase();
         const metadata = response?.config?.metadata || {};
         const cacheKey = metadata.cacheKey;
+        const unwrappedData = unwrapApiData(response?.data);
+        const normalizedResponse = {
+          ...response,
+          apiMeta: response?.data?.meta,
+          apiMessage: response?.data?.message,
+          data: unwrappedData,
+        };
 
         if (method === 'get' && cacheKey && !metadata.servedFromCache && !metadata.servedFromInflight) {
           pruneResponseCache();
           responseCache.set(cacheKey, {
             timestamp: Date.now(),
-            response: cloneCachedResponse(response),
+            response: cloneCachedResponse(normalizedResponse),
           });
-          metadata.resolveInflight?.(response);
+          metadata.resolveInflight?.(normalizedResponse);
           inflightRequests.delete(cacheKey);
         }
 
-        return response;
+        return normalizedResponse;
       },
       async (error) => {
         const originalRequest = error.config;
