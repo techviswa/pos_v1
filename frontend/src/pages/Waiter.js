@@ -12,7 +12,22 @@ import { useAutoRefresh } from "../hooks/useAutoRefresh";
 import { fulfillmentService } from "../features/billing/fulfillment/services/fulfillment.service";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "../components/ui/dialog";
 
-const API_URL = process.env.REACT_APP_BACKEND_URL;
+const API_URL = (() => {
+  const configured = String(process.env.REACT_APP_BACKEND_URL || "").replace(/\/+$/, "");
+  if (typeof window === "undefined") return configured;
+
+  const currentOrigin = window.location.origin.replace(/\/+$/, "");
+  const currentHost = window.location.hostname;
+  if (configured && configured !== currentOrigin && !configured.includes("vercel.app")) {
+    return configured;
+  }
+
+  if (currentHost === "localhost" || currentHost === "127.0.0.1") {
+    return configured || "http://localhost:4001";
+  }
+
+  return "https://pos-v1-fwjm.onrender.com";
+})();
 const ACTIVE_RESERVATION_STATUSES = new Set(["reserved", "occupied"]);
 const toArrayPayload = (payload) => {
   const data = payload?.data ?? payload;
@@ -392,3 +407,4 @@ export const Waiter = () => {
     </Layout>
   );
 };
+
