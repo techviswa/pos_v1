@@ -82,13 +82,59 @@ class UsersService {
     const roleName = payload.role || DEFAULT_USER_ROLE;
     const role = await ensureRole(roleName);
     const permissions = payload.permissions || ROLE_DEFAULT_PERMISSIONS[roleName] || [];
+    const email = payload.email || `${Date.now()}@pos.local`;
+    const existingUser = await prisma.user.findUnique({
+      where: { businessId_email: { businessId: business.id, email } },
+      include: getUserInclude(),
+    });
+
+    if (existingUser) {
+      const updatedUser = await prisma.user.update({
+        where: { id: existingUser.id },
+        data: {
+          roleId: role.id,
+          name: payload.name || existingUser.name,
+          passwordHash:
+            payload.password !== undefined ? this.normalizePassword(payload.password) : existingUser.passwordHash,
+          profileRequired: payload.profile_required ?? existingUser.profileRequired,
+          active: payload.active ?? existingUser.active,
+          bio: payload.bio ?? existingUser.bio,
+        },
+        include: getUserInclude(),
+      });
+
+      await syncUserPermissions(updatedUser.id, permissions);
+      await syncUserOutlets(updatedUser.id, payload.assigned_outlet_ids || []);
+
+      const user = await prisma.user.findUniqueOrThrow({
+        where: { id: updatedUser.id },
+        include: getUserInclude(),
+      });
+
+      const serializedUser = serializeUser(user);
+      await admincoreChangeSyncService.notifyChange({
+        resource: "staff",
+        action: "updated",
+        recordId: serializedUser.id,
+        tenantId,
+        businessId: business.id,
+        metadata: {
+          name: serializedUser.name,
+          email: serializedUser.email,
+          role: serializedUser.role,
+          active: serializedUser.active,
+        },
+      });
+
+      return serializedUser;
+    }
 
     const createdUser = await prisma.user.create({
       data: {
         businessId: business.id,
         roleId: role.id,
         name: payload.name || "New Staff",
-        email: payload.email || `${Date.now()}@pos.local`,
+        email,
         passwordHash: this.normalizePassword(payload.password),
         profileRequired: payload.profile_required ?? true,
         active: payload.active ?? true,
