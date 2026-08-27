@@ -5,6 +5,8 @@ import {
   recordAdmincoreSyncStatus,
 } from "./admincore.service.js";
 import { saasService } from "../saas/saas.service.js";
+import { usersService } from "../users/users.service.js";
+import { createHttpError } from "../../shared/utils/http-error.js";
 
 export const getConnection = (_req, res) => {
   sendRawResponse(res, {
@@ -38,6 +40,25 @@ export const getSaasTenant = async (req, res) => {
 
 export const postSaasTenant = async (req, res) => {
   sendRawResponse(res, { statusCode: 201, data: await saasService.upsertTenantFromAdminCore(req.body) });
+};
+
+export const postBridgeStaff = async (req, res) => {
+  const businessId = req.body?.business_id || req.body?.businessId;
+  const tenantId = req.body?.tenant_id || req.body?.tenantId;
+  if (!businessId || !tenantId) {
+    throw createHttpError({
+      statusCode: 400,
+      code: "ADMINCORE_STAFF_PROVISIONING_CONTEXT_REQUIRED",
+      message: "business_id and tenant_id are required for AdminCore staff provisioning",
+    });
+  }
+
+  const data = await usersService.createUser({
+    tenantId,
+    businessId,
+    payload: req.body,
+  });
+  sendRawResponse(res, { statusCode: 201, data });
 };
 
 export const putSaasSubscription = async (req, res) => {
