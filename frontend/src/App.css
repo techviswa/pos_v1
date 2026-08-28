@@ -3145,3 +3145,401 @@ body {
     grid-template-columns: repeat(2, 1fr);
   }
 }
+
+@media (max-width: 720px) {
+  .cf-shell {
+    height: 100dvh;
+    min-height: 100dvh;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+
+  .cf-topbar {
+    flex: 0 0 auto;
+    min-height: 56px;
+    padding: 8px 12px;
+    gap: 8px;
+  }
+
+  .cf-topbar__left {
+    min-width: 0;
+    flex: 1 1 auto;
+  }
+
+  .cf-topbar__title {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: 14px;
+  }
+
+  .cf-topbar__back {
+    min-height: 38px;
+    padding: 8px 10px;
+  }
+
+  .cf-topbar__user {
+    width: 100%;
+    gap: 8px;
+  }
+
+  .cf-topbar__meta {
+    order: 3;
+    width: 100%;
+    font-size: 10px;
+  }
+
+  .cf-topbar__avatar {
+    margin-left: auto;
+  }
+
+  .cf-topbar__name {
+    max-width: 130px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .cf-topbar__outlet-picker {
+    order: 4;
+    width: 100%;
+    align-items: stretch;
+  }
+
+  .cf-topbar__outlet-picker label {
+    align-self: center;
+  }
+
+  .cf-topbar__outlet-select {
+    min-width: 0;
+    width: 100%;
+    height: 40px;
+  }
+
+  .cf-shell__body {
+    flex: 1 1 auto;
+    min-height: 0;
+    height: auto;
+  }
+
+  .cf-sidebar {
+    top: 0;
+    width: min(82vw, 280px);
+    min-width: min(82vw, 280px);
+  }
+
+  .cf-sidebar__scrim {
+    inset: 0;
+  }
+
+  .cf-sidebar__logo {
+    padding: 18px 18px 14px;
+  }
+
+  .cf-sidebar__nav {
+    padding-bottom: 16px;
+  }
+
+  .cf-nav__item {
+    min-height: 44px;
+    padding: 11px 18px;
+    font-size: 14px;
+  }
+
+  .cf-sidebar__footer {
+    padding: 14px 18px;
+  }
+
+  .cf-main {
+    min-width: 0;
+    overflow: hidden;
+  }
+
+  .cf-page {
+    padding: 18px 14px 28px;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .cf-page__header {
+    flex-direction: column;
+    gap: 12px;
+    margin-bottom: 18px;
+  }
+
+  .cf-page__header h1,
+  .cf-dashboard-hero h1 {
+    font-size: 24px;
+    line-height: 1.1;
+  }
+
+  .cf-page__header-actions {
+    width: 100%;
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(132px, 1fr));
+    gap: 8px;
+  }
+
+  .cf-page__header-actions .cf-btn {
+    width: 100%;
+  }
+
+  .cf-card--padded,
+  .cf-settings-card,
+  .cf-dashboard-hero,
+  .cf-kitchen-hero {
+    padding: 16px;
+  }
+
+  .cf-metrics {
+    grid-template-columns: 1fr;
+    gap: 10px;
+    margin-bottom: 18px;
+  }
+
+  .cf-metric {
+    padding: 16px;
+  }
+
+  .cf-metric__value {
+    font-size: 28px;
+  }
+
+  .cf-table-wrap {
+    width: 100%;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .cf-table {
+    min-width: 680px;
+  }
+
+  .cf-table thead th,
+  .cf-table tbody td {
+    padding: 11px 12px;
+  }
+
+  .cf-table-toolbar {
+    align-items: stretch;
+  }
+
+  .cf-search,
+  .cf-input,
+  .cf-select,
+  .cf-textarea {
+    min-height: 44px;
+    font-size: 16px;
+  }
+
+  .cf-btn {
+    min-height: 42px;
+    padding: 10px 14px;
+  }
+
+  .cf-btn--small {
+    min-height: 36px;
+  }
+
+  .cf-dialog-content,
+  .cf-table-modal {
+    width: calc(100vw - 24px);
+    max-width: calc(100vw - 24px);
+    max-height: calc(100dvh - 24px);
+    padding: 18px;
+  }
+
+  .cf-dialog-scroll {
+    max-height: calc(100dvh - 160px);
+  }
+
+  .cf-login {
+    position: fixed;
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .cf-login__left {
+    align-items: flex-start;
+    padding: 38px 20px 28px;
+  }
+
+  .cf-login__wrap {
+    max-width: none;
+  }
+
+  .cf-login__brand {
+    font-size: 34px;
+  }
+
+  .cf-login__tagline {
+    margin-bottom: 32px;
+  }
+
+  .cf-login__roles {
+    flex-wrap: wrap;
+    gap: 10px 18px;
+  }
+
+  .cf-billing {
+    height: auto;
+    min-height: 0;
+    overflow-y: auto;
+    flex-direction: column;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .cf-billing__products {
+    flex: 0 0 auto;
+    overflow: visible;
+    padding: 16px 14px;
+  }
+
+  .cf-billing__sidebar {
+    width: auto;
+    min-width: 0;
+    min-height: 360px;
+    border-left: 0;
+    border-top: 1px solid var(--cf-border);
+  }
+
+  .cf-billing__toolbar {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .cf-table-board,
+  .cf-table-overview,
+  .cf-product-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .cf-table-sketch__grid {
+    gap: 10px;
+  }
+
+  .cf-table-sketch__tile-wrap,
+  .cf-table-sketch__tile-wrap.is-square,
+  .cf-table-sketch__tile-wrap.is-round {
+    width: 96px;
+  }
+
+  .cf-table-sketch__tile-wrap.is-rectangle,
+  .cf-table-sketch__tile-wrap.is-booth {
+    width: 120px;
+  }
+
+  .cf-table-chip {
+    width: 96px;
+    min-height: 88px;
+  }
+
+  .cf-kitchen-list__item,
+  .cf-cart__item {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .cf-kitchen-list__stats,
+  .cf-cart__item-total {
+    align-items: flex-start;
+    min-width: 0;
+    text-align: left;
+  }
+
+  .cf-offline-status {
+    right: 10px;
+    bottom: 10px;
+    left: 10px;
+    min-width: 0;
+  }
+}
+
+@media (max-width: 520px) {
+  .cf-qr-page {
+    height: 100dvh;
+    min-height: 100dvh;
+  }
+
+  .cf-qr-shell {
+    width: 100%;
+    padding: 0 0 18px;
+  }
+
+  .cf-qr-header {
+    padding: 18px 14px 12px;
+  }
+
+  .cf-qr-header h1 {
+    font-size: 24px;
+  }
+
+  .cf-qr-success,
+  .cf-qr-error {
+    margin: 0 14px 12px;
+    padding: 12px 14px;
+  }
+
+  .cf-qr-layout {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 12px;
+    padding: 0 10px;
+  }
+
+  .cf-qr-menu,
+  .cf-qr-cart {
+    border-radius: 0;
+    box-shadow: none;
+  }
+
+  .cf-qr-menu-tools {
+    padding: 12px;
+  }
+
+  .cf-qr-category {
+    padding: 14px 12px;
+  }
+
+  .cf-qr-menu-item {
+    gap: 12px;
+    padding: 14px 0;
+  }
+
+  .cf-qr-menu-item__actions {
+    align-items: center;
+  }
+
+  .cf-qr-add-btn {
+    min-width: 92px;
+    height: 38px;
+  }
+
+  .cf-qr-options label {
+    min-height: 34px;
+  }
+
+  .cf-qr-cart {
+    padding: 14px;
+  }
+
+  .cf-qr-cart__row {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: start;
+  }
+
+  .cf-qr-cart__row strong {
+    text-align: right;
+  }
+
+  .cf-feedback-page {
+    align-items: stretch;
+    padding: 12px;
+  }
+
+  .cf-feedback-card {
+    padding: 18px;
+  }
+}
