@@ -13,6 +13,7 @@ import {
   STAFF_ROLE_OPTIONS,
 } from "../../shared/constants/access.constants.js";
 import { DEFAULT_USER_ROLE } from "../../shared/constants/domain.constants.js";
+import { createHttpError } from "../../shared/utils/http-error.js";
 import { hashPassword, isPasswordHash } from "../auth/passwords.js";
 import { admincoreChangeSyncService } from "../admincore/admincore-change-sync.service.js";
 
@@ -34,6 +35,9 @@ const getUserInclude = () => ({
 class UsersService {
   normalizePassword(password, fallback = "changeme123") {
     const value = password || fallback;
+    if (!isPasswordHash(value) && String(value).length < 8) {
+      throw createHttpError({ statusCode: 400, message: "Password must be at least 8 characters" });
+    }
     return isPasswordHash(value) ? value : hashPassword(value);
   }
 

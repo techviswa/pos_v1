@@ -62,6 +62,9 @@ class AuthService {
 
   async ensureBootstrapUser() {
     if (!isDatabaseAvailable()) {
+      if (env.nodeEnv === "production") {
+        return null;
+      }
       return this.getFallbackUsers()[0] || null;
     }
 
@@ -92,6 +95,9 @@ class AuthService {
                   roleId: role.id,
                   profileRequired: false,
                   active: true,
+                  ...(!isPasswordHash(existingBootstrapUser.passwordHash)
+                    ? { passwordHash: hashPassword(env.auth.adminPassword) }
+                    : {}),
                 },
                 include: getUserInclude(),
               })
@@ -121,7 +127,7 @@ class AuthService {
             include: getUserInclude(),
           });
         } catch (error) {
-          if (this.shouldUseFallback(error)) {
+          if (this.shouldUseFallback(error) && env.nodeEnv !== "production") {
             return this.getFallbackUsers()[0] || null;
           }
 
@@ -209,7 +215,7 @@ class AuthService {
   }
 
   async login({ email, password }) {
-    if (!isDatabaseAvailable()) {
+    if (!isDatabaseAvailable() && env.nodeEnv !== "production") {
       const normalizedEmail = String(email || "").trim().toLowerCase();
       const user = this.getFallbackUsers().find(
         (entry) => entry.email.toLowerCase() === normalizedEmail && entry.password === password,
@@ -257,7 +263,7 @@ class AuthService {
         sessionId: this.createSessionForUser(user.id),
       };
     } catch (error) {
-      if (!this.shouldUseFallback(error)) {
+      if (!this.shouldUseFallback(error) || env.nodeEnv === "production") {
         throw error;
       }
 
@@ -284,7 +290,7 @@ class AuthService {
         return null;
       }
 
-      if (!isDatabaseAvailable()) {
+      if (!isDatabaseAvailable() && env.nodeEnv !== "production") {
         const fallbackUser = this.getFallbackUserById(targetUserId);
         if (!fallbackUser) {
           return null;
@@ -300,7 +306,7 @@ class AuthService {
 
       return user ? serializeUser(user) : null;
     } catch (error) {
-      if (!this.shouldUseFallback(error)) {
+      if (!this.shouldUseFallback(error) || env.nodeEnv === "production") {
         throw error;
       }
 
@@ -347,7 +353,7 @@ class AuthService {
       return { accepted: true, reset_token: null };
     }
 
-    const token = createAuthToken({
+    const token = await createAuthToken({
       type: "password_reset",
       userId: user.id,
       ttlMs: PASSWORD_RESET_TTL_MS,
@@ -357,11 +363,14 @@ class AuthService {
       },
     });
 
-    return {
+    const response = {
       accepted: true,
-      reset_token: token,
       expires_in_minutes: PASSWORD_RESET_TTL_MS / 60000,
     };
+    if (env.nodeEnv !== "production") {
+      response.reset_token = token;
+    }
+    return response;
   }
 
   async resetPassword({ token, password }) {
@@ -369,7 +378,7 @@ class AuthService {
       return null;
     }
 
-    const record = consumeAuthToken({ token, type: "password_reset" });
+    const record = await consumeAuthToken({ token, type: "password_reset" });
     if (!record) {
       return null;
     }
@@ -391,7 +400,7 @@ class AuthService {
       return null;
     }
 
-    const token = createAuthToken({
+    const token = await createAuthToken({
       type: "invite",
       userId: null,
       ttlMs: INVITE_TTL_MS,
@@ -411,8 +420,8 @@ class AuthService {
     };
   }
 
-  getInvite({ token }) {
-    const record = getAuthToken({ token, type: "invite" });
+  async getInvite({ token }) {
+    const record = await getAuthToken({ token, type: "invite" });
     return record
       ? {
           email: record.metadata.email,
@@ -428,7 +437,7 @@ class AuthService {
       return null;
     }
 
-    const record = consumeAuthToken({ token, type: "invite" });
+    const record = await consumeAuthToken({ token, type: "invite" });
     if (!record) {
       return null;
     }

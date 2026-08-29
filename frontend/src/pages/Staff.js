@@ -4,6 +4,7 @@ import { useNavigate } from "react-router-dom";
 import { Layout } from "../components/Layout";
 import { toast } from "sonner";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "../components/ui/dialog";
+import { getApiErrorMessage } from "../lib/apiErrors";
 import {
   formatCurrency,
   getDefaultPermissionsForRole,
@@ -173,10 +174,14 @@ export const Staff = () => {
   const [selectedStaffId, setSelectedStaffId] = useState(null);
   const [outlets, setOutlets] = useState([]);
   const [showAddDialog, setShowAddDialog] = useState(false);
+  const [showInviteDialog, setShowInviteDialog] = useState(false);
   const [editingStaff, setEditingStaff] = useState(null);
   const [formData, setFormData] = useState(createDefaultForm);
+  const [inviteForm, setInviteForm] = useState({ email: "", role: "Cashier" });
+  const [inviteResult, setInviteResult] = useState(null);
   const [editForm, setEditForm] = useState(createDefaultForm);
   const [addFormError, setAddFormError] = useState("");
+  const [inviteFormError, setInviteFormError] = useState("");
   const [editFormError, setEditFormError] = useState("");
   const hasLoadedStaffRef = useRef(false);
 
@@ -279,6 +284,26 @@ export const Staff = () => {
       fetchData();
     } catch (error) {
       setAddFormError(error.response?.data?.detail || "Unable to add staff");
+    }
+  };
+
+  const createInvite = async (event) => {
+    event.preventDefault();
+    setInviteFormError("");
+    setInviteResult(null);
+
+    try {
+      const response = await axios.post(
+        `${API_URL}/api/auth/invites`,
+        inviteForm,
+        { withCredentials: true }
+      );
+      const data = response.data?.data || response.data;
+      const inviteLink = `${window.location.origin}/invite/${data.invite_token}`;
+      setInviteResult({ ...data, invite_link: inviteLink });
+      toast.success("Staff invite created");
+    } catch (error) {
+      setInviteFormError(getApiErrorMessage(error, "Unable to create invite"));
     }
   };
 
@@ -395,6 +420,18 @@ export const Staff = () => {
             <p>Control role visibility, outlet-wise access, and track staff performance so strong work is visible.</p>
           </div>
           <div className="cf-page__header-actions">
+            <button
+              className="cf-btn cf-btn--secondary"
+              onClick={() => {
+                setInviteForm({ email: "", role: "Cashier" });
+                setInviteResult(null);
+                setInviteFormError("");
+                setShowInviteDialog(true);
+              }}
+              type="button"
+            >
+              Invite Staff
+            </button>
             <button className="cf-btn cf-btn--primary" data-testid="add-staff-button" onClick={() => setShowAddDialog(true)} type="button">
               + Add Staff
             </button>
@@ -618,6 +655,60 @@ export const Staff = () => {
               <DialogFooter className="cf-dialog-actions">
                 <button className="cf-btn cf-btn--secondary" onClick={() => setShowAddDialog(false)} type="button">Cancel</button>
                 <button className="cf-btn cf-btn--primary" type="submit">Add Staff</button>
+              </DialogFooter>
+            </form>
+          </DialogContent>
+        </Dialog>
+
+        <Dialog onOpenChange={setShowInviteDialog} open={showInviteDialog}>
+          <DialogContent className="bg-white cf-dialog-content" style={{ maxWidth: 620, width: "92vw" }}>
+            <DialogHeader>
+              <DialogTitle className="cf-dialog__title">Invite Staff Member</DialogTitle>
+            </DialogHeader>
+            <form onSubmit={createInvite}>
+              <div className="cf-field">
+                <label>Email</label>
+                <input
+                  className="cf-input"
+                  onChange={(event) => setInviteForm((current) => ({ ...current, email: event.target.value }))}
+                  required
+                  type="email"
+                  value={inviteForm.email}
+                />
+              </div>
+              <div className="cf-field">
+                <label>Role</label>
+                <select
+                  className="cf-select"
+                  onChange={(event) => setInviteForm((current) => ({ ...current, role: event.target.value }))}
+                  value={inviteForm.role}
+                >
+                  {STAFF_ROLE_OPTIONS.filter((role) => role !== "Owner").map((role) => (
+                    <option key={role} value={role}>{role}</option>
+                  ))}
+                </select>
+              </div>
+              {inviteFormError ? (
+                <div className="cf-card" style={{ borderColor: "var(--cf-red)", padding: "12px 14px", marginTop: 16, color: "var(--cf-red)", fontSize: 13 }}>
+                  {inviteFormError}
+                </div>
+              ) : null}
+              {inviteResult ? (
+                <div className="cf-card cf-card--padded" style={{ marginTop: 16 }}>
+                  <div className="cf-section-title">Invite Link</div>
+                  <div className="cf-code-block">{inviteResult.invite_link}</div>
+                  <button
+                    className="cf-btn cf-btn--secondary cf-btn--full"
+                    onClick={() => window.navigator.clipboard?.writeText(inviteResult.invite_link)}
+                    type="button"
+                  >
+                    Copy Invite Link
+                  </button>
+                </div>
+              ) : null}
+              <DialogFooter className="cf-dialog-actions">
+                <button className="cf-btn cf-btn--secondary" onClick={() => setShowInviteDialog(false)} type="button">Close</button>
+                <button className="cf-btn cf-btn--primary" type="submit">Create Invite</button>
               </DialogFooter>
             </form>
           </DialogContent>

@@ -16,6 +16,7 @@ import { createHttpError, createNotFoundError } from "../../shared/utils/http-er
 import { featureToggleService } from "../../services/featureToggleService.js";
 import { ACTIVE_SUBSCRIPTION_STATUSES, DEFAULT_SAAS_PLAN, getPlan, SAAS_PLANS } from "./saas-plans.js";
 import { saasStore } from "./saas-store.js";
+import { hashPassword, isPasswordHash } from "../auth/passwords.js";
 
 const normalizeId = (value, fallback) => String(value || fallback).trim();
 
@@ -149,10 +150,14 @@ class SaasService {
 
   async ensureOwnerUser({ businessId, name, email, password }) {
     const role = await ensureRole("Owner");
+    if (!isPasswordHash(password) && String(password || "").length < 8) {
+      throw createHttpError({ statusCode: 400, message: "Owner password must be at least 8 characters" });
+    }
+    const passwordHash = isPasswordHash(password) ? password : hashPassword(password);
     const user = await prisma.user.upsert({
       where: { businessId_email: { businessId, email } },
-      update: { name, passwordHash: password, roleId: role.id, active: true, profileRequired: false },
-      create: { businessId, roleId: role.id, name, email, passwordHash: password, active: true, profileRequired: false },
+      update: { name, passwordHash, roleId: role.id, active: true, profileRequired: false },
+      create: { businessId, roleId: role.id, name, email, passwordHash, active: true, profileRequired: false },
     });
     const outlet = await prisma.outlet.findFirst({ where: { businessId } });
     if (outlet) await syncUserOutlets(user.id, [outlet.id]);

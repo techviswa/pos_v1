@@ -1,6 +1,6 @@
 import React, { useState } from "react";
 import { Eye, EyeOff } from "lucide-react";
-import { useNavigate } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import { useAuth } from "../contexts/AuthContext";
 import { getApiErrorMessage } from "../lib/apiErrors";
 import { hasPermission } from "../lib/pos";
@@ -116,6 +116,9 @@ export const Login = () => {
             </button>
           </form>
 
+          <p className="cf-login__helper">
+            <Link to="/forgot-password">Forgot password?</Link>
+          </p>
           <p className="cf-login__helper">Each browser tab can keep a separate staff login.</p>
         </div>
       </div>

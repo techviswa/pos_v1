@@ -6,9 +6,9 @@ import { businessesController } from "./businesses.controller.js";
 
 const router = Router();
 
-router.get("/", asyncHandler(businessesController.list));
+router.get("/", requireRole("Owner", "Manager"), asyncHandler(businessesController.list));
 router.post("/", requireRole("Owner", "Manager"), asyncHandler(businessesController.create));
-router.get("/:businessId", asyncHandler(businessesController.getById));
+router.get("/:businessId", requireRole("Owner", "Manager"), asyncHandler(businessesController.getById));
 router.put("/:businessId", requireRole("Owner", "Manager"), asyncHandler(businessesController.update));
 
 export default router;

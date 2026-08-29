@@ -85,11 +85,27 @@ model User {
   permissions       UserPermission[]
   outletAssignments UserOutletAssignment[]
   activities        StaffActivity[]
+  authTokens        AuthToken[]
   purchaseOrders    PurchaseOrder[]
   createdAt         DateTime             @default(now())
   updatedAt         DateTime             @updatedAt
 
   @@unique([businessId, email])
+}
+
+model AuthToken {
+  id        String    @id @default(cuid())
+  token     String    @unique
+  type      String
+  userId    String?
+  metadata  Json?
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime  @default(now())
+  user      User?     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([type, expiresAt])
+  @@index([userId])
 }
 
 model Outlet {

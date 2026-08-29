@@ -2,10 +2,12 @@ import { randomUUID } from "crypto";
 
 export const SESSION_COOKIE_NAME = "cf_session_id";
 export const SESSION_HEADER_NAME = "x-cf-session-id";
+const isProduction = () => String(process.env.NODE_ENV || "").toLowerCase() === "production";
+
 export const SESSION_COOKIE_OPTIONS = {
   httpOnly: true,
   sameSite: "lax",
-  secure: false,
+  secure: isProduction(),
   path: "/",
   maxAge: 1000 * 60 * 60 * 24 * 7,
 };
@@ -39,3 +41,8 @@ export const getSessionIdFromRequest = (req) =>
   req?.headers?.[SESSION_HEADER_NAME] ||
   parseCookieHeader(req?.headers?.cookie || "")[SESSION_COOKIE_NAME] ||
   null;
+
+export const getSessionCookieOptions = () => ({
+  ...SESSION_COOKIE_OPTIONS,
+  secure: isProduction(),
+});

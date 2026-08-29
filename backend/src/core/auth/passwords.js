@@ -17,6 +17,9 @@ export const verifyPassword = (password, storedValue) => {
   const stored = String(storedValue || "");
 
   if (!isPasswordHash(stored)) {
+    if (String(process.env.NODE_ENV || "").toLowerCase() === "production") {
+      return false;
+    }
     return stored === String(password || "");
   }
 
@@ -30,4 +33,3 @@ export const verifyPassword = (password, storedValue) => {
 
   return expected.length === actual.length && timingSafeEqual(expected, actual);
 };
-

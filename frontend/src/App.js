@@ -20,6 +20,9 @@ const lazyPage = (loader, exportName) => {
 };
 
 const Login = lazyPage(() => import('./pages/Login'), 'Login');
+const ForgotPassword = lazyPage(() => import('./pages/ForgotPassword'), 'ForgotPassword');
+const ResetPassword = lazyPage(() => import('./pages/ResetPassword'), 'ResetPassword');
+const AcceptInvite = lazyPage(() => import('./pages/AcceptInvite'), 'AcceptInvite');
 const Dashboard = lazyPage(() => import('./pages/Dashboard'), 'Dashboard');
 const DashboardMetricDetail = lazyPage(() => import('./pages/DashboardMetricDetail'), 'DashboardMetricDetail');
 const Manager = lazyPage(() => import('./pages/Manager'), 'Manager');
@@ -123,6 +126,9 @@ const AppRoutes = () => {
         <Route path="/qr/orders/:trackingToken" element={<QrOrderTracking />} />
         <Route path="/qr/:token" element={<QrOrdering />} />
         <Route path="/login" element={<Login />} />
+        <Route path="/forgot-password" element={<ForgotPassword />} />
+        <Route path="/reset-password" element={<ResetPassword />} />
+        <Route path="/invite/:token" element={<AcceptInvite />} />
         <Route
           path="/complete-profile"
           element={

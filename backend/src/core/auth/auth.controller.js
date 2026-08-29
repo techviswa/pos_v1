@@ -4,7 +4,7 @@ import { authService } from "./auth.service.js";
 import {
   getSessionIdFromRequest,
   SESSION_COOKIE_NAME,
-  SESSION_COOKIE_OPTIONS,
+  getSessionCookieOptions,
 } from "./auth-session.js";
 
 class AuthController {
@@ -18,7 +18,7 @@ class AuthController {
       throw createHttpError({ statusCode: 401, message: "Invalid email or password" });
     }
 
-    res.cookie(SESSION_COOKIE_NAME, data.sessionId, SESSION_COOKIE_OPTIONS);
+    res.cookie(SESSION_COOKIE_NAME, data.sessionId, getSessionCookieOptions());
     res.status(200).json(
       apiResponse({
         message: "Login successful",
@@ -48,6 +48,7 @@ class AuthController {
     if (!data) {
       throw createHttpError({ statusCode: 401, message: "Authentication required" });
     }
+    res.cookie(SESSION_COOKIE_NAME, getSessionIdFromRequest(req), getSessionCookieOptions());
     res.status(200).json(apiResponse({ message: "Session refreshed successfully", data }));
   }
 
@@ -63,10 +64,8 @@ class AuthController {
       sessionId: getSessionIdFromRequest(req),
     });
     res.clearCookie(SESSION_COOKIE_NAME, {
-      httpOnly: true,
-      sameSite: "lax",
-      secure: false,
-      path: "/",
+      ...getSessionCookieOptions(),
+      maxAge: undefined,
     });
     res.status(200).json(apiResponse({ message: "Logout successful", data }));
   }
@@ -107,7 +106,7 @@ class AuthController {
   }
 
   async getInvite(req, res) {
-    const data = authService.getInvite({
+    const data = await authService.getInvite({
       token: req.params.token,
     });
 
