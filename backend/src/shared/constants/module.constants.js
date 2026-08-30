@@ -4,6 +4,7 @@
   SAAS: "saas",
   FEATURES: "features",
   USERS: "staff",
+  CUSTOMERS: "customers",
   PRODUCTS: "products",
   DASHBOARD: "dashboard",
   REPORTS: "reports",

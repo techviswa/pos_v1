@@ -99,6 +99,8 @@ const run = async () => {
     await request({ baseUrl, path: "/api/products?limit=5", cookie });
     await request({ baseUrl, path: "/api/orders?limit=5", cookie });
     await request({ baseUrl, path: "/api/billing?limit=5", cookie });
+    await request({ baseUrl, path: "/api/customers?limit=5", cookie });
+    await request({ baseUrl, path: "/api/payments?limit=5", cookie });
     await request({ baseUrl, path: "/api/inventory?limit=5", cookie });
     const outlets = await request({ baseUrl, path: "/api/outlets", cookie });
     if (!Array.isArray(outlets.data) || outlets.data.length < 1) {
@@ -130,7 +132,20 @@ const run = async () => {
     await request({ baseUrl, path: "/api/reports/gst", cookie });
     await request({ baseUrl, path: "/api/sync/strategy", cookie });
 
-    for (const resource of ["businesses", "outlets", "products", "orders", "staff", "inventory", "tables", "reservations"]) {
+    for (const resource of [
+      "businesses",
+      "outlets",
+      "products",
+      "orders",
+      "bills",
+      "customers",
+      "payments",
+      "staff",
+      "inventory",
+      "tables",
+      "reservations",
+      "kot",
+    ]) {
       const syncExport = await request({
         baseUrl,
         path: `/api/sync/export/${resource}?limit=5`,
@@ -138,11 +153,15 @@ const run = async () => {
       });
       assertAdminCoreEnvelope(syncExport.data, resource);
 
+      const directResourcePaths = {
+        bills: "billing",
+      };
+      const directResource = directResourcePaths[resource] || resource;
       const syncList = await request({
         baseUrl,
-        path: ["tables", "reservations"].includes(resource)
-          ? `/api/${resource}?sync=admincore`
-          : `/api/${resource}?sync=admincore&limit=5`,
+        path: ["tables", "reservations", "kot"].includes(resource)
+          ? `/api/${directResource}?sync=admincore`
+          : `/api/${directResource}?sync=admincore&limit=5`,
         cookie,
       });
       assertAdminCoreEnvelope(syncList.data, resource);

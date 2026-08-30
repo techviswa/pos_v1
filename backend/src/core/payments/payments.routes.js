@@ -8,6 +8,7 @@ const router = Router();
 
 router.post("/public/intents", asyncHandler(paymentsController.createPublic));
 router.post("/webhooks/:provider", asyncHandler(paymentsController.webhook));
+router.get("/", requireAnyPermission("billing", "bills", "reports"), asyncHandler(paymentsController.listAll));
 router.get("/intents", requireAnyPermission("billing", "bills", "reports"), asyncHandler(paymentsController.list));
 router.post("/intents", requirePermission("billing"), asyncHandler(paymentsController.create));
 router.get("/intents/:intentId", requireAnyPermission("billing", "bills"), asyncHandler(paymentsController.getById));

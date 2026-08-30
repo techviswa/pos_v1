@@ -11,6 +11,9 @@ const normalizeResource = (resource) => {
   const normalized = String(resource || "").trim().toLowerCase();
   if (["users", "user", "staffs"].includes(normalized)) return "staff";
   if (["bill", "billing", "invoice", "invoices"].includes(normalized)) return "bills";
+  if (["customer", "customer-profiles", "guest", "guests"].includes(normalized)) return "customers";
+  if (["payment", "payment-intents", "transactions", "transaction"].includes(normalized)) return "payments";
+  if (["kitchen", "kitchen-tickets", "kitchen-ticket", "kot-tickets"].includes(normalized)) return "kot";
   if (["table", "table-management", "dining-tables"].includes(normalized)) return "tables";
   if (["reservation", "table-reservations", "reservations"].includes(normalized)) return "reservations";
   return normalized || "unknown";

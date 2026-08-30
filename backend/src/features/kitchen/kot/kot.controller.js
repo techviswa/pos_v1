@@ -1,4 +1,5 @@
 import { apiResponse } from "../../../shared/utils/apiResponse.js";
+import { isAdminCoreSyncRequest, createSyncEnvelope } from "../../../core/sync/sync-contract.js";
 import { kotService } from "./kot.service.js";
 
 class KotController {
@@ -9,6 +10,16 @@ class KotController {
       status: req.query?.status,
       stationId: req.query?.station_id || req.query?.stationId,
     });
+    if (isAdminCoreSyncRequest(req)) {
+      return res.status(200).json(
+        createSyncEnvelope({
+          resource: "kot",
+          data: data.items || [],
+          tenantId: req.context.tenantId,
+          businessId: req.context.businessId,
+        }),
+      );
+    }
     res.status(200).json(apiResponse({ message: "KOT tickets fetched successfully", data }));
   }
 

@@ -6,6 +6,7 @@ import reportsRoutes from "../core/reports/reports.routes.js";
 import feedbackRoutes from "../core/feedback/feedback.routes.js";
 import featuresRoutes from "../core/features/features.routes.js";
 import usersRoutes from "../core/users/users.routes.js";
+import customersRoutes from "../core/customers/customers.routes.js";
 import productsRoutes from "../core/products/products.routes.js";
 import ordersRoutes from "../core/orders/orders.routes.js";
 import billingRoutes from "../core/billing/billing.routes.js";
@@ -56,6 +57,7 @@ export const coreRouteModules = [
     router: feedbackRoutes,
   },
   { type: "core", key: API_ROUTE_SEGMENTS.USERS, path: `/${API_ROUTE_SEGMENTS.USERS}`, router: usersRoutes },
+  { type: "core", key: API_ROUTE_SEGMENTS.CUSTOMERS, path: `/${API_ROUTE_SEGMENTS.CUSTOMERS}`, router: customersRoutes },
   {
     type: "core",
     key: API_ROUTE_SEGMENTS.PRODUCTS,

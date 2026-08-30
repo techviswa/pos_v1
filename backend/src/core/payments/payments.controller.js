@@ -1,8 +1,30 @@
 import { apiResponse } from "../../shared/utils/apiResponse.js";
 import { createHttpError } from "../../shared/utils/http-error.js";
+import { isAdminCoreSyncRequest, createSyncEnvelope } from "../sync/sync-contract.js";
 import { paymentsService } from "./payments.service.js";
+import { syncService } from "../sync/sync.service.js";
 
 class PaymentsController {
+  async listAll(req, res) {
+    const data = await syncService.exportResource({
+      resource: "payments",
+      tenantId: req.context.tenantId,
+      businessId: req.context.businessId,
+      query: req.query || {},
+    });
+    if (isAdminCoreSyncRequest(req)) {
+      return res.status(200).json(
+        createSyncEnvelope({
+          resource: "payments",
+          data: data.items,
+          tenantId: req.context.tenantId,
+          businessId: req.context.businessId,
+        }),
+      );
+    }
+    res.status(200).json(apiResponse({ message: "Payments fetched successfully", data: data.items, meta: data.meta }));
+  }
+
   async list(req, res) {
     const data = paymentsService.listIntents({ status: req.query?.status });
     res.status(200).json(apiResponse({ message: "Payment intents fetched successfully", data }));

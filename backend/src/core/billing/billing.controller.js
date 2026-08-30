@@ -1,4 +1,5 @@
 import { apiResponse } from "../../shared/utils/apiResponse.js";
+import { isAdminCoreSyncRequest, createSyncEnvelope } from "../sync/sync-contract.js";
 import { billingService } from "./billing.service.js";
 
 class BillingController {
@@ -9,6 +10,16 @@ class BillingController {
       page: req.query?.page,
       offset: req.query?.offset,
     });
+    if (isAdminCoreSyncRequest(req)) {
+      return res.status(200).json(
+        createSyncEnvelope({
+          resource: "bills",
+          data,
+          tenantId: req.context.tenantId,
+          businessId: req.context.businessId,
+        }),
+      );
+    }
     res.status(200).json(apiResponse({ message: "Invoices fetched successfully", data }));
   }
 
