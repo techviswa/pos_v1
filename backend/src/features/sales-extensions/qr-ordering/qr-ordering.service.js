@@ -85,6 +85,49 @@ const getOrderInclude = () => ({
 });
 
 class QrOrderingService {
+  async ensureTableSession({ qrCode, customer = {}, tx = prisma }) {
+    const sessionKey = todaySessionKey(qrCode.tableId);
+    const existing = await tx.tableSession.findUnique({
+      where: { sessionKey },
+    });
+
+    const nextMetadata = {
+      ...(existing?.metadata || {}),
+      qr_code_id: qrCode.id,
+      table_name: qrCode.table.name,
+      area_name: qrCode.table.area?.name || null,
+      last_seen_at: new Date().toISOString(),
+      scan_count: Number(existing?.metadata?.scan_count || 0) + 1,
+    };
+
+    if (existing) {
+      return tx.tableSession.update({
+        where: { id: existing.id },
+        data: {
+          status: existing.status === "closed" ? "active" : existing.status,
+          customerName: customer.name || existing.customerName || null,
+          customerPhone: customer.phone || existing.customerPhone || null,
+          metadata: nextMetadata,
+          closedAt: null,
+        },
+      });
+    }
+
+    return tx.tableSession.create({
+      data: {
+        businessId: qrCode.businessId,
+        tableId: qrCode.tableId,
+        qrCodeId: qrCode.id,
+        sessionKey,
+        source: "qr",
+        status: "active",
+        customerName: customer.name || null,
+        customerPhone: customer.phone || null,
+        metadata: nextMetadata,
+      },
+    });
+  }
+
   async resolveContext(token) {
     const qrCode = await prisma.tableQrCode.findUnique({
       where: { token },
@@ -163,10 +206,13 @@ class QrOrderingService {
         public_base_url: rules.publicBaseUrl,
       },
       table_session: {
-        id: todaySessionKey(qrCode.tableId),
+        id: qrCode.currentTableSession?.id || todaySessionKey(qrCode.tableId),
+        session_key: qrCode.currentTableSession?.sessionKey || todaySessionKey(qrCode.tableId),
         table_id: qrCode.tableId,
-        status: "active",
-        opened_at: new Date().toISOString().slice(0, 10),
+        status: qrCode.currentTableSession?.status || "active",
+        opened_at: qrCode.currentTableSession?.openedAt
+          ? qrCode.currentTableSession.openedAt.toISOString()
+          : new Date().toISOString(),
       },
     };
   }
@@ -209,12 +255,16 @@ class QrOrderingService {
 
   async getSession({ token }) {
     const qrCode = await this.resolveContext(token);
-    return this.serializeContext(qrCode);
+    const currentTableSession = await this.ensureTableSession({ qrCode });
+    return this.serializeContext({ ...qrCode, currentTableSession });
   }
 
   async getMenu({ token, requestMeta = {} }) {
     const qrCode = await this.resolveContext(token);
-    await this.recordScan(qrCode, requestMeta);
+    const [, currentTableSession] = await Promise.all([
+      this.recordScan(qrCode, requestMeta),
+      this.ensureTableSession({ qrCode }),
+    ]);
     const products = await prisma.product.findMany({
       where: {
         businessId: qrCode.businessId,
@@ -231,7 +281,7 @@ class QrOrderingService {
     const outletId = qrCode.table.meta?.outlet_id || qrCode.table.meta?.outletId || null;
 
     return {
-      ...this.serializeContext(qrCode),
+      ...this.serializeContext({ ...qrCode, currentTableSession }),
       availability: {
         outlet_id: outletId,
         checked_at: new Date().toISOString(),
@@ -446,10 +496,18 @@ class QrOrderingService {
 
     const order = await prisma.$transaction(async (tx) => {
       const trackingToken = await this.createUniqueTrackingToken(tx);
+      const tableSession = await this.ensureTableSession({
+        qrCode,
+        customer: {
+          name: customerName,
+          phone: customerPhone || null,
+        },
+        tx,
+      });
       const created = await tx.order.create({
         data: {
           businessId: qrCode.businessId,
-          outletId: payload.outlet_id || payload.outletId || null,
+          outletId: payload.outlet_id || payload.outletId || qrCode.table.meta?.outlet_id || qrCode.table.meta?.outletId || null,
           trackingToken,
           customerName,
           channel: "qr",
@@ -461,7 +519,9 @@ class QrOrderingService {
             approval_status: rules.requireRestaurantApproval ? "pending" : "approved",
             table_id: qrCode.tableId,
             table_name: qrCode.table.name,
-            table_session_id: todaySessionKey(qrCode.tableId),
+            table_session_id: tableSession.id,
+            table_session_key: tableSession.sessionKey,
+            table_session_status: tableSession.status,
             area_name: qrCode.table.area?.name || null,
             qr_code_id: qrCode.id,
             tracking_token: trackingToken,
@@ -474,6 +534,9 @@ class QrOrderingService {
             service_charge: serviceCharge,
             tip_amount: tipAmount,
             payment,
+            order_lifecycle: rules.requireRestaurantApproval
+              ? "waiting_for_restaurant_approval"
+              : "sent_to_kitchen",
             table_meta: cloneJson(qrCode.table.meta, {}),
           },
           items: {
@@ -535,6 +598,7 @@ class QrOrderingService {
             ...(order.metadata || {}),
             qr_inbox: false,
             approval_status: "approved",
+            order_lifecycle: "sent_to_kitchen",
             approved_at: new Date().toISOString(),
             approved_by: actor?.id || null,
             approved_by_name: actor?.name || null,
@@ -571,6 +635,7 @@ class QrOrderingService {
           ...(order.metadata || {}),
           qr_inbox: false,
           approval_status: "rejected",
+          order_lifecycle: "rejected_by_restaurant",
           rejected_at: new Date().toISOString(),
           rejected_by: actor?.id || null,
           rejected_by_name: actor?.name || null,
@@ -600,6 +665,8 @@ class QrOrderingService {
         status: serialized.status,
         approval_status: serialized.metadata?.approval_status || null,
         table_session_id: serialized.metadata?.table_session_id || null,
+        table_session_key: serialized.metadata?.table_session_key || null,
+        lifecycle: serialized.metadata?.order_lifecycle || null,
         estimated_prep_minutes: serialized.metadata?.estimated_prep_minutes || null,
         payment_status: serialized.metadata?.payment?.status || null,
       },

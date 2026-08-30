@@ -71,8 +71,13 @@ export const QrOrdering = () => {
   const [selections, setSelections] = useState({});
   const [customerName, setCustomerName] = useState("");
   const [customerPhone, setCustomerPhone] = useState("");
+  const [tipAmount, setTipAmount] = useState("");
   const [notes, setNotes] = useState("");
   const [submittedOrder, setSubmittedOrder] = useState(null);
+  const [verificationToken, setVerificationToken] = useState("");
+  const [otp, setOtp] = useState("");
+  const [phoneVerified, setPhoneVerified] = useState(false);
+  const [verificationBusy, setVerificationBusy] = useState(false);
 
   useEffect(() => {
     let active = true;
@@ -118,14 +123,31 @@ export const QrOrdering = () => {
   const total = cartItems.reduce((sum, item) => sum + Number(item.price || 0) * Number(item.quantity || 1), 0);
   const orderingRules = context?.ordering || {};
   const phoneRequired = Boolean(orderingRules.require_customer_phone);
+  const phoneVerificationRequired = Boolean(orderingRules.require_phone_verification);
+  const serviceCharge =
+    Number(orderingRules.service_charge_fixed || 0) +
+    Math.round(total * (Number(orderingRules.service_charge_percent || 0) / 100));
+  const normalizedTipAmount = orderingRules.tips_enabled ? Math.max(0, Number(tipAmount || 0)) : 0;
+  const payableTotal = total + serviceCharge + normalizedTipAmount;
   const minOrderTotal = Number(orderingRules.min_order_total || 0);
-  const orderBlockedReason = orderingRules.paused
-    ? "Ordering is paused for this table."
-    : phoneRequired && !isValidPhone(customerPhone)
-      ? "Enter a valid 10-digit phone number."
-      : minOrderTotal && total < minOrderTotal
-        ? `Minimum order value is ${formatCurrency(minOrderTotal)}.`
-        : "";
+  let orderBlockedReason = "";
+  if (orderingRules.paused) {
+    orderBlockedReason = "Ordering is paused for this table.";
+  } else if (phoneRequired && !isValidPhone(customerPhone)) {
+    orderBlockedReason = "Enter a valid 10-digit phone number.";
+  } else if (phoneVerificationRequired && !phoneVerified) {
+    orderBlockedReason = "Verify your phone number before placing the order.";
+  } else if (orderingRules.payment_required_before_approval) {
+    orderBlockedReason = "Online payment confirmation is not connected yet for this restaurant.";
+  } else if (minOrderTotal && payableTotal < minOrderTotal) {
+    orderBlockedReason = `Minimum order value is ${formatCurrency(minOrderTotal)}.`;
+  }
+
+  useEffect(() => {
+    setPhoneVerified(false);
+    setVerificationToken("");
+    setOtp("");
+  }, [customerPhone]);
 
   const setProductSelection = (productId, patch) => {
     setSelections((current) => ({
@@ -181,6 +203,52 @@ export const QrOrdering = () => {
     });
   };
 
+  const requestPhoneVerification = async () => {
+    if (!isValidPhone(customerPhone)) {
+      setError("Enter a valid 10-digit phone number.");
+      return;
+    }
+
+    setVerificationBusy(true);
+    setError("");
+    try {
+      const response = await axios.post(`${API_URL}/api/public/qr/${token}/phone-verification`, {
+        phone: customerPhone,
+      });
+      const data = unwrap(response);
+      setVerificationToken(data.verification_token || "");
+      if (data.dev_otp && process.env.NODE_ENV !== "production") {
+        setOtp(data.dev_otp);
+      }
+    } catch (requestError) {
+      setError(requestError.response?.data?.error?.message || "Unable to send verification code right now.");
+    } finally {
+      setVerificationBusy(false);
+    }
+  };
+
+  const verifyPhone = async () => {
+    if (!verificationToken || !otp) {
+      setError("Enter the verification code.");
+      return;
+    }
+
+    setVerificationBusy(true);
+    setError("");
+    try {
+      await axios.post(`${API_URL}/api/public/qr/${token}/phone-verification/verify`, {
+        verification_token: verificationToken,
+        otp,
+      });
+      setPhoneVerified(true);
+    } catch (requestError) {
+      setPhoneVerified(false);
+      setError(requestError.response?.data?.error?.message || "Unable to verify this code.");
+    } finally {
+      setVerificationBusy(false);
+    }
+  };
+
   const submitOrder = async () => {
     if (orderBlockedReason) {
       setError(orderBlockedReason);
@@ -205,6 +273,8 @@ export const QrOrdering = () => {
           addon_ids: item.addon_ids,
           quantity: item.quantity,
         })),
+        tip_amount: normalizedTipAmount,
+        phone_verification_token: verificationToken || undefined,
       });
       setSubmittedOrder(unwrap(response));
       setCart({});
@@ -264,6 +334,7 @@ export const QrOrdering = () => {
               {context.ordering.estimated_prep_minutes ? `${context.ordering.estimated_prep_minutes} min prep` : "Prep time varies"}
               {context.ordering.min_order_total ? ` | Minimum ${formatCurrency(context.ordering.min_order_total)}` : ""}
               {context.ordering.require_customer_phone ? " | Phone required" : ""}
+              {context.ordering.require_restaurant_approval ? " | Staff approval before kitchen" : ""}
             </span>
           </div>
         ) : null}
@@ -405,8 +476,28 @@ export const QrOrdering = () => {
               <div className="cf-qr-cart__empty">Add items from the menu.</div>
             )}
             <div className="cf-qr-cart__total">
-              <span>Total</span>
+              <span>Items</span>
               <strong>{formatCurrency(total)}</strong>
+            </div>
+            {serviceCharge ? (
+              <div className="cf-qr-cart__total cf-qr-cart__total--muted">
+                <span>Service charge</span>
+                <strong>{formatCurrency(serviceCharge)}</strong>
+              </div>
+            ) : null}
+            {orderingRules.tips_enabled ? (
+              <input
+                className="cf-input"
+                min="0"
+                placeholder="Tip optional"
+                type="number"
+                value={tipAmount}
+                onChange={(event) => setTipAmount(event.target.value)}
+              />
+            ) : null}
+            <div className="cf-qr-cart__total">
+              <span>Total</span>
+              <strong>{formatCurrency(payableTotal)}</strong>
             </div>
             <input className="cf-input" placeholder="Name optional" value={customerName} onChange={(event) => setCustomerName(event.target.value)} />
             <input
@@ -419,6 +510,24 @@ export const QrOrdering = () => {
               value={customerPhone}
               onChange={(event) => setCustomerPhone(normalizePhone(event.target.value))}
             />
+            {phoneVerificationRequired ? (
+              <div className="cf-qr-verification">
+                <button className="cf-btn cf-btn--secondary" disabled={verificationBusy || !isValidPhone(customerPhone)} onClick={requestPhoneVerification} type="button">
+                  {verificationToken ? "Resend Code" : "Send Code"}
+                </button>
+                <input
+                  className="cf-input"
+                  inputMode="numeric"
+                  maxLength="6"
+                  placeholder="OTP code"
+                  value={otp}
+                  onChange={(event) => setOtp(String(event.target.value || "").replace(/\D/g, "").slice(0, 6))}
+                />
+                <button className="cf-btn cf-btn--secondary" disabled={verificationBusy || !verificationToken || phoneVerified} onClick={verifyPhone} type="button">
+                  {phoneVerified ? "Verified" : "Verify"}
+                </button>
+              </div>
+            ) : null}
             <textarea className="cf-textarea" placeholder="Table notes optional" value={notes} onChange={(event) => setNotes(event.target.value)} />
             {orderBlockedReason && cartItems.length ? <div className="cf-card__meta">{orderBlockedReason}</div> : null}
             <button className="cf-btn cf-btn--primary" disabled={submitting || !cartItems.length || Boolean(orderBlockedReason)} onClick={submitOrder} type="button">
@@ -439,25 +548,27 @@ export const QrOrderTracking = () => {
 
   useEffect(() => {
     let active = true;
-    setLoading(true);
-    setError("");
-
-    axios
-      .get(`${API_URL}/api/public/qr/orders/${trackingToken}`)
-      .then((response) => {
+    const loadOrder = async ({ initial = false } = {}) => {
+      if (initial) setLoading(true);
+      setError("");
+      try {
+        const response = await axios.get(`${API_URL}/api/public/qr/orders/${trackingToken}`);
         if (!active) return;
         setOrder(unwrap(response));
-      })
-      .catch((requestError) => {
+      } catch (requestError) {
         if (!active) return;
         setError(requestError.response?.data?.error?.message || "This order tracking link is not available.");
-      })
-      .finally(() => {
-        if (active) setLoading(false);
-      });
+      } finally {
+        if (active && initial) setLoading(false);
+      }
+    };
+
+    loadOrder({ initial: true });
+    const intervalId = window.setInterval(() => loadOrder(), 5000);
 
     return () => {
       active = false;
+      window.clearInterval(intervalId);
     };
   }, [trackingToken]);
 
@@ -495,10 +606,27 @@ export const QrOrderTracking = () => {
         <div className="cf-qr-success">
           <strong>Status: {String(order?.status || "pending").toUpperCase()}</strong>
           <span>
-            {order?.metadata?.estimated_prep_minutes
+            {order?.tracking?.approval_status === "pending"
+              ? "Waiting for restaurant approval before it goes to the kitchen."
+              : order?.metadata?.estimated_prep_minutes
               ? `Estimated prep time: ${order.metadata.estimated_prep_minutes} minutes`
               : "The restaurant has received your order."}
           </span>
+        </div>
+        <div className="cf-qr-tracking-steps">
+          {["pending", "approved", "preparing", "ready", "completed"].map((step) => {
+            const approvalStatus = order?.tracking?.approval_status || "";
+            const orderStatus = String(order?.status || "");
+            const active =
+              approvalStatus === step ||
+              orderStatus.includes(step) ||
+              (step === "approved" && ["accepted", "preparing", "ready", "completed"].includes(orderStatus));
+            return (
+              <div className={active ? "is-active" : ""} key={step}>
+                <b>{step}</b>
+              </div>
+            );
+          })}
         </div>
         <aside className="cf-qr-cart">
           <h2>Order Items</h2>

@@ -26,6 +26,7 @@ model Business {
   diningAreas    DiningArea[]
   diningTables   DiningTable[]
   tableQrCodes    TableQrCode[]
+  tableSessions   TableSession[]
   tableReservations TableReservation[]
   feedback       Feedback[]
   featureToggles FeatureToggle[]
@@ -455,6 +456,7 @@ model DiningTable {
   business   Business           @relation(fields: [businessId], references: [id], onDelete: Cascade)
   area       DiningArea?        @relation(fields: [areaId], references: [id], onDelete: SetNull)
   qrCode     TableQrCode?
+  tableSessions TableSession[]
   reservations TableReservation[]
   createdAt  DateTime           @default(now())
   updatedAt  DateTime           @updatedAt
@@ -473,6 +475,7 @@ model TableQrCode {
   business  Business    @relation(fields: [businessId], references: [id], onDelete: Cascade)
   table     DiningTable @relation(fields: [tableId], references: [id], onDelete: Cascade)
   scanEvents TableQrScanEvent[]
+  tableSessions TableSession[]
   createdAt DateTime    @default(now())
   updatedAt DateTime    @updatedAt
   rotatedAt DateTime?
@@ -492,6 +495,31 @@ model TableQrScanEvent {
   @@index([qrCodeId, scannedAt])
   @@index([businessId, scannedAt])
   @@index([tableId, scannedAt])
+}
+
+model TableSession {
+  id            String      @id @default(cuid())
+  businessId    String
+  tableId       String
+  qrCodeId      String?
+  sessionKey    String      @unique
+  source        String      @default("qr")
+  status        String      @default("active")
+  customerName  String?
+  customerPhone String?
+  guestCount    Int?
+  metadata      Json?
+  openedAt      DateTime    @default(now())
+  closedAt      DateTime?
+  createdAt     DateTime    @default(now())
+  updatedAt     DateTime    @updatedAt
+  business      Business    @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  table         DiningTable @relation(fields: [tableId], references: [id], onDelete: Cascade)
+  qrCode        TableQrCode? @relation(fields: [qrCodeId], references: [id], onDelete: SetNull)
+
+  @@index([businessId, status])
+  @@index([tableId, status])
+  @@index([qrCodeId])
 }
 
 model TableReservation {

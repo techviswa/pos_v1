@@ -26,8 +26,15 @@ const DEFAULT_TABLE_SETTINGS = {
     qrOrderingRules: {
       orderingPaused: false,
       requireCustomerPhone: false,
+      requireRestaurantApproval: true,
+      requirePhoneVerification: false,
       minOrderTotal: 0,
       estimatedPrepMinutes: 20,
+      serviceChargePercent: 0,
+      serviceChargeFixed: 0,
+      tipsEnabled: true,
+      onlinePaymentEnabled: false,
+      paymentRequiredBeforeApproval: false,
     },
   },
   uiPreferences: {

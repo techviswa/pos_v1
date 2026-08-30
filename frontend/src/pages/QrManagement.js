@@ -7,8 +7,15 @@ import { fulfillmentService } from "../features/billing/fulfillment/services/ful
 const DEFAULT_QR_RULES = {
   orderingPaused: false,
   requireCustomerPhone: false,
+  requireRestaurantApproval: true,
+  requirePhoneVerification: false,
   minOrderTotal: 0,
   estimatedPrepMinutes: 20,
+  serviceChargePercent: 0,
+  serviceChargeFixed: 0,
+  tipsEnabled: true,
+  onlinePaymentEnabled: false,
+  paymentRequiredBeforeApproval: false,
 };
 
 const getPublicQrUrl = (token) => {
@@ -188,6 +195,14 @@ export const QrManagement = () => {
                       <input checked={Boolean(qrRules.requireCustomerPhone)} onChange={(event) => updateQrRule("requireCustomerPhone", event.target.checked)} type="checkbox" />
                       Require Phone
                     </label>
+                    <label>
+                      <input checked={Boolean(qrRules.requireRestaurantApproval)} onChange={(event) => updateQrRule("requireRestaurantApproval", event.target.checked)} type="checkbox" />
+                      Staff Approval Before Kitchen
+                    </label>
+                    <label>
+                      <input checked={Boolean(qrRules.requirePhoneVerification)} onChange={(event) => updateQrRule("requirePhoneVerification", event.target.checked)} type="checkbox" />
+                      Require Phone OTP
+                    </label>
                   </div>
                 </div>
                 <div className="cf-grid-2">
@@ -198,6 +213,33 @@ export const QrManagement = () => {
                   <div className="cf-field">
                     <label>Estimated Prep Minutes</label>
                     <input className="cf-input" min="0" onChange={(event) => updateQrRule("estimatedPrepMinutes", Number(event.target.value || 0))} type="number" value={qrRules.estimatedPrepMinutes} />
+                  </div>
+                </div>
+                <div className="cf-grid-2">
+                  <div className="cf-field">
+                    <label>Service Charge %</label>
+                    <input className="cf-input" min="0" onChange={(event) => updateQrRule("serviceChargePercent", Number(event.target.value || 0))} type="number" value={qrRules.serviceChargePercent} />
+                  </div>
+                  <div className="cf-field">
+                    <label>Fixed Service Charge</label>
+                    <input className="cf-input" min="0" onChange={(event) => updateQrRule("serviceChargeFixed", Number(event.target.value || 0))} type="number" value={qrRules.serviceChargeFixed} />
+                  </div>
+                </div>
+                <div className="cf-field">
+                  <label>Payment & Tips</label>
+                  <div className="cf-checkbox-row">
+                    <label>
+                      <input checked={Boolean(qrRules.tipsEnabled)} onChange={(event) => updateQrRule("tipsEnabled", event.target.checked)} type="checkbox" />
+                      Allow Tips
+                    </label>
+                    <label>
+                      <input checked={Boolean(qrRules.onlinePaymentEnabled)} onChange={(event) => updateQrRule("onlinePaymentEnabled", event.target.checked)} type="checkbox" />
+                      Online Payment Ready
+                    </label>
+                    <label>
+                      <input checked={Boolean(qrRules.paymentRequiredBeforeApproval)} onChange={(event) => updateQrRule("paymentRequiredBeforeApproval", event.target.checked)} type="checkbox" />
+                      Require Payment Before Approval
+                    </label>
                   </div>
                 </div>
               </section>
