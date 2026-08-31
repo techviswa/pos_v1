@@ -9,6 +9,7 @@ import { usersService } from "../users/users.service.js";
 import { inventoryService } from "../inventory/inventory.service.js";
 import { billingService } from "../billing/billing.service.js";
 import { paymentsService } from "../payments/payments.service.js";
+import { reportsService } from "../reports/reports.service.js";
 import { kotService } from "../../features/kitchen/kot/kot.service.js";
 import { tableManagementService } from "../../features/sales-extensions/table-management/table-management.service.js";
 import { createHttpError } from "../../shared/utils/http-error.js";
@@ -34,6 +35,7 @@ const ADMINCORE_SYNC_RESOURCES = [
   "bills",
   "customers",
   "payments",
+  "reports",
   "staff",
   "inventory",
   "tables",
@@ -271,6 +273,25 @@ class SyncService {
         tenantId,
         businessId,
       });
+    } else if (normalizedResource === "reports") {
+      data = [
+        {
+          id: `reports_${businessId || tenantId || "all"}`,
+          tenantId,
+          tenant_id: tenantId,
+          business_id: businessId,
+          generated_at: nowIso(),
+          reports: await reportsService.getDashboard({
+            tenantId,
+            from: query.from,
+            to: query.to,
+            outletId: query.outlet_id || query.outletId || null,
+          }),
+          sync_source: "pos-core",
+          sync_resource: "reports",
+          last_synced_at: nowIso(),
+        },
+      ];
     } else if (normalizedResource === "staff") {
       data = await usersService.listUsers({ tenantId, businessId });
     } else if (normalizedResource === "inventory") {

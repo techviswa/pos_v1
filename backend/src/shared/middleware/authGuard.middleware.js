@@ -17,18 +17,40 @@ const getBearerToken = (authorization = "") => {
   return scheme?.toLowerCase() === "bearer" ? token : "";
 };
 
-const isAdminCoreBridgeRequest = (req) => {
+const getAdminCoreBridgeApiKey = (req) =>
+  req.get("x-admincore-api-key") ||
+  req.get("x-pos-core-api-key") ||
+  req.get("x-pos-bridge-key") ||
+  req.get("x-api-key") ||
+  getBearerToken(req.get("authorization"));
+
+export const isAdminCoreBridgeRequest = (req) => {
   const bridgeKey = env.admincore.apiKey;
   if (!env.admincore.enabled || !bridgeKey) {
     return false;
   }
-  const candidate = req.get("x-admincore-api-key") || req.get("x-api-key") || getBearerToken(req.get("authorization"));
+  const candidate = getAdminCoreBridgeApiKey(req);
   return candidate === bridgeKey;
 };
 
+const isAdminCoreSyncBridgePath = (req) =>
+  req.path.startsWith("/sync/export/") || req.path === "/sync/logs/admincore";
+
 const bridgeScopeFromHeaders = (req) => {
-  const tenantId = req.headers["x-tenant-id"] || req.headers.tenant_id || req.headers.tenantid;
-  const businessId = req.headers["x-business-id"] || req.headers.business_id || req.headers.businessid;
+  const tenantId =
+    req.headers["x-tenant-id"] ||
+    req.headers["x-admincore-tenant-id"] ||
+    req.headers.tenant_id ||
+    req.headers.tenantid ||
+    req.query.tenant_id ||
+    req.query.tenantId;
+  const businessId =
+    req.headers["x-business-id"] ||
+    req.headers["x-admincore-business-id"] ||
+    req.headers.business_id ||
+    req.headers.businessid ||
+    req.query.business_id ||
+    req.query.businessId;
   if (!tenantId && !businessId) {
     return null;
   }
@@ -38,9 +60,27 @@ const bridgeScopeFromHeaders = (req) => {
   };
 };
 
+const createAdminCoreBridgeUser = () => ({
+  id: "admincore-bridge",
+  name: "AdminCore Bridge",
+  email: "admincore-bridge@system.local",
+  role: "Owner",
+  permissions: ROLE_DEFAULT_PERMISSIONS.Owner,
+  active: true,
+  isServiceAccount: true,
+});
+
 const resolveRequestContext = async (req, user) => {
   const requestedScope = bridgeScopeFromHeaders(req);
-  if (!requestedScope || !isAdminCoreBridgeRequest(req)) {
+  const isBridgeRequest = isAdminCoreBridgeRequest(req);
+  if (!requestedScope && isBridgeRequest) {
+    return {
+      tenantId: req.context?.tenantId || env.defaultTenantId,
+      businessId: req.context?.businessId || env.defaultBusinessId,
+    };
+  }
+
+  if (!requestedScope || !isBridgeRequest) {
     return {
       tenantId: user.tenantId,
       businessId: user.business_id,
@@ -72,6 +112,10 @@ const bindRequestContextToUser = async (req, user) => {
     ...(req.context || {}),
     ...scopedContext,
   };
+};
+
+export const bindAdminCoreBridgeRequest = async (req) => {
+  await bindRequestContextToUser(req, createAdminCoreBridgeUser());
 };
 
 const getEffectivePermissions = (user) => {
@@ -118,6 +162,19 @@ export const requireRole = (...allowedRoles) => async (req, res, next) => {
 
     await bindRequestContextToUser(req, user);
     return next();
+  } catch (error) {
+    return next(error);
+  }
+};
+
+export const requireAdminCoreBridgeOrRole = (...allowedRoles) => async (req, res, next) => {
+  try {
+    if (isAdminCoreBridgeRequest(req)) {
+      await bindAdminCoreBridgeRequest(req);
+      return next();
+    }
+
+    return requireRole(...allowedRoles)(req, res, next);
   } catch (error) {
     return next(error);
   }
@@ -183,6 +240,11 @@ const PUBLIC_API_PREFIXES = [
 export const requireApiSession = async (req, res, next) => {
   try {
     if (PUBLIC_API_PREFIXES.some((prefix) => req.path === prefix || req.path.startsWith(`${prefix}/`))) {
+      return next();
+    }
+
+    if (isAdminCoreSyncBridgePath(req) && isAdminCoreBridgeRequest(req)) {
+      await bindAdminCoreBridgeRequest(req);
       return next();
     }
 

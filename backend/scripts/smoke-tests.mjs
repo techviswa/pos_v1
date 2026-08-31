@@ -18,12 +18,13 @@ const close = () =>
     server.close(() => resolve());
   });
 
-const request = async ({ baseUrl, path, method = "GET", body, cookie, expected = [200] }) => {
+const request = async ({ baseUrl, path, method = "GET", body, cookie, headers = {}, expected = [200] }) => {
   const response = await fetch(`${baseUrl}${path}`, {
     method,
     headers: {
       "Content-Type": "application/json",
       ...(cookie ? { Cookie: cookie } : {}),
+      ...headers,
     },
     ...(body ? { body: JSON.stringify(body) } : {}),
   });
@@ -176,6 +177,38 @@ const run = async () => {
     });
     if (failedSync.data?.success !== false || !Array.isArray(failedSync.data?.items)) {
       throw new Error(`AdminCore sync error envelope failed: ${JSON.stringify(failedSync.data)}`);
+    }
+
+    if (process.env.ADMINCORE_API_KEY) {
+      const bridgeHeaders = {
+        "x-admincore-api-key": process.env.ADMINCORE_API_KEY,
+      };
+      const apiKeyOnlyChecks = [
+        "/api/sync/export/businesses?limit=5",
+        "/api/sync/export/outlets?limit=5",
+        "/api/sync/export/products?limit=5",
+        "/api/sync/export/orders?limit=5",
+        "/api/sync/export/bills?limit=5",
+        "/api/sync/export/customers?limit=5",
+        "/api/sync/export/payments?limit=5",
+        "/api/sync/export/reports?limit=5",
+        "/api/sync/export/staff?limit=5",
+        "/api/sync/export/inventory?limit=5",
+        "/api/sync/export/tables?limit=5",
+        "/api/sync/export/reservations?limit=5",
+        "/api/sync/export/kot?limit=5",
+      ];
+
+      for (const path of apiKeyOnlyChecks) {
+        await request({ baseUrl, path, headers: bridgeHeaders });
+      }
+
+      await request({
+        baseUrl,
+        path: "/api/products?limit=5",
+        headers: bridgeHeaders,
+        expected: [401],
+      });
     }
 
     await request({ baseUrl, path: "/api/products?limit=5", cookie });
