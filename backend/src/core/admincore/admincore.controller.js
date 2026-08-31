@@ -6,6 +6,7 @@ import {
 } from "./admincore.service.js";
 import { saasService } from "../saas/saas.service.js";
 import { usersService } from "../users/users.service.js";
+import { productsService } from "../products/products.service.js";
 import { createHttpError } from "../../shared/utils/http-error.js";
 
 export const getConnection = (_req, res) => {
@@ -59,6 +60,56 @@ export const postBridgeStaff = async (req, res) => {
     payload: req.body,
   });
   sendRawResponse(res, { statusCode: 201, data });
+};
+
+const getBridgeProductContext = (req) => {
+  const businessId = req.body?.business_id || req.body?.businessId || req.get("x-business-id");
+  const tenantId = req.body?.tenant_id || req.body?.tenantId || req.get("x-tenant-id");
+  if (!businessId || !tenantId) {
+    throw createHttpError({
+      statusCode: 400,
+      code: "ADMINCORE_PRODUCT_CONTEXT_REQUIRED",
+      message: "business_id and tenant_id are required for AdminCore product provisioning",
+    });
+  }
+
+  return { businessId, tenantId };
+};
+
+export const postBridgeProduct = async (req, res) => {
+  const { tenantId } = getBridgeProductContext(req);
+  const data = await productsService.createProduct({
+    tenantId,
+    payload: req.body,
+  });
+  sendRawResponse(res, { statusCode: 201, data });
+};
+
+export const putBridgeProduct = async (req, res) => {
+  const { tenantId } = getBridgeProductContext(req);
+  const data = await productsService.updateProduct({
+    tenantId,
+    productId: req.params.productId,
+    payload: req.body,
+  });
+  sendRawResponse(res, { data });
+};
+
+export const deleteBridgeProduct = async (req, res) => {
+  const tenantId = req.body?.tenant_id || req.body?.tenantId || req.get("x-tenant-id");
+  if (!tenantId) {
+    throw createHttpError({
+      statusCode: 400,
+      code: "ADMINCORE_PRODUCT_CONTEXT_REQUIRED",
+      message: "tenant_id is required for AdminCore product deletion",
+    });
+  }
+
+  const data = await productsService.deleteProduct({
+    tenantId,
+    productId: req.params.productId,
+  });
+  sendRawResponse(res, { data });
 };
 
 export const putSaasSubscription = async (req, res) => {

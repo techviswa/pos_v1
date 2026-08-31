@@ -203,6 +203,35 @@ const run = async () => {
         await request({ baseUrl, path, headers: bridgeHeaders });
       }
 
+      const bridgeProduct = await request({
+        baseUrl,
+        path: "/api/admincore/products",
+        method: "POST",
+        headers: bridgeHeaders,
+        body: {
+          name: `AdminCore Bridge Smoke ${Date.now()}`,
+          price: 1,
+          stock: 1,
+          category: "Smoke",
+          business_id: process.env.DEFAULT_BUSINESS_ID || "demo-business",
+          tenant_id: process.env.DEFAULT_TENANT_ID || "demo-tenant",
+        },
+        expected: [201],
+      });
+      const bridgeProductId = bridgeProduct.data?.id || bridgeProduct.data?.data?.id;
+      if (!bridgeProductId) {
+        throw new Error(`AdminCore product bridge did not return a product id: ${JSON.stringify(bridgeProduct.data)}`);
+      }
+      await request({
+        baseUrl,
+        path: `/api/admincore/products/${bridgeProductId}`,
+        method: "DELETE",
+        headers: {
+          ...bridgeHeaders,
+          "x-tenant-id": process.env.DEFAULT_TENANT_ID || "demo-tenant",
+        },
+      });
+
       await request({
         baseUrl,
         path: "/api/products?limit=5",
