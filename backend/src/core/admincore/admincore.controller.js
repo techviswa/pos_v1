@@ -7,6 +7,7 @@ import {
 import { saasService } from "../saas/saas.service.js";
 import { usersService } from "../users/users.service.js";
 import { productsService } from "../products/products.service.js";
+import { outletsService } from "../outlets/outlets.service.js";
 import { createHttpError } from "../../shared/utils/http-error.js";
 
 export const getConnection = (_req, res) => {
@@ -76,6 +77,20 @@ const getBridgeProductContext = (req) => {
   return { businessId, tenantId };
 };
 
+const getBridgeTenantContext = (req, resourceLabel) => {
+  const businessId = req.body?.business_id || req.body?.businessId || req.get("x-business-id");
+  const tenantId = req.body?.tenant_id || req.body?.tenantId || req.get("x-tenant-id");
+  if (!businessId || !tenantId) {
+    throw createHttpError({
+      statusCode: 400,
+      code: `ADMINCORE_${resourceLabel}_CONTEXT_REQUIRED`,
+      message: `business_id and tenant_id are required for AdminCore ${resourceLabel.toLowerCase()} provisioning`,
+    });
+  }
+
+  return { businessId, tenantId };
+};
+
 export const postBridgeProduct = async (req, res) => {
   const { tenantId } = getBridgeProductContext(req);
   const data = await productsService.createProduct({
@@ -91,6 +106,42 @@ export const putBridgeProduct = async (req, res) => {
     tenantId,
     productId: req.params.productId,
     payload: req.body,
+  });
+  sendRawResponse(res, { data });
+};
+
+export const postBridgeOutlet = async (req, res) => {
+  const { tenantId } = getBridgeTenantContext(req, "OUTLET");
+  const data = await outletsService.createOutlet({
+    tenantId,
+    payload: req.body,
+  });
+  sendRawResponse(res, { statusCode: 201, data });
+};
+
+export const putBridgeOutlet = async (req, res) => {
+  const { tenantId } = getBridgeTenantContext(req, "OUTLET");
+  const data = await outletsService.updateOutlet({
+    tenantId,
+    outletId: req.params.outletId,
+    payload: req.body,
+  });
+  sendRawResponse(res, { data });
+};
+
+export const deleteBridgeOutlet = async (req, res) => {
+  const tenantId = req.body?.tenant_id || req.body?.tenantId || req.get("x-tenant-id");
+  if (!tenantId) {
+    throw createHttpError({
+      statusCode: 400,
+      code: "ADMINCORE_OUTLET_CONTEXT_REQUIRED",
+      message: "tenant_id is required for AdminCore outlet deletion",
+    });
+  }
+
+  const data = await outletsService.deleteOutlet({
+    tenantId,
+    outletId: req.params.outletId,
   });
   sendRawResponse(res, { data });
 };

@@ -6,11 +6,14 @@ import {
   getSaasExport,
   getSaasTenant,
   getSaasUsage,
+  deleteBridgeOutlet,
   deleteBridgeProduct,
+  postBridgeOutlet,
   postBridgeStaff,
   postBridgeProduct,
   postSaasTenant,
   postSyncStatus,
+  putBridgeOutlet,
   putBridgeProduct,
   putSaasDomains,
   putSaasSubscription,
@@ -45,6 +48,9 @@ router.get("/health", getHealth);
 router.post("/sync-status", postSyncStatus);
 router.post("/tenants", requireAdmincoreBridgeKey, postSaasTenant);
 router.post("/staff", requireAdmincoreBridgeKey, postBridgeStaff);
+router.post("/outlets", requireAdmincoreBridgeKey, postBridgeOutlet);
+router.put("/outlets/:outletId", requireAdmincoreBridgeKey, putBridgeOutlet);
+router.delete("/outlets/:outletId", requireAdmincoreBridgeKey, deleteBridgeOutlet);
 router.post("/products", requireAdmincoreBridgeKey, postBridgeProduct);
 router.put("/products/:productId", requireAdmincoreBridgeKey, putBridgeProduct);
 router.delete("/products/:productId", requireAdmincoreBridgeKey, deleteBridgeProduct);

@@ -203,6 +203,34 @@ const run = async () => {
         await request({ baseUrl, path, headers: bridgeHeaders });
       }
 
+      const bridgeOutlet = await request({
+        baseUrl,
+        path: "/api/admincore/outlets",
+        method: "POST",
+        headers: bridgeHeaders,
+        body: {
+          name: `AdminCore Bridge Outlet ${Date.now()}`,
+          code: `SMK${String(Date.now()).slice(-6)}`,
+          status: "active",
+          business_id: process.env.DEFAULT_BUSINESS_ID || "demo-business",
+          tenant_id: process.env.DEFAULT_TENANT_ID || "demo-tenant",
+        },
+        expected: [201],
+      });
+      const bridgeOutletId = bridgeOutlet.data?.id || bridgeOutlet.data?.data?.id;
+      if (!bridgeOutletId) {
+        throw new Error(`AdminCore outlet bridge did not return an outlet id: ${JSON.stringify(bridgeOutlet.data)}`);
+      }
+      await request({
+        baseUrl,
+        path: `/api/admincore/outlets/${bridgeOutletId}`,
+        method: "DELETE",
+        headers: {
+          ...bridgeHeaders,
+          "x-tenant-id": process.env.DEFAULT_TENANT_ID || "demo-tenant",
+        },
+      });
+
       const bridgeProduct = await request({
         baseUrl,
         path: "/api/admincore/products",
