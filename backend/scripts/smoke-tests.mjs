@@ -168,6 +168,29 @@ const run = async () => {
       assertAdminCoreEnvelope(syncList.data, resource);
     }
 
+    for (const resource of [
+      "qr",
+      "central-kitchen",
+      "taxes",
+      "discounts",
+      "suppliers",
+      "expenses",
+      "hardware",
+      "permissions",
+      "notifications",
+      "import-export",
+      "webhooks",
+      "audit-security",
+      "settings",
+    ]) {
+      const syncExport = await request({
+        baseUrl,
+        path: `/api/sync/export/${resource}?limit=5`,
+        cookie,
+      });
+      assertAdminCoreEnvelope(syncExport.data, resource);
+    }
+
     await request({ baseUrl, path: "/api/sync/logs/admincore", cookie });
     const failedSync = await request({
       baseUrl,
@@ -195,8 +218,21 @@ const run = async () => {
         "/api/sync/export/staff?limit=5",
         "/api/sync/export/inventory?limit=5",
         "/api/sync/export/tables?limit=5",
+        "/api/sync/export/qr?limit=5",
         "/api/sync/export/reservations?limit=5",
         "/api/sync/export/kot?limit=5",
+        "/api/sync/export/central-kitchen?limit=5",
+        "/api/sync/export/taxes?limit=5",
+        "/api/sync/export/discounts?limit=5",
+        "/api/sync/export/suppliers?limit=5",
+        "/api/sync/export/expenses?limit=5",
+        "/api/sync/export/hardware?limit=5",
+        "/api/sync/export/permissions?limit=5",
+        "/api/sync/export/notifications?limit=5",
+        "/api/sync/export/import-export?limit=5",
+        "/api/sync/export/webhooks?limit=5",
+        "/api/sync/export/audit-security?limit=5",
+        "/api/sync/export/settings?limit=5",
       ];
 
       for (const path of apiKeyOnlyChecks) {

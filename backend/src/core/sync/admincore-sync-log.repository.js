@@ -16,6 +16,15 @@ const normalizeResource = (resource) => {
   if (["kitchen", "kitchen-tickets", "kitchen-ticket", "kot-tickets"].includes(normalized)) return "kot";
   if (["table", "table-management", "dining-tables"].includes(normalized)) return "tables";
   if (["reservation", "table-reservations", "reservations"].includes(normalized)) return "reservations";
+  if (["qr-codes", "qr-code", "qr-ordering", "table-qr"].includes(normalized)) return "qr";
+  if (["central-kitchen", "purchase-orders", "allocations", "routes"].includes(normalized)) return "central-kitchen";
+  if (["tax", "taxes-charges", "charges"].includes(normalized)) return "taxes";
+  if (["discount", "discounts-coupons", "coupon", "coupons"].includes(normalized)) return "discounts";
+  if (["supplier", "suppliers-purchasing", "purchasing", "vendors"].includes(normalized)) return "suppliers";
+  if (["hardware-printers", "printers", "printer-settings"].includes(normalized)) return "hardware";
+  if (["role-permissions", "permissions-matrix", "roles"].includes(normalized)) return "permissions";
+  if (["integrations-webhooks", "webhook", "integration", "integrations"].includes(normalized)) return "webhooks";
+  if (["audit-security", "audit", "security", "audit-logs"].includes(normalized)) return "audit-security";
   return normalized || "unknown";
 };
 
