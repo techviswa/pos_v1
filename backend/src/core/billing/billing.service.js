@@ -1,4 +1,8 @@
 import prisma from "../../database/prisma/client.js";
+import { nextDocumentSequence } from "../../database/prisma/document-sequence.js";
+import { readState, writeState } from "../../database/prisma/state-store.js";
+import { createHttpError } from "../../shared/utils/http-error.js";
+import { mutateBillPayment } from "./billing-payments.service.js";
 import {
   ensureBusiness,
   serializeBill,
@@ -26,7 +30,10 @@ const getBillInclude = () => ({
   items: true,
 });
 
-const shiftStore = new Map();
+const shiftStore = {
+  get: (key) => readState(`shift:${key}`),
+  set: (key, data) => writeState(`shift:${key}`, data),
+};
 
 const getShiftKey = ({ businessId, outletId = "all" }) => `${businessId}:${outletId || "all"}`;
 
@@ -52,6 +59,8 @@ const defaultShift = ({ businessId, outletId = null, openedBy = null, openedByNa
 
 class BillingService {
   async getNextInvoiceSequence({ businessId }) {
+    const sequence = await prisma.documentSequence.findUnique({ where: { key: `invoice:${businessId}` } });
+    if (sequence) return sequence.value + 1;
     const start = new Date();
     start.setHours(0, 0, 0, 0);
     const count = await prisma.bill.count({
@@ -142,10 +151,8 @@ class BillingService {
           },
         },
       });
-      const invoiceSequence = payload.invoice_sequence || currentSequence + 1;
-      const invoiceNumber =
-        payload.invoice_number ||
-        createInvoiceNumber({
+      const invoiceSequence = await nextDocumentSequence(tx, `invoice:${business.id}`, currentSequence);
+      const invoiceNumber = createInvoiceNumber({
           outletCode: payload.outlet_code || payload.outletCode || "MO1",
           sequence: invoiceSequence,
         });
@@ -155,7 +162,7 @@ class BillingService {
       });
       const paymentSummary = summarizePayments(payments, total);
       const gstBreakup = buildGstBreakup({ subtotal: totals.taxable_subtotal, tax, gstRate: totals.gst_rate });
-      const shift = this.getCurrentShift({
+      const shift = await this.getCurrentShift({
         businessId: business.id,
         outletId: payload.outlet_id || payload.outletId || null,
       });
@@ -303,22 +310,22 @@ class BillingService {
     return serializedBill;
   }
 
-  getCurrentShift({ businessId, outletId = null, openedBy = null, openedByName = null }) {
+  async getCurrentShift({ businessId, outletId = null, openedBy = null, openedByName = null }) {
     const key = getShiftKey({ businessId, outletId });
-    const current = shiftStore.get(key);
+    const current = await shiftStore.get(key);
     if (current?.status === "open") {
       return current;
     }
 
     const shift = defaultShift({ businessId, outletId, openedBy, openedByName });
-    shiftStore.set(key, shift);
+    await shiftStore.set(key, shift);
     return shift;
   }
 
   async openShift({ tenantId, outletId = null, openingCash = 0, user } = {}) {
     const business = await ensureBusiness({ tenantId });
     const key = getShiftKey({ businessId: business.id, outletId });
-    const current = shiftStore.get(key);
+    const current = await shiftStore.get(key);
 
     if (current?.status === "open") {
       return current;
@@ -334,7 +341,7 @@ class BillingService {
       opening_cash: toNumber(openingCash, 0),
       expected_cash: toNumber(openingCash, 0),
     };
-    shiftStore.set(key, shift);
+    await shiftStore.set(key, shift);
     return shift;
   }
 
@@ -350,7 +357,7 @@ class BillingService {
 
   async closeShift({ tenantId, outletId = null, closingCash = 0, user } = {}) {
     const business = await ensureBusiness({ tenantId });
-    const shift = this.getCurrentShift({ businessId: business.id, outletId });
+    const shift = await this.getCurrentShift({ businessId: business.id, outletId });
     const report = await this.getCashDrawerReport({ tenantId, outletId, shiftId: shift.id });
     const closedShift = {
       ...shift,
@@ -363,100 +370,21 @@ class BillingService {
       status: "closed",
       report,
     };
-    shiftStore.set(getShiftKey({ businessId: business.id, outletId }), closedShift);
+    await writeState(`shift-history:${closedShift.id}`, closedShift);
+    await shiftStore.set(getShiftKey({ businessId: business.id, outletId }), closedShift);
     return closedShift;
   }
 
   async addPayment({ tenantId, invoiceId, payload, user }) {
-    const bill = await this.getInvoiceById({ tenantId, invoiceId });
-    const payments = normalizePayments([
-      ...(bill.payments || []),
-      {
-        ...payload,
-        status:
-          payload.status ||
-          (["UPI", "Gateway", "Card"].includes(payload.method || payload.payment_method)
-            ? "pending_confirmation"
-            : "confirmed"),
-        received_by: user?.id || null,
-        received_by_name: user?.name || null,
-      },
-    ]);
-    const summary = summarizePayments(payments, bill.total);
-
-    return this.updateInvoice({
-      tenantId,
-      invoiceId,
-      payload: {
-        payments,
-        ...summary,
-        payment_gateway_status: payments.some((payment) => payment.status !== "confirmed")
-          ? "pending_confirmation"
-          : "confirmed",
-        updated_at: nowIso(),
-      },
-    });
+    return mutateBillPayment({ tenantId, invoiceId, payload, user, action: "payment" });
   }
 
   async confirmPayment({ tenantId, invoiceId, paymentId, payload, user }) {
-    const bill = await this.getInvoiceById({ tenantId, invoiceId });
-    const payments = (bill.payments || []).map((payment) =>
-      payment.id === paymentId
-        ? {
-            ...payment,
-            status: "confirmed",
-            reference: payload.reference || payload.transaction_id || payment.reference || null,
-            gateway: payload.gateway || payment.gateway || null,
-            confirmed_at: nowIso(),
-            confirmed_by: user?.id || null,
-            confirmed_by_name: user?.name || null,
-          }
-        : payment,
-    );
-    const summary = summarizePayments(payments, bill.total);
-
-    return this.updateInvoice({
-      tenantId,
-      invoiceId,
-      payload: {
-        payments,
-        ...summary,
-        payment_gateway_status: payments.some((payment) => payment.status !== "confirmed")
-          ? "pending_confirmation"
-          : "confirmed",
-        updated_at: nowIso(),
-      },
-    });
+    return mutateBillPayment({ tenantId, invoiceId, paymentId, payload, user, action: "confirm" });
   }
 
   async refundInvoice({ tenantId, invoiceId, payload, user }) {
-    const bill = await this.getInvoiceById({ tenantId, invoiceId });
-    const amount = Math.min(Math.max(0, toNumber(payload.amount, 0)), toNumber(bill.paid_amount, 0));
-    const refunds = [
-      ...(bill.refunds || []),
-      {
-        id: `ref_${Date.now()}`,
-        amount,
-        method: payload.method || "Original Payment",
-        reason: payload.reason || "",
-        status: payload.status || "approved",
-        created_by: user?.id || null,
-        created_by_name: user?.name || null,
-        created_at: nowIso(),
-      },
-    ];
-    const refundedAmount = refunds.reduce((sum, refund) => sum + toNumber(refund.amount, 0), 0);
-
-    return this.updateInvoice({
-      tenantId,
-      invoiceId,
-      payload: {
-        refunds,
-        refunded_amount: refundedAmount,
-        status: refundedAmount >= toNumber(bill.total, 0) ? "refunded" : "partially_refunded",
-        updated_at: nowIso(),
-      },
-    });
+    return mutateBillPayment({ tenantId, invoiceId, payload, user, action: "refund" });
   }
 
   async requestVoid({ tenantId, invoiceId, reason, user }) {
@@ -524,7 +452,7 @@ class BillingService {
 
   async getCashDrawerReport({ tenantId, outletId = null, shiftId = null }) {
     const business = await ensureBusiness({ tenantId });
-    const bills = await this.listInvoices({ tenantId });
+    const bills = (await prisma.bill.findMany({ where: { businessId: business.id }, include: getBillInclude() })).map(serializeBill);
     const filteredBills = bills.filter((bill) => {
       if (outletId && bill.outlet_id !== outletId) return false;
       if (shiftId && bill.shift_id !== shiftId) return false;
@@ -539,7 +467,10 @@ class BillingService {
       .filter((payment) => payment.status === "confirmed" && String(payment.method).toLowerCase() !== "cash")
       .reduce((sum, payment) => sum + toNumber(payment.amount, 0), 0);
     const refunds = filteredBills.reduce((sum, bill) => sum + toNumber(bill.refunded_amount, 0), 0);
-    const shift = this.getCurrentShift({ businessId: business.id, outletId });
+    const cashRefunds = filteredBills.flatMap((bill) => bill.refunds || [])
+      .filter((refund) => String(refund.method).toLowerCase() === "cash")
+      .reduce((sum, refund) => sum + toNumber(refund.amount, 0), 0);
+    const shift = await this.getCurrentShift({ businessId: business.id, outletId });
 
     return {
       business_id: business.id,
@@ -549,7 +480,8 @@ class BillingService {
       cash_sales: cashTotal,
       non_cash_sales: nonCashTotal,
       refunds,
-      expected_cash: toNumber(shift.opening_cash, 0) + cashTotal - refunds,
+      cash_refunds: cashRefunds,
+      expected_cash: toNumber(shift.opening_cash, 0) + cashTotal - cashRefunds,
       bill_count: filteredBills.length,
       generated_at: nowIso(),
     };

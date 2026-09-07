@@ -1,5 +1,5 @@
 import React, { Suspense, lazy, useEffect } from 'react';
-import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
+import { BrowserRouter, Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
 import { UiProvider } from './contexts/UiContext';
 import { ActiveOutletProvider } from './core/outlets/store/ActiveOutletContext';
@@ -383,15 +383,20 @@ const AppRoutes = () => {
   );
 };
 
+function RouteErrorBoundary({ children }) {
+  const location = useLocation();
+  return <AppErrorBoundary resetKey={location.pathname}>{children}</AppErrorBoundary>;
+}
+
 function App() {
   return (
     <AuthProvider>
       <ActiveOutletProvider>
         <UiProvider>
           <BrowserRouter>
-            <AppErrorBoundary>
+            <RouteErrorBoundary>
               <AppRoutes />
-            </AppErrorBoundary>
+            </RouteErrorBoundary>
             <GlobalErrorHandlers />
             <OfflineStatus />
             <Toaster position="top-right" />

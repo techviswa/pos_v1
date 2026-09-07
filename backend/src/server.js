@@ -9,12 +9,17 @@ import { logger } from "./shared/utils/logger.js";
 let server = null;
 let shuttingDown = false;
 let dbConnectPromise = null;
+let dbRetryTimer = null;
 
 const connectDatabaseInBackground = () => {
   if (!dbConnectPromise) {
     dbConnectPromise = connectDatabase().catch((error) => {
       logger.error(`Database connection failed: ${error instanceof Error ? error.message : String(error)}`);
       dbConnectPromise = null;
+      if (!shuttingDown) {
+        dbRetryTimer = setTimeout(() => { void connectDatabaseInBackground(); }, 5000);
+        dbRetryTimer.unref?.();
+      }
       return null;
     });
   }
@@ -28,6 +33,8 @@ const shutdown = async (signal) => {
   }
 
   shuttingDown = true;
+  clearTimeout(dbRetryTimer);
+  jobQueue.stop();
   logger.info(`${signal} received. Shutting down gracefully.`);
 
   try {

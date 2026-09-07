@@ -1,5 +1,6 @@
 import prisma from "../../database/prisma/client.js";
 import { featureToggleService } from "../featureToggleService.js";
+import { kotService } from "../../features/kitchen/kot/kot.service.js";
 import { FEATURE_KEYS } from "../../shared/constants/module.constants.js";
 import {
   appendKotAudit,
@@ -67,85 +68,7 @@ class OrderFulfillmentService {
       return null;
     }
 
-    const order = await tx.order.findFirst({
-      where: {
-        id: orderId,
-        businessId,
-      },
-      include: { items: true },
-    });
-
-    if (!order) {
-      return null;
-    }
-
-    const existingTicket = await tx.kitchenTicket.findFirst({
-      where: {
-        businessId,
-        orderId,
-      },
-    });
-
-    const ticket = existingTicket
-      ? existingTicket
-      : await tx.kitchenTicket.create({
-          data: {
-            businessId,
-            orderId,
-            status,
-          },
-        });
-
-    let resolvedTicket = ticket;
-    if (existingTicket) {
-      if (status && existingTicket.status !== status) {
-        resolvedTicket = await tx.kitchenTicket.update({
-          where: { id: existingTicket.id },
-          data: { status },
-        });
-      }
-    }
-
-    const currentKot = order.metadata?.kot || {};
-    const sequence = await tx.kitchenTicket.count({ where: { businessId } });
-    const kot = appendKotAudit(
-      {
-        ticket_number:
-          currentKot.ticket_number ||
-          createKotTicketNumber({ createdAt: resolvedTicket.createdAt, sequence }),
-        created_at: currentKot.created_at || resolvedTicket.createdAt.toISOString(),
-        estimated_prep_minutes: currentKot.estimated_prep_minutes || order.metadata?.estimated_prep_minutes || 20,
-        token_number: currentKot.token_number || order.metadata?.token_number || null,
-        items: buildKotItemState({
-          orderItems: order.items || [],
-          stations: getDefaultStations(),
-          existingItems: currentKot.items || [],
-        }).map((item) => ({
-          ...item,
-          status:
-            status === KOT_STATUSES.COMPLETED && item.status !== KOT_STATUSES.REJECTED
-              ? KOT_STATUSES.SERVED
-              : item.status,
-        })),
-        audit: currentKot.audit || [],
-      },
-      {
-        action: "ticket_created_or_synced",
-        status,
-      },
-    );
-
-    await tx.order.update({
-      where: { id: order.id },
-      data: {
-        metadata: {
-          ...(order.metadata || {}),
-          kot,
-        },
-      },
-    });
-
-    return resolvedTicket;
+    return kotService.ensureTicketForOrder({ tx, businessId, orderId, status: "pending" });
   }
 
   async handleOrderCreated({ tenantId, businessId, orderId, tx = prisma }) {

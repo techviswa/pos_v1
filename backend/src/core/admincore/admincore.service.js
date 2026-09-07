@@ -52,13 +52,13 @@ export const checkAdmincoreHealth = async () => {
     });
 
     return {
-      connected: true,
+      connected: response.ok,
       admincore_reachable: true,
-      message: "POS project is linked to AdminCore",
+      message: response.ok ? "POS project is linked to AdminCore" : `AdminCore health request returned HTTP ${response.status}`,
       admincore_base_url: connection.admincore_base_url,
       pos_base_url: connection.pos_base_url,
       project: connection.project,
-      status: "linked",
+      status: response.ok ? "linked" : "error",
       admincore_status_code: response.status,
     };
   } catch (error) {

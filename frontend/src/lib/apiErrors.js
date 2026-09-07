@@ -28,7 +28,7 @@ export const getApiErrorMessage = (error, fallback = "Something went wrong. Plea
   }
 
   if (!error.response) {
-    return "Backend server is not reachable. Start the backend and try again.";
+    return "We couldn’t reach the server. Check your connection and try again shortly.";
   }
 
   const payload = error.response.data || {};
@@ -57,7 +57,7 @@ export const getApiErrorDetails = (error, fallback) => {
       title: "Backend unavailable",
       message,
       status: null,
-      action: "Start the backend server and retry this screen.",
+      action: "Check your connection, then retry this screen.",
     };
   }
 
@@ -75,7 +75,7 @@ export const getApiErrorDetails = (error, fallback) => {
       title: "Access denied",
       message: message || "Your role does not have access to this screen.",
       status,
-      action: "Use an Owner or Manager account, or update this staff role's permissions.",
+      action: "Ask your manager to check your access.",
     };
   }
 
@@ -84,7 +84,7 @@ export const getApiErrorDetails = (error, fallback) => {
       title: "Feature not available",
       message: message || "This backend endpoint is not available yet.",
       status,
-      action: "This screen needs a matching backend route before it can load.",
+      action: "Return to the previous screen or contact support.",
     };
   }
 
@@ -93,7 +93,7 @@ export const getApiErrorDetails = (error, fallback) => {
       title: "Server error",
       message: message || "The backend hit an internal error.",
       status,
-      action: "Check the backend terminal or backend/logs/errors.jsonl for the request error.",
+      action: "Try again shortly. Contact support if the problem continues.",
     };
   }
 

@@ -12,6 +12,7 @@ const commands = [
   "node --check src/core/printer/printer.routes.js",
   "node --check src/core/sync/sync.routes.js",
   "npm run prisma:validate",
+  "node scripts/admincore-reliability-tests.mjs",
   "npm run test:smoke",
 ];
 

@@ -22,13 +22,17 @@ export class AppErrorBoundary extends React.Component {
     this.setState({ error: null });
   };
 
+  componentDidUpdate(previousProps) {
+    if (previousProps.resetKey !== this.props.resetKey && this.state.error) this.reset();
+  }
+
   render() {
     if (this.state.error) {
       return (
         <div className="cf-app-error">
           <ApiErrorPanel
             action="The POS is still running. Retry this screen, or go back if this keeps happening."
-            message={this.state.error?.message || "Something on this screen failed to load."}
+            message="Something on this screen failed to load. Please try again."
             onBack={() => window.history.back()}
             onRetry={this.reset}
             title="Screen failed to render"

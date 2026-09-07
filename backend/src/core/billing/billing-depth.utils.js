@@ -29,7 +29,7 @@ export const normalizePayments = (payments = [], { fallbackMethod = "Cash", tota
     }))
     .filter((payment) => payment.amount > 0);
 
-  if (!normalized.length && toNumber(total, 0) > 0) {
+  if (!normalized.length && toNumber(total, 0) > 0 && !["due", "credit", "unpaid"].includes(String(fallbackMethod).toLowerCase())) {
     normalized.push({
       id: `pay_${Date.now()}_1`,
       method: fallbackMethod || "Cash",

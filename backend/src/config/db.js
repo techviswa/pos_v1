@@ -25,13 +25,13 @@ export const connectDatabase = async () => {
   };
   databaseAvailable = true;
 
-  logger.info(`Database connected using ${dbConfig.provider} at ${dbConfig.url}`);
+  logger.info(`Database connected using ${dbConfig.provider}`);
 
   try {
     const schemaHealth = await checkPrismaSchemaHealth();
     if (!schemaHealth.healthy) {
       logger.warn(
-        `Database schema mismatch: missing tables ${schemaHealth.missing_tables.join(", ")}. Run npm --prefix backend run db:setup or db:reset:dev.`,
+        `Database schema mismatch: missing tables ${schemaHealth.missing_tables.join(", ")}; missing columns ${(schemaHealth.missing_columns || []).join(", ")}. Review and apply pending migrations.`,
       );
     }
   } catch (error) {

@@ -29,6 +29,7 @@ export const verifyPassword = (password, storedValue) => {
   }
 
   const expected = Buffer.from(hash, "hex");
+  if (!Number.isInteger(Number(iterations)) || Number(iterations) < 10000 || Number(iterations) > 1000000 || !/^[a-f0-9]{128}$/i.test(hash)) return false;
   const actual = pbkdf2Sync(String(password || ""), salt, Number(iterations), expected.length, DIGEST);
 
   return expected.length === actual.length && timingSafeEqual(expected, actual);

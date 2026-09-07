@@ -20,6 +20,7 @@ import {
 } from "./admincore.controller.js";
 import env from "../../config/env.js";
 import { createHttpError } from "../../shared/utils/http-error.js";
+import { asyncHandler } from "../../shared/utils/asyncHandler.js";
 
 const router = Router();
 
@@ -43,21 +44,21 @@ const requireAdmincoreBridgeKey = (req, _res, next) => {
   return next();
 };
 
-router.get("/connection", getConnection);
-router.get("/health", getHealth);
-router.post("/sync-status", postSyncStatus);
-router.post("/tenants", requireAdmincoreBridgeKey, postSaasTenant);
-router.post("/staff", requireAdmincoreBridgeKey, postBridgeStaff);
-router.post("/outlets", requireAdmincoreBridgeKey, postBridgeOutlet);
-router.put("/outlets/:outletId", requireAdmincoreBridgeKey, putBridgeOutlet);
-router.delete("/outlets/:outletId", requireAdmincoreBridgeKey, deleteBridgeOutlet);
-router.post("/products", requireAdmincoreBridgeKey, postBridgeProduct);
-router.put("/products/:productId", requireAdmincoreBridgeKey, putBridgeProduct);
-router.delete("/products/:productId", requireAdmincoreBridgeKey, deleteBridgeProduct);
-router.get("/tenants/:businessId", getSaasTenant);
-router.put("/tenants/:businessId/subscription", requireAdmincoreBridgeKey, putSaasSubscription);
-router.put("/tenants/:businessId/domains", requireAdmincoreBridgeKey, putSaasDomains);
-router.get("/tenants/:businessId/usage", getSaasUsage);
-router.get("/tenants/:businessId/export", getSaasExport);
+router.get("/connection", asyncHandler(getConnection));
+router.get("/health", asyncHandler(getHealth));
+router.post("/sync-status", requireAdmincoreBridgeKey, asyncHandler(postSyncStatus));
+router.post("/tenants", requireAdmincoreBridgeKey, asyncHandler(postSaasTenant));
+router.post("/staff", requireAdmincoreBridgeKey, asyncHandler(postBridgeStaff));
+router.post("/outlets", requireAdmincoreBridgeKey, asyncHandler(postBridgeOutlet));
+router.put("/outlets/:outletId", requireAdmincoreBridgeKey, asyncHandler(putBridgeOutlet));
+router.delete("/outlets/:outletId", requireAdmincoreBridgeKey, asyncHandler(deleteBridgeOutlet));
+router.post("/products", requireAdmincoreBridgeKey, asyncHandler(postBridgeProduct));
+router.put("/products/:productId", requireAdmincoreBridgeKey, asyncHandler(putBridgeProduct));
+router.delete("/products/:productId", requireAdmincoreBridgeKey, asyncHandler(deleteBridgeProduct));
+router.get("/tenants/:businessId", requireAdmincoreBridgeKey, asyncHandler(getSaasTenant));
+router.put("/tenants/:businessId/subscription", requireAdmincoreBridgeKey, asyncHandler(putSaasSubscription));
+router.put("/tenants/:businessId/domains", requireAdmincoreBridgeKey, asyncHandler(putSaasDomains));
+router.get("/tenants/:businessId/usage", requireAdmincoreBridgeKey, asyncHandler(getSaasUsage));
+router.get("/tenants/:businessId/export", requireAdmincoreBridgeKey, asyncHandler(getSaasExport));
 
 export default router;

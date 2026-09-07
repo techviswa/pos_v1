@@ -1,131 +1,55 @@
-import { jobQueue } from "../jobs/job-queue.js";
+import { randomUUID } from "node:crypto";
+import prisma from "../../database/prisma/client.js";
+import { readState, writeState } from "../../database/prisma/state-store.js";
 
-const printJobs = new Map();
-const agentHeartbeats = new Map();
-
-const nowIso = () => new Date().toISOString();
-
-const serializePrintJob = (job) => ({
-  id: job.id,
-  type: job.type,
-  target: job.target,
-  status: job.status,
-  copies: job.copies,
-  auto_print: job.autoPrint,
-  payload: job.payload,
-  error: job.error,
-  created_at: job.createdAt,
-  updated_at: job.updatedAt,
-  completed_at: job.completedAt,
-  claimed_at: job.claimedAt,
-  claimed_by: job.claimedBy,
-});
+const jobKey = (businessId, id) => `print:${businessId}:${id}`;
+const now = () => new Date().toISOString();
 
 class PrinterService {
-  constructor() {
-    jobQueue.registerHandler("printer.print", async ({ print_job_id: printJobId }) => {
-      const job = printJobs.get(printJobId);
-      if (!job) {
-        throw new Error(`Print job ${printJobId} not found`);
-      }
-
-      job.status = job.autoPrint ? "sent_to_printer_service" : "queued_for_manual_print";
-      job.updatedAt = nowIso();
-      return serializePrintJob(job);
+  async queuePrintJob({ businessId, type = "receipt", target = "default", payload = {}, copies = 1, autoPrint = false } = {}) {
+    if (!businessId) throw new Error("Printer business context is required");
+    const id = randomUUID();
+    const job = { id, business_id: businessId, type, target, payload, copies: Math.min(10, Math.max(1, Number(copies) || 1)),
+      auto_print: Boolean(autoPrint), status: "queued", error: null, created_at: now(), updated_at: now(),
+      completed_at: null, claimed_at: null, claimed_by: null };
+    return writeState(jobKey(businessId, id), job);
+  }
+  async listPrintJobs({ businessId, status } = {}) {
+    const rows = await prisma.stateDocument.findMany({ where: { key: { startsWith: `print:${businessId}:` } }, orderBy: { updatedAt: "desc" }, take: 200 });
+    return rows.map((row) => row.data).filter((row) => !status || row.status === status);
+  }
+  getPrintJob(id, businessId) { return readState(jobKey(businessId, id)); }
+  async completePrintJob(id, businessId, agentId) {
+    return this.finish(id, businessId, agentId, "completed");
+  }
+  async failPrintJob(id, error, businessId, agentId) {
+    return this.finish(id, businessId, agentId, "failed", error);
+  }
+  async finish(id, businessId, agentId, status, error = null) {
+    return prisma.$transaction(async (tx) => {
+      const key = jobKey(businessId, id);
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${key}))`;
+      const job = await readState(key, null, tx);
+      if (!job || (agentId && job.claimed_by !== agentId)) return null;
+      if (job.status === "completed") return job;
+      return writeState(key, { ...job, status, error, updated_at: now(), completed_at: status === "completed" ? now() : null }, tx);
     });
   }
-
-  queuePrintJob({ type = "receipt", target = "default", payload = {}, copies = 1, autoPrint = false } = {}) {
-    const id = `print_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
-    const job = {
-      id,
-      type,
-      target,
-      payload,
-      copies: Math.max(1, Number(copies || 1)),
-      autoPrint: Boolean(autoPrint),
-      status: "queued",
-      error: null,
-      createdAt: nowIso(),
-      updatedAt: nowIso(),
-      completedAt: null,
-      claimedAt: null,
-      claimedBy: null,
-    };
-
-    printJobs.set(id, job);
-    const backgroundJob = jobQueue.enqueue("printer.print", { print_job_id: id });
-    return {
-      ...serializePrintJob(job),
-      background_job_id: backgroundJob.id,
-    };
+  recordAgentHeartbeat({ businessId, agentId = "default-agent", payload = {} }) {
+    return writeState(`printer-agent:${businessId}:${agentId}`, { agent_id: agentId, business_id: businessId,
+      status: "online", printers: payload.printers || [], version: payload.version || null, last_seen_at: now() });
   }
-
-  listPrintJobs({ status } = {}) {
-    return [...printJobs.values()]
-      .filter((job) => !status || job.status === status)
-      .sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)))
-      .map(serializePrintJob);
+  async listAgents(businessId) {
+    return (await prisma.stateDocument.findMany({ where: { key: { startsWith: `printer-agent:${businessId}:` } } })).map((row) => row.data);
   }
-
-  getPrintJob(jobId) {
-    const job = printJobs.get(jobId);
-    return job ? serializePrintJob(job) : null;
-  }
-
-  completePrintJob(jobId) {
-    const job = printJobs.get(jobId);
-    if (!job) return null;
-    job.status = "completed";
-    job.completedAt = nowIso();
-    job.updatedAt = nowIso();
-    return serializePrintJob(job);
-  }
-
-  failPrintJob(jobId, error = "Printer service failed") {
-    const job = printJobs.get(jobId);
-    if (!job) return null;
-    job.status = "failed";
-    job.error = error;
-    job.updatedAt = nowIso();
-    return serializePrintJob(job);
-  }
-
-  recordAgentHeartbeat({ agentId = "default-agent", payload = {} } = {}) {
-    const heartbeat = {
-      agent_id: agentId,
-      status: payload.status || "online",
-      printers: payload.printers || [],
-      version: payload.version || null,
-      last_seen_at: nowIso(),
-    };
-    agentHeartbeats.set(agentId, heartbeat);
-    return heartbeat;
-  }
-
-  listAgents() {
-    return [...agentHeartbeats.values()].sort((left, right) =>
-      String(right.last_seen_at).localeCompare(String(left.last_seen_at)),
-    );
-  }
-
-  claimNextPrintJob({ agentId = "default-agent", target } = {}) {
-    const nextJob = [...printJobs.values()]
-      .filter((job) => ["queued", "sent_to_printer_service", "queued_for_manual_print"].includes(job.status))
-      .filter((job) => !target || job.target === target || job.target === "default")
-      .sort((left, right) => String(left.createdAt).localeCompare(String(right.createdAt)))[0];
-
-    if (!nextJob) {
-      return null;
-    }
-
-    nextJob.status = "claimed";
-    nextJob.claimedAt = nowIso();
-    nextJob.claimedBy = agentId;
-    nextJob.updatedAt = nowIso();
-    printJobs.set(nextJob.id, nextJob);
-    return serializePrintJob(nextJob);
+  async claimNextPrintJob({ businessId, agentId = "default-agent", target = "default" }) {
+    return prisma.$transaction(async (tx) => {
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`printer:${businessId}`}))`;
+      const rows = await tx.stateDocument.findMany({ where: { key: { startsWith: `print:${businessId}:` }, data: { path: ["status"], equals: "queued" } }, orderBy: { updatedAt: "asc" }, take: 200 });
+      const row = rows.find((row) => row.data.target === target || row.data.target === "default");
+      if (!row) return null;
+      return writeState(row.key, { ...row.data, status: "printing", claimed_by: agentId, claimed_at: now(), updated_at: now() }, tx);
+    });
   }
 }
-
 export const printerService = new PrinterService();

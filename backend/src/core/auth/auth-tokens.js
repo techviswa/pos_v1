@@ -57,11 +57,11 @@ export const consumeAuthToken = async ({ token, type }) => {
       return null;
     }
 
-    const usedRecord = await prisma.authToken.update({
-      where: { id: record.id },
+    const usedRecord = await prisma.authToken.updateMany({
+      where: { id: record.id, usedAt: null, expiresAt: { gt: new Date() } },
       data: { usedAt: new Date() },
     });
-    return serializeDbToken(usedRecord);
+    return usedRecord.count ? serializeDbToken({ ...record, usedAt: new Date() }) : null;
   }
 
   const record = tokenStore.get(tokenValue);

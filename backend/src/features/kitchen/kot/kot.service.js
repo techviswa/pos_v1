@@ -1,4 +1,5 @@
 import prisma from "../../../database/prisma/client.js";
+import { nextDocumentSequence } from "../../../database/prisma/document-sequence.js";
 import { ensureBusiness } from "../../../database/prisma/helpers.js";
 import { createHttpError } from "../../../shared/utils/http-error.js";
 import {
@@ -86,6 +87,10 @@ class KotService {
   }
 
   async ensureTicketForOrder({ tx = prisma, businessId, orderId, status = KOT_STATUSES.PENDING, actor = null }) {
+    if (tx === prisma) {
+      return prisma.$transaction((client) => this.ensureTicketForOrder({ tx: client, businessId, orderId, status, actor }));
+    }
+    await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`kot:${businessId}:${orderId}`}))`;
     const order = await tx.order.findFirst({
       where: { id: orderId, businessId },
       include: { items: true },
@@ -105,12 +110,6 @@ class KotService {
         data: { businessId, orderId, status },
         include: getTicketInclude(),
       });
-    } else if (status && ticket.status !== status) {
-      ticket = await tx.kitchenTicket.update({
-        where: { id: ticket.id },
-        data: { status },
-        include: getTicketInclude(),
-      });
     }
 
     const freshOrder = ticket.order || order;
@@ -126,7 +125,7 @@ class KotService {
           currentKot.ticket_number ||
           createKotTicketNumber({
             createdAt: ticket.createdAt,
-            sequence: await tx.kitchenTicket.count({ where: { businessId } }),
+            sequence: await nextDocumentSequence(tx, `kot:${businessId}`, await tx.kitchenTicket.count({ where: { businessId } })),
           }),
         created_at: currentKot.created_at || ticket.createdAt.toISOString(),
         estimated_prep_minutes:

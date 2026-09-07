@@ -107,7 +107,7 @@ class AdmincoreChangeSyncService {
         return { queued: false, reason: "not_configured", event };
       }
 
-      const job = jobQueue.enqueue(JOB_TYPE, event, { maxAttempts: 3 });
+      const job = await jobQueue.enqueue(JOB_TYPE, event, { maxAttempts: 5 });
       return { queued: true, job_id: job.id, event };
     } catch (error) {
       return {
@@ -122,7 +122,7 @@ class AdmincoreChangeSyncService {
     const webhookUrl = buildWebhookUrl();
     if (!webhookUrl) {
       await this.recordDeliveryFailure(event, "AdminCore sync webhook URL is not configured");
-      return { delivered: false, reason: "not_configured" };
+      throw new Error("AdminCore sync webhook URL is not configured");
     }
 
     const controller = new AbortController();
@@ -168,7 +168,7 @@ class AdmincoreChangeSyncService {
     } catch (error) {
       const message = error.name === "AbortError" ? "AdminCore sync notification timed out" : error.message;
       await this.recordDeliveryFailure(event, message);
-      return { delivered: false, error: message };
+      throw new Error(message, { cause: error });
     } finally {
       clearTimeout(timeout);
     }

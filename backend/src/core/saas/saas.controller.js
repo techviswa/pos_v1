@@ -1,5 +1,12 @@
 import { apiResponse, sendRawResponse } from "../../shared/utils/apiResponse.js";
 import { saasService } from "./saas.service.js";
+import { createHttpError } from "../../shared/utils/http-error.js";
+
+const assertTenantAccess = (req) => {
+  if (req.params.businessId && req.params.businessId !== req.context.businessId) {
+    throw createHttpError({ statusCode: 403, message: "Business access denied" });
+  }
+};
 
 class SaasController {
   async listPlans(_req, res) {
@@ -12,13 +19,14 @@ class SaasController {
   }
 
   async getTenant(req, res) {
+    assertTenantAccess(req);
     sendRawResponse(res, { data: await saasService.getTenantOverview({ businessId: req.params.businessId }) });
   }
 
   async usage(req, res) {
+    assertTenantAccess(req);
     sendRawResponse(res, { data: await saasService.getUsage({ businessId: req.params.businessId || req.context.businessId }) });
   }
 }
 
 export const saasController = new SaasController();
-

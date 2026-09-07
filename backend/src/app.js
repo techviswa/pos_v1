@@ -71,13 +71,24 @@ app.get("/health/database", async (_req, res, next) => {
   }
 });
 
-app.get("/health/jobs", (_req, res) => {
+app.get("/health/jobs", async (_req, res, next) => {
+  try {
   res.status(200).json(
     apiResponse({
       message: "Background job health fetched successfully",
-      data: jobQueue.health(),
+      data: await jobQueue.health(),
     }),
   );
+  } catch (error) { next(error); }
+});
+
+app.get("/health/ready", async (_req, res) => {
+  try {
+    const health = await checkPrismaSchemaHealth();
+    res.status(health.healthy ? 200 : 503).json({ ready: health.healthy });
+  } catch {
+    res.status(503).json({ ready: false });
+  }
 });
 
 app.use("/api", requireApiSession, routes);

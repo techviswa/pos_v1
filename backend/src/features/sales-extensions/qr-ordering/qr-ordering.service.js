@@ -463,7 +463,7 @@ class QrOrderingService {
     });
     const payment = {
       method: payload.payment_method || payload.paymentMethod || (rules.onlinePaymentEnabled ? "online" : "pay_at_counter"),
-      status: payload.payment_status || (rules.paymentRequiredBeforeApproval ? "pending_confirmation" : "not_required"),
+      status: rules.paymentRequiredBeforeApproval ? "pending_confirmation" : "not_required",
       reference: payload.payment_reference || payload.paymentReference || null,
       amount: total,
       tip_amount: tipAmount,
@@ -590,6 +590,8 @@ class QrOrderingService {
     if (!order) throw createNotFoundError("QR order", { orderId });
 
     const updated = await prisma.$transaction(async (tx) => {
+      const claimed = await tx.order.updateMany({ where: { id: order.id, businessId, status: "qr_pending_approval" }, data: { status: "accepted" } });
+      if (!claimed.count) throw createHttpError({ statusCode: 409, message: "QR order has already been reviewed" });
       const next = await tx.order.update({
         where: { id: order.id },
         data: {

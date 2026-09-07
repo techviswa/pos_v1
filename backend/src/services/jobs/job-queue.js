@@ -1,4 +1,5 @@
 import { errorMonitor } from "../../shared/utils/error-monitor.js";
+import { DurableJobQueue } from "./durable-job-queue.js";
 
 const jobs = new Map();
 const handlers = new Map();
@@ -83,6 +84,7 @@ class JobQueue {
       }
 
       job.result = await handler(job.payload, serializeJob(job));
+      job.error = null;
       job.status = "completed";
       job.updatedAt = nowIso();
     } catch (error) {
@@ -133,4 +135,4 @@ class JobQueue {
   }
 }
 
-export const jobQueue = new JobQueue();
+export const jobQueue = new DurableJobQueue();

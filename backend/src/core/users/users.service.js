@@ -33,7 +33,7 @@ const getUserInclude = () => ({
 });
 
 class UsersService {
-  normalizePassword(password, fallback = "changeme123") {
+  normalizePassword(password, fallback = "") {
     const value = password || fallback;
     if (!isPasswordHash(value) && String(value).length < 8) {
       throw createHttpError({ statusCode: 400, message: "Password must be at least 8 characters" });

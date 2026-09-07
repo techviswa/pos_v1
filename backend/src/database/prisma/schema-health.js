@@ -1,5 +1,6 @@
 import env from "../../config/env.js";
 import prisma from "./client.js";
+import { Prisma } from "@prisma/client";
 
 export const REQUIRED_SQLITE_TABLES = [
   "Business",
@@ -31,12 +32,37 @@ export const checkPrismaSchemaHealth = async () => {
   await prisma.$connect();
 
   if (env.database.provider !== "sqlite") {
+    const columns = await prisma.$queryRaw`
+      SELECT table_name, column_name FROM information_schema.columns
+      WHERE table_schema = current_schema()
+    `;
+    const tables = new Map();
+    for (const row of columns) {
+      if (!tables.has(row.table_name)) tables.set(row.table_name, new Set());
+      tables.get(row.table_name).add(row.column_name);
+    }
+    const models = Prisma.dmmf.datamodel.models;
+    const missingTables = [];
+    const missingColumns = [];
+    for (const model of models) {
+      const table = model.dbName || model.name;
+      if (!tables.has(table)) {
+        missingTables.push(table);
+        continue;
+      }
+      for (const field of model.fields.filter((field) => field.kind !== "object")) {
+        const column = field.dbName || field.name;
+        if (!tables.get(table).has(column)) missingColumns.push(`${table}.${column}`);
+      }
+    }
+    const healthy = !missingTables.length && !missingColumns.length;
     return {
       provider: env.database.provider,
-      healthy: true,
-      checked_tables: [],
-      missing_tables: [],
-      message: "Schema table introspection is only enabled for sqlite in this dev project.",
+      healthy,
+      checked_tables: models.map((model) => model.dbName || model.name),
+      missing_tables: missingTables,
+      missing_columns: missingColumns,
+      message: healthy ? "Required Prisma tables and columns exist." : "Database schema is behind Prisma. Review and apply pending migrations.",
     };
   }
 
@@ -55,4 +81,3 @@ export const checkPrismaSchemaHealth = async () => {
       : "Database schema matches the required POS tables.",
   };
 };
-

@@ -7,6 +7,56 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
+model BackgroundJob {
+  id          String   @id @default(cuid())
+  type        String
+  status      String   @default("queued")
+  attempts    Int      @default(0)
+  maxAttempts Int      @default(5)
+  payload     Json
+  result      Json?
+  error       String?
+  runAt       DateTime @default(now())
+  leaseUntil  DateTime?
+  leaseToken  String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([status, runAt])
+}
+
+model AdminCoreSyncLog {
+  id         String   @id @default(cuid())
+  tenantId   String?
+  resource   String
+  status     String
+  data       Json
+  createdAt  DateTime @default(now())
+
+  @@index([tenantId, createdAt])
+}
+
+model StateDocument {
+  key       String   @id
+  data      Json
+  updatedAt DateTime @updatedAt
+}
+
+model DocumentSequence {
+  key   String @id
+  value Int
+}
+
+model AuthSession {
+  tokenHash String   @id
+  userId    String
+  createdAt DateTime @default(now())
+  expiresAt DateTime
+
+  @@index([userId])
+  @@index([expiresAt])
+}
+
 model Business {
   id             String          @id @default(cuid())
   name           String

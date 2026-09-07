@@ -113,10 +113,23 @@ class SaasService {
   }
 
   async upsertTenantFromAdminCore(payload = {}) {
-    const businessId = normalizeId(payload.business_id || payload.businessId, env.defaultBusinessId);
-    const tenantId = normalizeId(payload.tenant_id || payload.tenantId, `${businessId}-tenant`);
+    const businessId = normalizeId(payload.business_id || payload.businessId, "");
+    const tenantId = normalizeId(payload.tenant_id || payload.tenantId, "");
+    if (!businessId || !tenantId) {
+      throw createHttpError({ statusCode: 400, code: "PROVISIONING_CONTEXT_REQUIRED", message: "business_id and tenant_id are required" });
+    }
+    if (payload.owner_password && !isPasswordHash(payload.owner_password) && String(payload.owner_password).length < 8) {
+      throw createHttpError({ statusCode: 400, message: "Owner password must be at least 8 characters" });
+    }
     const plan = getPlan(payload.plan);
-    const business = await ensureBusiness({ businessId, tenantId });
+    const business = await prisma.$transaction(async (tx) => {
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`provision:${tenantId}`}))`;
+      const existing = await tx.business.findFirst({ where: { OR: [{ id: businessId }, { tenantId }] } });
+      if (existing && (existing.id !== businessId || existing.tenantId !== tenantId)) {
+        throw createHttpError({ statusCode: 409, code: "BUSINESS_TENANT_CONFLICT", message: "Business ID and tenant ID map to different businesses" });
+      }
+      return existing || tx.business.create({ data: { id: businessId, tenantId, name: payload.name || payload.business_name || "POS Business" } });
+    });
     const updatedBusiness = await prisma.business.update({
       where: { id: business.id },
       data: { name: payload.name || payload.business_name || business.name },
@@ -156,7 +169,7 @@ class SaasService {
     const passwordHash = isPasswordHash(password) ? password : hashPassword(password);
     const user = await prisma.user.upsert({
       where: { businessId_email: { businessId, email } },
-      update: { name, passwordHash, roleId: role.id, active: true, profileRequired: false },
+      update: {},
       create: { businessId, roleId: role.id, name, email, passwordHash, active: true, profileRequired: false },
     });
     const outlet = await prisma.outlet.findFirst({ where: { businessId } });

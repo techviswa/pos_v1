@@ -1,5 +1,6 @@
 ﻿import env from "../../config/env.js";
 import prisma from "./client.js";
+import { createHttpError } from "../../shared/utils/http-error.js";
 import {
   DEFAULT_BILLING_CURRENCY,
   DEFAULT_CUSTOMER_NAME,
@@ -76,6 +77,10 @@ export const ensureBusiness = async ({
     .then((existingBusiness) => {
       if (existingBusiness) {
         return existingBusiness;
+      }
+
+      if (env.nodeEnv === "production") {
+        throw createHttpError({ statusCode: 404, code: "BUSINESS_NOT_PROVISIONED", message: "Business has not been provisioned" });
       }
 
       return prisma.business.create({

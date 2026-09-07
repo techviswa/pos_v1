@@ -3,10 +3,11 @@ services:
     name: cashflow-lite-pos-backend
     runtime: node
     rootDir: backend
-    plan: free
-    buildCommand: npm ci && npm run prisma:generate && npm run prisma:deploy && npm run prisma:seed
+    plan: starter
+    buildCommand: npm ci && npm run prisma:generate
+    preDeployCommand: npm run prisma:deploy && npm run seed:production
     startCommand: npm start
-    healthCheckPath: /health
+    healthCheckPath: /health/ready
     envVars:
       - key: NODE_ENV
         value: production
@@ -15,9 +16,9 @@ services:
       - key: PORT
         value: 10000
       - key: DATABASE_PROVIDER
-        value: sqlite
+        value: postgresql
       - key: DATABASE_URL
-        value: file:./dev.db
+        sync: false
       - key: DEFAULT_TENANT_ID
         value: demo-tenant
       - key: DEFAULT_BUSINESS_ID

@@ -15,6 +15,7 @@
     "prisma:migrate": "prisma migrate dev",
     "prisma:deploy": "prisma migrate deploy",
     "prisma:seed": "node prisma/seed.js",
+    "seed:production": "node scripts/seed-production.mjs",
     "db:setup": "npm run prisma:validate && npm run prisma:generate && npm run prisma:migrate && npm run prisma:seed",
     "db:reset:dev": "prisma migrate reset --force && npm run prisma:seed"
   },

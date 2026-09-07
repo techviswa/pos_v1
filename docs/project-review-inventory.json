@@ -1,0 +1,3229 @@
+{
+  "generatedAt": "2026-09-06T12:14:39.165Z",
+  "projects": {
+    "POS": [
+      {
+        "path": "backend/migration-history-diff.sql",
+        "lines": 445,
+        "sha256": "42de29249f7e72d4f02d3bba981c6a266375c2596892a2beb0c27c5cf6c03d3f",
+        "findings": []
+      },
+      {
+        "path": "backend/prisma/migrations/20260403_init/migration.sql",
+        "lines": 340,
+        "sha256": "a4941bf2a5e32854d23e617c479c34c6154822639b4a4418470e16a57fe26fe0",
+        "findings": []
+      },
+      {
+        "path": "backend/prisma/migrations/20260417_bill_metadata_persistence/migration.sql",
+        "lines": 2,
+        "sha256": "42a0980030d0afb37d648758170611965b46f5cd28e303214627241ff269e333",
+        "findings": []
+      },
+      {
+        "path": "backend/prisma/migrations/20260816_qr_ordering/migration.sql",
+        "lines": 23,
+        "sha256": "c248ec8c231d18aff807ef4350b7c2d3810ffd3181318a601e1d6b4b63496954",
+        "findings": []
+      },
+      {
+        "path": "backend/prisma/migrations/20260816_qr_tracking_rules/migration.sql",
+        "lines": 25,
+        "sha256": "75eac2c97fbc07b65333bd15d04252b4724c6480865c356cd522e12ee8336e7e",
+        "findings": []
+      },
+      {
+        "path": "backend/prisma/migrations/20260825_table_management_schema_alignment/migration.sql",
+        "lines": 59,
+        "sha256": "da4ca5458343abb5daa8feeb59d064de61524af4e69e5983238dd07f27a75a34",
+        "findings": []
+      },
+      {
+        "path": "backend/prisma/migrations/20260829_auth_tokens/migration.sql",
+        "lines": 22,
+        "sha256": "f432389652a5662a1315f1aa748658388eefb8e2a7b2a216566137a9eaca6050",
+        "findings": []
+      },
+      {
+        "path": "backend/prisma/migrations/20260829_qr_table_sessions/migration.sql",
+        "lines": 29,
+        "sha256": "4252b55cf29f7381f5003741fce33c673e2a4a4b76e5fdf1e99d28a82ce7733a",
+        "findings": []
+      },
+      {
+        "path": "backend/prisma/migrations/20260906_production_persistence/migration.sql",
+        "lines": 23,
+        "sha256": "b51fda4e3846c7a813947127cc1241b7878cacf2d28c1792943b2f6909347e34",
+        "findings": []
+      },
+      {
+        "path": "backend/prisma/migrations/20260907_schema_alignment/migration.sql",
+        "lines": 497,
+        "sha256": "a5fb7f214723b0f8120bdf672c94f2554312dd11e3c8ec45e519bf82e78ce99a",
+        "findings": []
+      },
+      {
+        "path": "backend/prisma/migrations/migration_lock.toml",
+        "lines": 2,
+        "sha256": "1db17a8d051aa136110736752c5e1f8b7ed92b6ea8e803112fbbe2497047c210",
+        "findings": []
+      },
+      {
+        "path": "backend/prisma/schema.prisma",
+        "lines": 627,
+        "sha256": "cdb714dab6aa6f4e419a3f569a03c2ba5b3e6bb66fdf400b023b09bdefccf1d4",
+        "findings": []
+      },
+      {
+        "path": "backend/prisma/seed.js",
+        "lines": 156,
+        "sha256": "523322d8f188cefb9777299ad6cdf2ad0334e449e5bcdc55382a580934e5a800",
+        "findings": []
+      },
+      {
+        "path": "backend/scripts/import-sqlite-to-postgres.py",
+        "lines": 258,
+        "sha256": "e07f23396a724ea50a5719696ae650f9f2051fbcb0c07d73cd7aa7a822cb9ab6",
+        "findings": []
+      },
+      {
+        "path": "backend/scripts/seed-cafe-menu.js",
+        "lines": 884,
+        "sha256": "639846e8890e5233a62f60f30026210eb669789d857cd5a8336f439c4a3da1e5",
+        "findings": [
+          {
+            "label": "memory store",
+            "line": 800
+          }
+        ]
+      },
+      {
+        "path": "backend/src/app.js",
+        "lines": 101,
+        "sha256": "ef4806477253428948b4bf941ccd3df9c9197f7acf630c3c1b61ce1180af4281",
+        "findings": []
+      },
+      {
+        "path": "backend/src/config/db.js",
+        "lines": 47,
+        "sha256": "3d30d908f5ad6dd277ff4761fc3e1a30a61790a13b8444e8f9f371938f29e56d",
+        "findings": []
+      },
+      {
+        "path": "backend/src/config/env.js",
+        "lines": 82,
+        "sha256": "61cb255de8154c99cef9780b04a05d4065d3a38aca55b02efab19c1c4aba9db1",
+        "findings": []
+      },
+      {
+        "path": "backend/src/core/admincore/admincore-change-sync.service.js",
+        "lines": 202,
+        "sha256": "ab8a17a1fd396332e845ea4d6f6024dc4cb9e42a1b676fc7005bca29a4603185",
+        "findings": []
+      },
+      {
+        "path": "backend/src/core/admincore/admincore.controller.js",
+        "lines": 191,
+        "sha256": "bd8b006218ef23baa8ce843fb64f300c1a0a3cefcb38ad22c15cbdcfdce20707",
+        "findings": []
+      },
+      {
+        "path": "backend/src/core/admincore/admincore.routes.js",
+        "lines": 65,
+        "sha256": "6353f2946d6efc24496b26944eb0cc833407dd3e676ffe1959b80e1ad40e3e67",
+        "findings": []
+      },
+      {
+        "path": "backend/src/core/admincore/admincore.service.js",
+        "lines": 94,
+        "sha256": "74ad2905e8149f242fe0a5c16119caed05102e19ec3aa698d5787a65ecc5ec48",
+        "findings": []
+      },
+      {
+        "path": "backend/src/core/auth/auth-session.js",
+        "lines": 49,
+        "sha256": "58fab6dd5d691b5816ee23e1e016206cdd7d407848417c9138d6beddb08cae05",
+        "findings": []
+      },
+      {
+        "path": "backend/src/core/auth/auth-tokens.js",
+        "lines": 95,
+        "sha256": "318a32d63738fe761bcd2ec9647d64da3762048790ee90bf61db1a2bf40b1fd0",
+        "findings": [
+          {
+            "label": "memory store",
+            "line": 7
+          }
+        ]
+      },
+      {
+        "path": "backend/src/core/auth/auth.controller.js",
+        "lines": 136,
+        "sha256": "450e516d223b3542d1f13d92a1e36053e2cd8ce1669f116915ff2cab6dccee25",
+        "findings": []
+      },
+      {
+        "path": "backend/src/core/auth/auth.routes.js",
+        "lines": 21,
+        "sha256": "50717b5c2851e6fae7b973e4b457296b44158bfd651a94592baf5928043d08df",
+        "findings": []
+      },
+      {
+        "path": "backend/src/core/auth/auth.service.js",
+        "lines": 488,
+        "sha256": "e009b3360567a0517bcd3e9911eddd9f2842be1f07c7621f36f30f35b084158b",
+        "findings": []
+      },
+      {
+        "path": "backend/src/core/auth/passwords.js",
+        "lines": 37,
+        "sha256": "a60b9251673649b636439a5f0ae7b29272916aa3f8e4eb970fe9b8d62981e373",
+        "findings": []
+      },
+      {
+        "path": "backend/src/core/auth/session-store.js",
+        "lines": 25,
+        "sha256": "8955159687563847a4b20d57c0c164e510dd9ff5d27777e3cd2dc1c938602631",
+        "findings": [
+          {
+            "label": "memory store",
+            "line": 6
+          }
+        ]
+      },
+      {
+        "path": "backend/src/core/billing/bill-analytics.utils.js",
+        "lines": 71,
+        "sha256": "2fe94d2a3544a47f74e8f467c644879ef0dcd97c983f1acd2d9c409dabbca599",
+        "findings": [
+          {
+            "label": "memory store",
+            "line": 13
+          }
+        ]
+      },
+      {
+        "path": "backend/src/core/billing/billing-depth.utils.js",
+        "lines": 141,
+        "sha256": "ee9219a94513926ed43d8a9f0a605335a573501946db965c865a12e93ba81fd6",
+        "findings": []
+      },
+      {
+        "path": "backend/src/core/billing/billing-legacy.serializer.js",
+        "lines": 90,
+        "sha256": "cc3b14c32f321ff26b67705336893d5eb4d245f2998cbccd1b7c349dd48406af",
+        "findings": []
+      },
+      {
+        "path": "backend/src/core/billing/billing-metadata.repository.js",
+        "lines": 42,
+        "sha256": "74ee5a751ce93fda58131dc5564709218b3ee7c3cf6bb8c288dbfd9495c5bae5",
+        "findings": []
+      },
+      {
+        "path": "backend/src/core/billing/billing-metadata.utils.js",
+        "lines": 179,
+        "sha256": "bb7088e93b2d8a525ad6a0371900835da7322c60e0cba9645b437b34f2eb0419",
+        "findings": []
+      },
+      {
+        "path": "backend/src/core/billing/billing-payments.service.js",
+        "lines": 57,
+        "sha256": "7941896b40f8f78d0a6b8a06da6494b97decd969115434058b57340595f0689e",
+        "findings": []
+      },
+      {
+        "path": "backend/src/core/billing/billing.controller.js",
+        "lines": 194,
+        "sha256": "3238dde17c79500ed5d11dc56aa8e007ec6bfe399e1871c7583fda58f96923ba",
+        "findings": []
+      },
+      {
+        "path": "backend/src/core/billing/billing.routes.js",
+        "lines": 29,
+        "sha256": "e532ae8e49e3819e4dded7a2ee45ce0ff343a3de4f1b8613978694eb71616459",
+        "findings": []
+      },
+      {
+        "path": "backend/src/core/billing/billing.service.js",
+        "lines": 540,
+        "sha256": "5aac25e64616b6086f089926c70293efd2d3525da7aa7419ef010b598e97522d",
+        "findings": []
+      },
+      {
+        "path": "backend/src/core/businesses/businesses.controller.js",
+        "lines": 34,
+        "sha256": "f67a215794362ea52d9d17a7108bef91df3a16f547f4ad330b79b2b558a843fe",
+        "findings": []
+      },
+      {
+        "path": "backend/src/core/businesses/businesses.routes.js",
+        "lines": 16,
+        "sha256": "bd88d489bc9f0e1ee0f297724955290a2069f8c1b68df3a5117b82c137e1cd7d",
+        "findings": []
+      },
+      {
+        "path": "backend/src/core/businesses/businesses.service.js",
+        "lines": 83,
+        "sha256": "3ac7800f50b5cad3c71ca6e39630091ccf7ea1005c99be59dcfab0cb1b41e52a",
+        "findings": []
+      },
+      {
+        "path": "backend/src/core/customers/customers.controller.js",
+        "lines": 35,
+        "sha256": "00e379b28b851a69ddf07c72c29604ebf5ddf211d0efaafe8302ba5a84bd9aec",
+        "findings": []
+      },
+      {
+        "path": "backend/src/core/customers/customers.routes.js",
+        "lines": 12,
+        "sha256": "04d553b2fbe4f8c92162987d916ca69acf40a6f8eda52cc906d3b87af46be799",
+        "findings": []
+      },
+      {
+        "path": "backend/src/core/customers/customers.service.js",
+        "lines": 20,
+        "sha256": "db7ac29074d027203762e0f818448c09560b676c3f4ca1384925d9a1a779bc97",
+        "findings": []
+      },
+      {
+        "path": "backend/src/core/dashboard/dashboard.controller.js",
+        "lines": 12,
+        "sha256": "b08dbe92f6fe8c910c864ce81d7a28cbbec5c67e89d44fc25c12dbc6a91a1787",
+        "findings": []
+      },
+      {
+        "path": "backend/src/core/dashboard/dashboard.routes.js",
+        "lines": 12,
+        "sha256": "becd36ec264af2e04f9d9b38b3747058d11dbc5ea78819dda9d64b8adb925863",
+        "findings": []
+      },
+      {
+        "path": "backend/src/core/dashboard/dashboard.service.js",
+        "lines": 196,
+        "sha256": "b92a96518a85bff415133736d53a45714992d5e85e7483b0fd927558798409b2",
+        "findings": [
+          {
+            "label": "memory store",
+            "line": 18
+          }
+        ]
+      },
+      {
+        "path": "backend/src/core/features/features.controller.js",
+        "lines": 38,
+        "sha256": "22e881d1037a7a6c7b3cee81b41fd0c7b7b0fc7c9004fa69e42a2a7b60b3b1e9",
+        "findings": []
+      },
+      {
+        "path": "backend/src/core/features/features.routes.js",
+        "lines": 16,
+        "sha256": "dd792a5443d8c601c7a378a0127e1ffdb83b2c6ea7af917b15c022fc19cffab0",
+        "findings": []
+      },
+      {
+        "path": "backend/src/core/features/features.service.js",
+        "lines": 29,
+        "sha256": "418e9306d44614420e1fa1c178303e566d41f5e8bd92f87aa8873ff719f73409",
+        "findings": []
+      },
+      {
+        "path": "backend/src/core/feedback/feedback.controller.js",
+        "lines": 25,
+        "sha256": "a1bab5042015a8b748bea0c78ce0e85502de06e91c0d198aa309f685e43b75a5",
+        "findings": []
+      },
+      {
+        "path": "backend/src/core/feedback/feedback.routes.js",
+        "lines": 13,
+        "sha256": "711a0f3c89d1e7e91d1d7c1dabec53effa4c17c90749db5e4ac18d710de78066",
+        "findings": []
+      },
+      {
+        "path": "backend/src/core/feedback/feedback.service.js",
+        "lines": 90,
+        "sha256": "2678eb87f32ae703687a14062a6f8027e38f2cab3791ec916b81def465077266",
+        "findings": []
+      },
+      {
+        "path": "backend/src/core/inventory/inventory-operations.service.js",
+        "lines": 628,
+        "sha256": "1e66bf99d925b2ce780e6a959fc6dd28cb2ca5ec32c6fb1bbfa0c23e238ba2d4",
+        "findings": [
+          {
+            "label": "memory store",
+            "line": 549
+          },
+          {
+            "label": "memory store",
+            "line": 550
+          }
+        ]
+      },
+      {
+        "path": "backend/src/core/inventory/inventory.controller.js",
+        "lines": 136,
+        "sha256": "5020b56e53c4cfa2ce755e645e9bd16f1835c4150755530a32f27a47fadae1c1",
+        "findings": []
+      },
+      {
+        "path": "backend/src/core/inventory/inventory.routes.js",
+        "lines": 25,
+        "sha256": "c8f22cd3d57df52fd22bea006fb784f4f8e1f51a32cda9faedf71f0344a458b8",
+        "findings": []
+      },
+      {
+        "path": "backend/src/core/inventory/inventory.service.js",
+        "lines": 147,
+        "sha256": "707325b655b375c2aac82dbb2ebfe27cc6507107304eecda886694f48a8d2b8b",
+        "findings": []
+      },
+      {
+        "path": "backend/src/core/orders/orders.controller.js",
+        "lines": 57,
+        "sha256": "89c14b52ba540071b7598e2fd48cda03d59907935deb62c79b963d4d09236206",
+        "findings": []
+      },
+      {
+        "path": "backend/src/core/orders/orders.routes.js",
+        "lines": 16,
+        "sha256": "37e0935e064000abcc0cefb08bce7664ed8055231d791ce3512aa2107be9a400",
+        "findings": []
+      },
+      {
+        "path": "backend/src/core/orders/orders.service.js",
+        "lines": 186,
+        "sha256": "e41a2578933d0f7d1d1b5fe9323ae060d0c57f7d1a135c98f45610b842853196",
+        "findings": []
+      },
+      {
+        "path": "backend/src/core/outlets/outlets.controller.js",
+        "lines": 122,
+        "sha256": "d18e704e467dcb674f564aabbdd3dc09e5923c12dc4e444e4cbabbe2ce99806c",
+        "findings": []
+      },
+      {
+        "path": "backend/src/core/outlets/outlets.routes.js",
+        "lines": 26,
+        "sha256": "ef08ce48beaf6b608535ffc5b05e7304cdeaa26a446b0694946c36600e2c9886",
+        "findings": []
+      },
+      {
+        "path": "backend/src/core/outlets/outlets.service.js",
+        "lines": 812,
+        "sha256": "afbd4512e28f61387d63987fe19dffc218fbd30e120d323c320cda048e6c8baf",
+        "findings": [
+          {
+            "label": "memory store",
+            "line": 229
+          },
+          {
+            "label": "memory store",
+            "line": 230
+          },
+          {
+            "label": "memory store",
+            "line": 231
+          },
+          {
+            "label": "memory store",
+            "line": 232
+          },
+          {
+            "label": "memory store",
+            "line": 233
+          },
+          {
+            "label": "memory store",
+            "line": 234
+          },
+          {
+            "label": "memory store",
+            "line": 269
+          },
+          {
+            "label": "memory store",
+            "line": 310
+          },
+          {
+            "label": "memory store",
+            "line": 363
+          },
+          {
+            "label": "memory store",
+            "line": 377
+          },
+          {
+            "label": "memory store",
+            "line": 396
+          },
+          {
+            "label": "memory store",
+            "line": 642
+          },
+          {
+            "label": "memory store",
+            "line": 733
+          }
+        ]
+      },
+      {
+        "path": "backend/src/core/payments/payments.controller.js",
+        "lines": 73,
+        "sha256": "da3fbf3ab2c40942e95ae813180215346c19e63ad5809e708a4f6b2fbcdcdeca",
+        "findings": []
+      },
+      {
+        "path": "backend/src/core/payments/payments.routes.js",
+        "lines": 18,
+        "sha256": "8264868d6001676a0f1915eb4b7eaca5f0d280d09699e4587e5dd252c4fb91b0",
+        "findings": []
+      },
+      {
+        "path": "backend/src/core/payments/payments.service.js",
+        "lines": 149,
+        "sha256": "22be8c1b7a0eda250ad15f6a53ffbf686fcb969057e3dea6a400c048b0ed1803",
+        "findings": [
+          {
+            "label": "memory store",
+            "line": 1
+          }
+        ]
+      },
+      {
+        "path": "backend/src/core/printer/printer.controller.js",
+        "lines": 76,
+        "sha256": "f2d541395a03715f560f4b7cf0847204b2331bdc0582d92eba20fafcec5f9181",
+        "findings": []
+      },
+      {
+        "path": "backend/src/core/printer/printer.routes.js",
+        "lines": 39,
+        "sha256": "71d42d9c54d810061f7b1e3df53731b8541e3da58b72cd234c5d30876ee2c554",
+        "findings": []
+      },
+      {
+        "path": "backend/src/core/products/products.controller.js",
+        "lines": 90,
+        "sha256": "24fe33358eeca53e270122b9b27c4e2f27162ae94d3ee5289fcc603d275c0111",
+        "findings": []
+      },
+      {
+        "path": "backend/src/core/products/products.routes.js",
+        "lines": 21,
+        "sha256": "ded01de90369c894b437d7453dc81a6f2845fef75a135febac597d001f16ddfc",
+        "findings": []
+      },
+      {
+        "path": "backend/src/core/products/products.service.js",
+        "lines": 258,
+        "sha256": "bd4d1b02e2fe52d502a1552874981ef1f949d2aa92d20f64a5c09e54e30e7a19",
+        "findings": []
+      },
+      {
+        "path": "backend/src/core/reports/reports.controller.js",
+        "lines": 92,
+        "sha256": "1e73912a8c93cf344a795bf411c0d015b16690a7fbd173c86d295db794f5ca41",
+        "findings": []
+      },
+      {
+        "path": "backend/src/core/reports/reports.routes.js",
+        "lines": 26,
+        "sha256": "35ae8424d3f8b8b46ac864240bc7dff0ca8a150b37186e6cc8d93ed617c5fd5d",
+        "findings": []
+      },
+      {
+        "path": "backend/src/core/reports/reports.service.js",
+        "lines": 441,
+        "sha256": "e3542668a953f2b1caffa2962a96ee2a41939b0adef325b648aabffdbfa68ba2",
+        "findings": [
+          {
+            "label": "memory store",
+            "line": 126
+          },
+          {
+            "label": "memory store",
+            "line": 127
+          },
+          {
+            "label": "memory store",
+            "line": 171
+          },
+          {
+            "label": "memory store",
+            "line": 225
+          },
+          {
+            "label": "memory store",
+            "line": 226
+          },
+          {
+            "label": "memory store",
+            "line": 256
+          },
+          {
+            "label": "memory store",
+            "line": 257
+          },
+          {
+            "label": "memory store",
+            "line": 284
+          },
+          {
+            "label": "filesystem persistence",
+            "line": 386
+          },
+          {
+            "label": "filesystem persistence",
+            "line": 394
+          }
+        ]
+      },
+      {
+        "path": "backend/src/core/reservations/reservations.controller.js",
+        "lines": 30,
+        "sha256": "241b4f54f8eb7239a18ed4836dec303901b8ae11a7e4b81cb27b80db6d031078",
+        "findings": []
+      },
+      {
+        "path": "backend/src/core/reservations/reservations.routes.js",
+        "lines": 12,
+        "sha256": "75efba43c4bc12154f31348b036a2299b879ea044a8fa7174c4cb4cffd336b43",
+        "findings": []
+      },
+      {
+        "path": "backend/src/core/saas/saas-plans.js",
+        "lines": 43,
+        "sha256": "56458c1211397c62e62bb7472bf6dffbc12bbc44e5dabafeb8537eea04a1ff61",
+        "findings": []
+      },
+      {
+        "path": "backend/src/core/saas/saas-store.js",
+        "lines": 16,
+        "sha256": "103e9475a36c7ce60da0c85cab243cdd681365c275e83eee69637a60dd6e0f91",
+        "findings": []
+      },
+      {
+        "path": "backend/src/core/saas/saas.controller.js",
+        "lines": 33,
+        "sha256": "37915bbc9c90d36aafb792e5f418687c64892175eaf44fe58c7271c9af237e49",
+        "findings": []
+      },
+      {
+        "path": "backend/src/core/saas/saas.routes.js",
+        "lines": 15,
+        "sha256": "e64c4999acbbccd5789c59e3ef4c1b9c16be073d56b2ca65cca3c33bac7dfede",
+        "findings": []
+      },
+      {
+        "path": "backend/src/core/saas/saas.service.js",
+        "lines": 280,
+        "sha256": "c54cd322c30a5e19672f7af20edcc94c3ac3e2bdef6abfc8af583f196d387c81",
+        "findings": []
+      },
+      {
+        "path": "backend/src/core/sync/admincore-sync-log.repository.js",
+        "lines": 56,
+        "sha256": "1b92fba928138ffc6a7287720ba521e4f933c9bdbf200b64d0cc32d052d46879",
+        "findings": []
+      },
+      {
+        "path": "backend/src/core/sync/sync-contract.js",
+        "lines": 62,
+        "sha256": "fd70d3c8997adea7507abb95359315731d177731a97c04df6466ad69a5a22876",
+        "findings": []
+      },
+      {
+        "path": "backend/src/core/sync/sync.controller.js",
+        "lines": 57,
+        "sha256": "91ad2f57dd32fb0c1e2b13b269df1c62dd643e3bd9a582ba0d560facc78617fb",
+        "findings": []
+      },
+      {
+        "path": "backend/src/core/sync/sync.routes.js",
+        "lines": 17,
+        "sha256": "262beb29ea97be4e97df4a83f191f52e0219a97d57a3e064b9a182babec15d50",
+        "findings": []
+      },
+      {
+        "path": "backend/src/core/sync/sync.service.js",
+        "lines": 1056,
+        "sha256": "4e7a25932e0ad64da2f2440809c774a32f9a6680263d3024384d7b6666e85947",
+        "findings": [
+          {
+            "label": "memory store",
+            "line": 157
+          },
+          {
+            "label": "memory store",
+            "line": 513
+          },
+          {
+            "label": "filesystem persistence",
+            "line": 62
+          },
+          {
+            "label": "filesystem persistence",
+            "line": 71
+          }
+        ]
+      },
+      {
+        "path": "backend/src/core/tables/tables.controller.js",
+        "lines": 28,
+        "sha256": "e21dbd8efd5541cecd354139736a8c1b8d5d0aab808b4e5ebfb94f36c74d6b26",
+        "findings": []
+      },
+      {
+        "path": "backend/src/core/tables/tables.routes.js",
+        "lines": 11,
+        "sha256": "f966eaf77d787de570dd784db010aa1741165580ffbce7f0ad4d6f5a8052cfaa",
+        "findings": []
+      },
+      {
+        "path": "backend/src/core/users/users.controller.js",
+        "lines": 100,
+        "sha256": "8501a373983fff5ceb39245cdd306c6dc43619052dd8f4f33dffb88ae3df78cf",
+        "findings": []
+      },
+      {
+        "path": "backend/src/core/users/users.routes.js",
+        "lines": 22,
+        "sha256": "6e943a60e95915d3de6feb12e96c2f61e95921c369a008ece0755074c1115908",
+        "findings": []
+      },
+      {
+        "path": "backend/src/core/users/users.service.js",
+        "lines": 346,
+        "sha256": "b632e6063c708ce9f0d1cd99f29d33937cb6bb92624e751aa413f10f248a37d3",
+        "findings": []
+      },
+      {
+        "path": "backend/src/database/prisma/client.js",
+        "lines": 17,
+        "sha256": "a599f77fb709b869998e71fcc9be8a5475ed14ab943e80bc53e24fb162bb6928",
+        "findings": []
+      },
+      {
+        "path": "backend/src/database/prisma/document-sequence.js",
+        "lines": 7,
+        "sha256": "f952138797a801e8680a08f8af1e88240fb4dac7ac487a40b8a3055bb788f7e7",
+        "findings": []
+      },
+      {
+        "path": "backend/src/database/prisma/helpers.js",
+        "lines": 620,
+        "sha256": "2ea26d948847da2321e4aeceb9a1c9e916a1109534d9750ca42f0c652489f886",
+        "findings": [
+          {
+            "label": "memory store",
+            "line": 20
+          },
+          {
+            "label": "memory store",
+            "line": 21
+          }
+        ]
+      },
+      {
+        "path": "backend/src/database/prisma/schema-health.js",
+        "lines": 84,
+        "sha256": "8c5176925e4b8a66198ab3bc6aea382e30d9f70a0fbb7ef0d0dcd04536a3d167",
+        "findings": [
+          {
+            "label": "memory store",
+            "line": 39
+          }
+        ]
+      },
+      {
+        "path": "backend/src/database/prisma/state-store.js",
+        "lines": 13,
+        "sha256": "bc0c6f30ce5cf641592ac19067e42f1644bbd7307799785643bf1c73b36f9542",
+        "findings": []
+      },
+      {
+        "path": "backend/src/features/barcode/barcode.controller.js",
+        "lines": 20,
+        "sha256": "e95c56374c9dad4b948c50c2472844373ec03aff36fad51bdfebe342a6f3d89e",
+        "findings": []
+      },
+      {
+        "path": "backend/src/features/barcode/barcode.routes.js",
+        "lines": 12,
+        "sha256": "3baab5019a1c8345b2c63cfc381ba0b63377ea6bfe66af6453c390476c7cbe22",
+        "findings": []
+      },
+      {
+        "path": "backend/src/features/barcode/barcode.service.js",
+        "lines": 22,
+        "sha256": "e79c6de9872ecf1ef48f1970f9e83043bced947df6fab72c6281fd8473b7b69d",
+        "findings": []
+      },
+      {
+        "path": "backend/src/features/inventory-advanced/batch-tracking/batch-tracking.controller.js",
+        "lines": 20,
+        "sha256": "f63a9dfca7a9a9e8e86d31b97777823cd1580261db74c98fbe72938f84f193c7",
+        "findings": []
+      },
+      {
+        "path": "backend/src/features/inventory-advanced/batch-tracking/batch-tracking.routes.js",
+        "lines": 12,
+        "sha256": "e449cd9f08cac2851b5c1afbbf27075302da7bd7a88a94189394fa4c233ad104",
+        "findings": []
+      },
+      {
+        "path": "backend/src/features/inventory-advanced/batch-tracking/batch-tracking.service.js",
+        "lines": 37,
+        "sha256": "90d7f28e7b3f292e2eb1870294065d4f2e1bbc568b0a6e5f4d058d0e682c16df",
+        "findings": []
+      },
+      {
+        "path": "backend/src/features/kitchen/kot/kot.controller.js",
+        "lines": 126,
+        "sha256": "7c4989c64bbebb32969e88a54c9063394ffc66387baf66f9ba7b244383bec326",
+        "findings": []
+      },
+      {
+        "path": "backend/src/features/kitchen/kot/kot.repository.js",
+        "lines": 30,
+        "sha256": "a4227deecd6666626678789da64c524cb2cfe09924159d72a254cc8c10833089",
+        "findings": []
+      },
+      {
+        "path": "backend/src/features/kitchen/kot/kot.routes.js",
+        "lines": 58,
+        "sha256": "a5cbde31a3c7a65ea3706590519eae36a93b5112318ca7211d2620ba5702f224",
+        "findings": []
+      },
+      {
+        "path": "backend/src/features/kitchen/kot/kot.service.js",
+        "lines": 489,
+        "sha256": "57fbaa6a32708a2cfab9f919575632165664518c2c9cedce087ff5e2c57d17c5",
+        "findings": []
+      },
+      {
+        "path": "backend/src/features/kitchen/kot/kot.utils.js",
+        "lines": 127,
+        "sha256": "539e37c7b68c6407a0233aeaf8f37f583fbc5c39f45967445ac618e678496e6a",
+        "findings": [
+          {
+            "label": "memory store",
+            "line": 43
+          }
+        ]
+      },
+      {
+        "path": "backend/src/features/logistics/delivery-route-plan/delivery-route-plan.controller.js",
+        "lines": 53,
+        "sha256": "50e5dfbc59b06ff6a89d3d4f378eb4db9dc147b628223ee3e40d84cb2d55a2d9",
+        "findings": []
+      },
+      {
+        "path": "backend/src/features/logistics/delivery-route-plan/delivery-route-plan.routes.js",
+        "lines": 16,
+        "sha256": "27932b4a6babca7a428f9a70a072dff8c1bb4e546e3ce530d7c45b5e0cbb139b",
+        "findings": []
+      },
+      {
+        "path": "backend/src/features/logistics/delivery-route-plan/delivery-route-plan.service.js",
+        "lines": 163,
+        "sha256": "6615de6494ef9d6d7c276f119ad4e5db63c489b27ce42683c26f1fc66d9bfa9e",
+        "findings": []
+      },
+      {
+        "path": "backend/src/features/logistics/outlet-inventory-allocation/outlet-inventory-allocation.controller.js",
+        "lines": 53,
+        "sha256": "7efa1e548da75d1dcbbe20dd1c1c078fce006ae45fde89dc9ff10101f4ec5250",
+        "findings": []
+      },
+      {
+        "path": "backend/src/features/logistics/outlet-inventory-allocation/outlet-inventory-allocation.routes.js",
+        "lines": 24,
+        "sha256": "1931e932a2380bb15d1185b23291f676574039f3182b3484b8da91f5d919bfb3",
+        "findings": []
+      },
+      {
+        "path": "backend/src/features/logistics/outlet-inventory-allocation/outlet-inventory-allocation.service.js",
+        "lines": 113,
+        "sha256": "c9b5a71d2fcbe4844bdbca3e5f979b1e4e732a7d99d34de16bb8a2aacb9b270e",
+        "findings": []
+      },
+      {
+        "path": "backend/src/features/logistics/outlet-purchase-orders/outlet-purchase-orders.controller.js",
+        "lines": 53,
+        "sha256": "cae36e0f59735dce9e1ce2089a8e33c1894ee015d1dcc2b1a43ba690d23f3cdb",
+        "findings": []
+      },
+      {
+        "path": "backend/src/features/logistics/outlet-purchase-orders/outlet-purchase-orders.routes.js",
+        "lines": 24,
+        "sha256": "8719d2f737b7522c835c8eed6b09d3cbe3de20ffc5045a2a322fafff455455f6",
+        "findings": []
+      },
+      {
+        "path": "backend/src/features/logistics/outlet-purchase-orders/outlet-purchase-orders.service.js",
+        "lines": 116,
+        "sha256": "d726544f68a1017df7fab106eee40aba8e37aab5d91a75fc3f491e22101404e6",
+        "findings": []
+      },
+      {
+        "path": "backend/src/features/sales-extensions/qr-ordering/qr-ordering.controller.js",
+        "lines": 80,
+        "sha256": "22ebd90c32e4acb5d53141040761d52d35dd1daccbddb9f02fec1257d1da981e",
+        "findings": []
+      },
+      {
+        "path": "backend/src/features/sales-extensions/qr-ordering/qr-ordering.routes.js",
+        "lines": 20,
+        "sha256": "6e7245e3c13bb3f6d254919c1f5035f01e6c9d11faf33440f2daef4ae04412b0",
+        "findings": []
+      },
+      {
+        "path": "backend/src/features/sales-extensions/qr-ordering/qr-ordering.service.js",
+        "lines": 680,
+        "sha256": "52a42137fbec54bf9feadc036ebe2f1629e8d1ddb7796da50647694283542db6",
+        "findings": [
+          {
+            "label": "memory store",
+            "line": 14
+          },
+          {
+            "label": "memory store",
+            "line": 396
+          }
+        ]
+      },
+      {
+        "path": "backend/src/features/sales-extensions/table-management/table-management.controller.js",
+        "lines": 173,
+        "sha256": "daacc4c61b97d30244a80939309578272bfdbb398b6ffae435e4f4bb4edc74b6",
+        "findings": []
+      },
+      {
+        "path": "backend/src/features/sales-extensions/table-management/table-management.repository.js",
+        "lines": 310,
+        "sha256": "dc9d2bba365daee524bb92f69a895ccf0ae71f68223a2119aaea5adf9a3d45cb",
+        "findings": []
+      },
+      {
+        "path": "backend/src/features/sales-extensions/table-management/table-management.routes.js",
+        "lines": 33,
+        "sha256": "73ad2c3c084d789219e4451e592f55cc009dc09527a2c03ca1dccfec603683b8",
+        "findings": []
+      },
+      {
+        "path": "backend/src/features/sales-extensions/table-management/table-management.service.js",
+        "lines": 787,
+        "sha256": "eaf4af21318cde1d4d7218546b45529cd2914ad80444a4e92000cb4d83aa05a0",
+        "findings": [
+          {
+            "label": "memory store",
+            "line": 119
+          }
+        ]
+      },
+      {
+        "path": "backend/src/features/sales-extensions/table-management/table-management.validation.js",
+        "lines": 137,
+        "sha256": "d49aebb33afc749fd0b1a3a08f86ee7964a880760c2a5ab756eb8d428260a3d4",
+        "findings": []
+      },
+      {
+        "path": "backend/src/routes/index.js",
+        "lines": 15,
+        "sha256": "700fbe94851b32c2034c8f0c2e51566e1123b70d2c5e4a485df816fffbb169a6",
+        "findings": []
+      },
+      {
+        "path": "backend/src/routes/legacy.routes.js",
+        "lines": 1246,
+        "sha256": "336d5ad50a1b306902380a25ac2393b7ca154c34204fa49d8e1088baa420572b",
+        "findings": [
+          {
+            "label": "memory store",
+            "line": 87
+          },
+          {
+            "label": "memory store",
+            "line": 92
+          },
+          {
+            "label": "memory store",
+            "line": 244
+          },
+          {
+            "label": "memory store",
+            "line": 402
+          },
+          {
+            "label": "memory store",
+            "line": 1048
+          },
+          {
+            "label": "memory store",
+            "line": 1049
+          },
+          {
+            "label": "memory store",
+            "line": 1067
+          }
+        ]
+      },
+      {
+        "path": "backend/src/routes/module-registry.js",
+        "lines": 146,
+        "sha256": "9ce2e641837942572dc7f41c4f9d52ba65d2d10d3f9cf79626e076c8df2251cb",
+        "findings": []
+      },
+      {
+        "path": "backend/src/server.js",
+        "lines": 89,
+        "sha256": "d8f27ae178daa3d4bcc973207674f24edf0cf00e9c30f8e1936e55dd0a2ce52a",
+        "findings": []
+      },
+      {
+        "path": "backend/src/services/featureToggleService.js",
+        "lines": 121,
+        "sha256": "b3daf6897f933cb0eb7f3ea586f96f411553e87a3616ab130daabaead8dd9494",
+        "findings": []
+      },
+      {
+        "path": "backend/src/services/jobs/durable-job-queue.js",
+        "lines": 83,
+        "sha256": "1177ae96d7fe22750c3cf712364b0c083193bedc1bc3aa730450d015255f72e2",
+        "findings": [
+          {
+            "label": "memory store",
+            "line": 13
+          }
+        ]
+      },
+      {
+        "path": "backend/src/services/jobs/job-queue.js",
+        "lines": 139,
+        "sha256": "e2cbc24dad33cc38f8a65bcd30feb15d0ce139f4b84ec689296d29e6ba405115",
+        "findings": [
+          {
+            "label": "memory store",
+            "line": 4
+          },
+          {
+            "label": "memory store",
+            "line": 5
+          }
+        ]
+      },
+      {
+        "path": "backend/src/services/printer/printer.service.js",
+        "lines": 56,
+        "sha256": "e47324462cf13cfa00bddf9a2a01a2bce6347b8d6e99018dd198617de62b2e55",
+        "findings": []
+      },
+      {
+        "path": "backend/src/services/workflows/logistics-workflow.service.js",
+        "lines": 146,
+        "sha256": "772ca119bee4cbd691e98a9f113fd0a032ec436f4e4ca16d5417d74a7b8da11d",
+        "findings": []
+      },
+      {
+        "path": "backend/src/services/workflows/order-fulfillment.service.js",
+        "lines": 228,
+        "sha256": "033ce267e52b0e47255d81bc60ef001fb2bbc6cb3bd8a8dba36f88ca07e6c9be",
+        "findings": [
+          {
+            "label": "memory store",
+            "line": 130
+          },
+          {
+            "label": "memory store",
+            "line": 150
+          },
+          {
+            "label": "memory store",
+            "line": 151
+          }
+        ]
+      },
+      {
+        "path": "backend/src/shared/constants/access.constants.js",
+        "lines": 23,
+        "sha256": "7a0f9f2d70cefeded954852e89c0037b27b78374170a257e36c12c5ae48bdf82",
+        "findings": []
+      },
+      {
+        "path": "backend/src/shared/constants/domain.constants.js",
+        "lines": 9,
+        "sha256": "88a60239dd4f14f3434f020b286049df6f9ed4667e32e89f1ae805222db9ea08",
+        "findings": []
+      },
+      {
+        "path": "backend/src/shared/constants/feature.constants.js",
+        "lines": 49,
+        "sha256": "63bee4057606462b9d09d0ef2fcb02320375c3b2c47f83cb6d42ef85f97ebc0d",
+        "findings": []
+      },
+      {
+        "path": "backend/src/shared/constants/module.constants.js",
+        "lines": 42,
+        "sha256": "ff5e220fc64b4bdb26c3be3a31ccff02a80bf841921a5e22178417da05435061",
+        "findings": []
+      },
+      {
+        "path": "backend/src/shared/middleware/authGuard.middleware.js",
+        "lines": 266,
+        "sha256": "52b93d9c0ed79d865d4e5a951dcee0b250fd8651990cd1dc9ac9bfed8f63d362",
+        "findings": []
+      },
+      {
+        "path": "backend/src/shared/middleware/errorHandler.middleware.js",
+        "lines": 52,
+        "sha256": "0226e454dc6b992328d60dc6336529387c9d555979e8a3d4faadf5c3806d25c0",
+        "findings": []
+      },
+      {
+        "path": "backend/src/shared/middleware/feature.middleware.js",
+        "lines": 37,
+        "sha256": "481a69ec270da40e148a30b4ea2994109c3223ef5715bc325db1286c0c65a1d4",
+        "findings": []
+      },
+      {
+        "path": "backend/src/shared/middleware/notFound.middleware.js",
+        "lines": 12,
+        "sha256": "691cdeb31cb8115de912f61a3166b7d9d1493b97e787fa39f570e4105d481660",
+        "findings": []
+      },
+      {
+        "path": "backend/src/shared/middleware/requestContext.middleware.js",
+        "lines": 16,
+        "sha256": "6cecbbe8d6e74f37e0bfe53d661119b49d7093b37d68671cd490743e418f7cbd",
+        "findings": []
+      },
+      {
+        "path": "backend/src/shared/middleware/saasLimit.middleware.js",
+        "lines": 34,
+        "sha256": "715510f9cdf09a5cbbfce9ea33d0db394b6cc6b49a6420774de6f0b7107af671",
+        "findings": []
+      },
+      {
+        "path": "backend/src/shared/utils/apiResponse.js",
+        "lines": 19,
+        "sha256": "34fea8416dd9e60dfb199b86434addb68a7191ffbda4e7abd2514a293dc4d999",
+        "findings": []
+      },
+      {
+        "path": "backend/src/shared/utils/asyncHandler.js",
+        "lines": 3,
+        "sha256": "03ca2cb10231a61398aeea46e49ff3156e91ed80759cc3046de54108aff3466a",
+        "findings": []
+      },
+      {
+        "path": "backend/src/shared/utils/create-feature-router.js",
+        "lines": 27,
+        "sha256": "f4adc84c97dafa4912bed7aecb76d23240f22e555e900aeb5adf4039ea312e80",
+        "findings": []
+      },
+      {
+        "path": "backend/src/shared/utils/error-monitor.js",
+        "lines": 75,
+        "sha256": "aca477c99430fb4b163171e9b8ed16f47ffb68defb7839d2ed1b8dea4639f4de",
+        "findings": []
+      },
+      {
+        "path": "backend/src/shared/utils/http-error.js",
+        "lines": 24,
+        "sha256": "f72d932213d00ce08a84d8ead2b9529d2eabf189b6136903c0d19b8bd448d55a",
+        "findings": []
+      },
+      {
+        "path": "backend/src/shared/utils/in-memory-repository.js",
+        "lines": 64,
+        "sha256": "5482f3d86a41f7355aa143d5cd9c2ecc269932e4ee4bb1e5f3ba726e23a563b0",
+        "findings": []
+      },
+      {
+        "path": "backend/src/shared/utils/logger.js",
+        "lines": 16,
+        "sha256": "d9faf0b7cd656c32ca4dd1f374e400003a0203293596b1f3c417f0ebb2da598d",
+        "findings": []
+      },
+      {
+        "path": "backend/src/shared/utils/pagination.js",
+        "lines": 35,
+        "sha256": "a60bd6417db50cd50be770f0989ff30496c7a02f9a330f1e8b2b60dfe774be3a",
+        "findings": []
+      },
+      {
+        "path": "backend_test.py",
+        "lines": 577,
+        "sha256": "8c7750f4b5c02e2b83020f69b7b33a260e3cc5d6ea0a8a63838e132d584f2290",
+        "findings": []
+      },
+      {
+        "path": "frontend/craco.config.js",
+        "lines": 109,
+        "sha256": "c4c5415f2488977d405aca34256fb28185838d784290eda19427d92f9c6cabb9",
+        "findings": []
+      },
+      {
+        "path": "frontend/postcss.config.js",
+        "lines": 7,
+        "sha256": "251ecddd4672c9cf467547e3dc535de00ad2129df26e7e7ae728fa4e5ac45fc5",
+        "findings": []
+      },
+      {
+        "path": "frontend/src/App.css",
+        "lines": 3597,
+        "sha256": "12e09d5ce5c37d48e96558ca3a185661f58b29ff3dae07e0d0b17a55019faeec",
+        "findings": [
+          {
+            "label": "placeholder",
+            "line": 1282
+          },
+          {
+            "label": "placeholder",
+            "line": 1283
+          },
+          {
+            "label": "placeholder",
+            "line": 1284
+          }
+        ]
+      },
+      {
+        "path": "frontend/src/App.js",
+        "lines": 411,
+        "sha256": "949799b1ceb649617240a8b4312c5ab0c7d1ae40a0ed96d15e90c0bdfcbd0616",
+        "findings": [
+          {
+            "label": "placeholder",
+            "line": 51
+          },
+          {
+            "label": "placeholder",
+            "line": 52
+          },
+          {
+            "label": "placeholder",
+            "line": 368
+          },
+          {
+            "label": "placeholder",
+            "line": 376
+          }
+        ]
+      },
+      {
+        "path": "frontend/src/components/ApiErrorPanel.js",
+        "lines": 41,
+        "sha256": "a48e0d4506e543f9bc163b6d4006850413afb0b34e1ee61f5a4cbb30a102c593",
+        "findings": []
+      },
+      {
+        "path": "frontend/src/components/AppErrorBoundary.js",
+        "lines": 47,
+        "sha256": "739375a7e94d2c753575554662e020fa0d62d97c0e96c1c753af9f60361c9e8c",
+        "findings": []
+      },
+      {
+        "path": "frontend/src/components/GlobalErrorHandlers.js",
+        "lines": 43,
+        "sha256": "7b0bd02267051f696871390e698e1c7371565c2c2c66484c9e6947842602fe77",
+        "findings": []
+      },
+      {
+        "path": "frontend/src/components/Layout.js",
+        "lines": 244,
+        "sha256": "2f4ca92379a4235699ef90a2fcf509e8e8f86e2089048b65b62ea3d40126e882",
+        "findings": []
+      },
+      {
+        "path": "frontend/src/components/OfflineStatus.js",
+        "lines": 57,
+        "sha256": "0f3ab549ff1c674b3100bafab8f6c1cd64df1655503f8c9b2b01d4f3ba2354af",
+        "findings": []
+      },
+      {
+        "path": "frontend/src/components/ProtectedRoute.js",
+        "lines": 71,
+        "sha256": "4081ea7c9d7ad866cb64329afc0639f1ca01c6b41c15a402a0a2e2b6e25a2c07",
+        "findings": []
+      },
+      {
+        "path": "frontend/src/components/ui/accordion.jsx",
+        "lines": 42,
+        "sha256": "b47533b3783b8149550b8481e4ae93d54bdcbc51d434793c176b0aec5558ee1c",
+        "findings": []
+      },
+      {
+        "path": "frontend/src/components/ui/alert-dialog.jsx",
+        "lines": 98,
+        "sha256": "a20098cdc2eb2b5915575d3f0fb7a3e8e6c1035c7eef77144f3fc389e0fdbda0",
+        "findings": []
+      },
+      {
+        "path": "frontend/src/components/ui/alert.jsx",
+        "lines": 48,
+        "sha256": "c5baf27fb6a4bf130236fa0f336c21084fee192e8215bb6b20c87436c27f3b38",
+        "findings": []
+      },
+      {
+        "path": "frontend/src/components/ui/aspect-ratio.jsx",
+        "lines": 6,
+        "sha256": "08b0aa0b05efc573c7d63363c03e83d4b101bfeb54140764e96ddea30659cfcc",
+        "findings": []
+      },
+      {
+        "path": "frontend/src/components/ui/avatar.jsx",
+        "lines": 34,
+        "sha256": "dc91f6b15da007904343e580ceeccc58fba37f8c207e12b1edd3057820805475",
+        "findings": []
+      },
+      {
+        "path": "frontend/src/components/ui/badge.jsx",
+        "lines": 35,
+        "sha256": "380dcda78ff8fdd80c82b89cb7dd38ffd84c355735fc8f16300ff647e15988aa",
+        "findings": []
+      },
+      {
+        "path": "frontend/src/components/ui/breadcrumb.jsx",
+        "lines": 93,
+        "sha256": "bb43d4d07119e0cf1a458feac2c9cfb3946b33813b12e11e576d9eb7dcddf189",
+        "findings": []
+      },
+      {
+        "path": "frontend/src/components/ui/button.jsx",
+        "lines": 49,
+        "sha256": "e933a3f77c7ed8bf7186ca1fc049b940bd1e80e75b34eb9853dbb9fae7af9a47",
+        "findings": []
+      },
+      {
+        "path": "frontend/src/components/ui/calendar.jsx",
+        "lines": 72,
+        "sha256": "235b31ac855e8a373d683c1175f14afb065ee3f00a0f4b19e89311665e0934ea",
+        "findings": []
+      },
+      {
+        "path": "frontend/src/components/ui/card.jsx",
+        "lines": 51,
+        "sha256": "8ab6f42e722e9c51752ce2f14aabb2696bddc0b6818041fb8f313f670955c2c4",
+        "findings": []
+      },
+      {
+        "path": "frontend/src/components/ui/carousel.jsx",
+        "lines": 194,
+        "sha256": "62842d0a01459ffd8d9a83b0e5a34b8cc639eb2d06a7076c8488b7ac56864cdd",
+        "findings": []
+      },
+      {
+        "path": "frontend/src/components/ui/checkbox.jsx",
+        "lines": 23,
+        "sha256": "b0260cb7767493d8273f5def1b7d32e844d068db5f5760258d333ae6ad88f0d8",
+        "findings": []
+      },
+      {
+        "path": "frontend/src/components/ui/collapsible.jsx",
+        "lines": 10,
+        "sha256": "6f5be8ba164c177759bf63cc25ad4d49391f162f6784ba624d72e5d5c0c0dde2",
+        "findings": []
+      },
+      {
+        "path": "frontend/src/components/ui/command.jsx",
+        "lines": 117,
+        "sha256": "c1cc8d4ba2b7cc890ffa45c4e5bfc8a1e647f6dd859e9057cb7fedd6621a5e1d",
+        "findings": [
+          {
+            "label": "placeholder",
+            "line": 41
+          }
+        ]
+      },
+      {
+        "path": "frontend/src/components/ui/context-menu.jsx",
+        "lines": 157,
+        "sha256": "46884050ac738ba6f7324425fa491f9b79140d27571318cf4473ddedcdc7b8c6",
+        "findings": []
+      },
+      {
+        "path": "frontend/src/components/ui/dialog.jsx",
+        "lines": 95,
+        "sha256": "29dc317ccbb946ec1f7ce7e60655a39302a430a5e2548559272f0689243c3095",
+        "findings": []
+      },
+      {
+        "path": "frontend/src/components/ui/drawer.jsx",
+        "lines": 91,
+        "sha256": "ad946a1e3d6976f5da19f6fbdaa8a65dc96c6cbce926d1a60889ef5ec449e44c",
+        "findings": []
+      },
+      {
+        "path": "frontend/src/components/ui/dropdown-menu.jsx",
+        "lines": 157,
+        "sha256": "cbc153dda26fd34a196bffd5cd2f056798c08c46174ee45862da90b248f7aa1d",
+        "findings": []
+      },
+      {
+        "path": "frontend/src/components/ui/form.jsx",
+        "lines": 134,
+        "sha256": "68379f589cf2c031104cc39fd944713d611e31e26213be78074eb853e19dbcdf",
+        "findings": []
+      },
+      {
+        "path": "frontend/src/components/ui/hover-card.jsx",
+        "lines": 24,
+        "sha256": "d72f4c6169a6cd06b18d279ae31e73b790f7aba6a38c61442952c01e04cc32af",
+        "findings": []
+      },
+      {
+        "path": "frontend/src/components/ui/input-otp.jsx",
+        "lines": 54,
+        "sha256": "485ea4a1a4ad29e68ab3671eaccaa7b972b47d266e87f767c6137ccdd0f2d0b7",
+        "findings": []
+      },
+      {
+        "path": "frontend/src/components/ui/input.jsx",
+        "lines": 20,
+        "sha256": "7c9f0c756530ae1dbe3b1424f09e32e3f54323826b2f2d817b13c865f96309ad",
+        "findings": [
+          {
+            "label": "placeholder",
+            "line": 10
+          }
+        ]
+      },
+      {
+        "path": "frontend/src/components/ui/label.jsx",
+        "lines": 17,
+        "sha256": "37c6425d2a5c798ade4e60f89f86054d703433a8977e12d796de2b5bb4e3d0b7",
+        "findings": []
+      },
+      {
+        "path": "frontend/src/components/ui/menubar.jsx",
+        "lines": 199,
+        "sha256": "9d170686eb1c56b5981e7108d6108498009fd55abffa1ae4b89d38b44292788b",
+        "findings": []
+      },
+      {
+        "path": "frontend/src/components/ui/navigation-menu.jsx",
+        "lines": 105,
+        "sha256": "5e4efd6acb3836f19205aeca1373da81cf48c35be6fedd62326d704c2ee2a921",
+        "findings": []
+      },
+      {
+        "path": "frontend/src/components/ui/pagination.jsx",
+        "lines": 101,
+        "sha256": "1d519fc3ba1c8c6cf7f2d30c98739ecba2fa7af35cbc024d6793785e7a6d65c8",
+        "findings": []
+      },
+      {
+        "path": "frontend/src/components/ui/popover.jsx",
+        "lines": 28,
+        "sha256": "d85117f748991afb0bfa60856441ca68883720a4a0eca3b1bd82a6fd685b87b0",
+        "findings": []
+      },
+      {
+        "path": "frontend/src/components/ui/progress.jsx",
+        "lines": 22,
+        "sha256": "2d074c6026cd5ca44ef44b9027f267612c39877a7d2eb4a3faa387594c3eb37a",
+        "findings": []
+      },
+      {
+        "path": "frontend/src/components/ui/radio-group.jsx",
+        "lines": 30,
+        "sha256": "4e1e8860ca64733614431a9aa1694d430538478e1fa6859b1e6f65348152876b",
+        "findings": []
+      },
+      {
+        "path": "frontend/src/components/ui/resizable.jsx",
+        "lines": 41,
+        "sha256": "eec5a9ea2861a3946063586f101d4b3d6615cd8e0a00f2834f80aed3bf0cb2c5",
+        "findings": []
+      },
+      {
+        "path": "frontend/src/components/ui/scroll-area.jsx",
+        "lines": 39,
+        "sha256": "3de4bed34be51a940243b0fbf8c6d9324ecb416a91a919d65ca18d15a7ba32a1",
+        "findings": []
+      },
+      {
+        "path": "frontend/src/components/ui/select.jsx",
+        "lines": 120,
+        "sha256": "ce8fc0afd10942d8c9466538035d4e4885af55320e465ede930fcdfb0672eaa2",
+        "findings": [
+          {
+            "label": "placeholder",
+            "line": 17
+          }
+        ]
+      },
+      {
+        "path": "frontend/src/components/ui/separator.jsx",
+        "lines": 24,
+        "sha256": "2c82247abd573d0f4a93eb259166e3b778365b58c0d18921b4739d5ba4b29e7e",
+        "findings": []
+      },
+      {
+        "path": "frontend/src/components/ui/sheet.jsx",
+        "lines": 109,
+        "sha256": "8d2cc6801dd7a47fbacbe2bc78ed6b564dfe12adf188af111bc03a78e5efe2d8",
+        "findings": []
+      },
+      {
+        "path": "frontend/src/components/ui/skeleton.jsx",
+        "lines": 15,
+        "sha256": "78dad1ec71e4fc2c0060dd244ee68b2f9e7fc42ae680dab4f310e2ad8f17b741",
+        "findings": []
+      },
+      {
+        "path": "frontend/src/components/ui/slider.jsx",
+        "lines": 22,
+        "sha256": "1761bfaa0a06480b76b31511e4a5c24903b407732e027fc11ad615dd3d93a562",
+        "findings": []
+      },
+      {
+        "path": "frontend/src/components/ui/sonner.jsx",
+        "lines": 29,
+        "sha256": "20962c4968b5792da4b408680321180f1c9b8f9cf322695d5173c0ef25132b40",
+        "findings": []
+      },
+      {
+        "path": "frontend/src/components/ui/switch.jsx",
+        "lines": 23,
+        "sha256": "880e95637cc1d90ef4476f79114afd2fa7b5f6e5da1f49a70e0efc1f84aa0c8a",
+        "findings": []
+      },
+      {
+        "path": "frontend/src/components/ui/table.jsx",
+        "lines": 87,
+        "sha256": "301509bb8337184f1b299cb15b8d4f8ec8f0d3bbc17a2ffdf33ff58f7eaa444e",
+        "findings": []
+      },
+      {
+        "path": "frontend/src/components/ui/tabs.jsx",
+        "lines": 42,
+        "sha256": "57591bdfb3fa931b06edcf4168b6881a79785c674ad0618003d12cd656072350",
+        "findings": []
+      },
+      {
+        "path": "frontend/src/components/ui/textarea.jsx",
+        "lines": 19,
+        "sha256": "6b2c6dd8023a32be3b52af960d7615018488c5601fb05cec97ed76d1141ae2f4",
+        "findings": [
+          {
+            "label": "placeholder",
+            "line": 9
+          }
+        ]
+      },
+      {
+        "path": "frontend/src/components/ui/toast.jsx",
+        "lines": 86,
+        "sha256": "1865542d8648bb1207bdf3020393387f0a42ca1f5f9f5a8ffab4bb35598c1c5e",
+        "findings": []
+      },
+      {
+        "path": "frontend/src/components/ui/toaster.jsx",
+        "lines": 34,
+        "sha256": "7dd63e25d99c02b93b3868eef5b0c261ecc63b5f5542c4bf7155731ec234ef5d",
+        "findings": []
+      },
+      {
+        "path": "frontend/src/components/ui/toggle-group.jsx",
+        "lines": 44,
+        "sha256": "f40062b4037c151c9bba1b5de1ce60c60ce5b4dc6dc24f8efab85b382a3129fb",
+        "findings": []
+      },
+      {
+        "path": "frontend/src/components/ui/toggle.jsx",
+        "lines": 41,
+        "sha256": "8c563045f231bfa2ca8cde62085f00c0600fa558a60d8c14ea3a1cb5c9c644c5",
+        "findings": []
+      },
+      {
+        "path": "frontend/src/components/ui/tooltip.jsx",
+        "lines": 27,
+        "sha256": "6f5b14ca183b6b4b64427102af2c0773dbde38658a568aaa53ef4de4c7b8045e",
+        "findings": []
+      },
+      {
+        "path": "frontend/src/contexts/AuthContext.js",
+        "lines": 323,
+        "sha256": "6c5ca4b8ac258a4f9ab2e856ce6cb4cb5d8b8b5ea7c1ae71a1d4fef4d94cee89",
+        "findings": [
+          {
+            "label": "memory store",
+            "line": 35
+          },
+          {
+            "label": "memory store",
+            "line": 36
+          },
+          {
+            "label": "public URL default",
+            "line": 21
+          }
+        ]
+      },
+      {
+        "path": "frontend/src/contexts/UiContext.js",
+        "lines": 37,
+        "sha256": "1a36c13fafadb79e855a08454cc9ee05896b7b089dad5d3db2f15af99da8f65f",
+        "findings": []
+      },
+      {
+        "path": "frontend/src/core/billing/pages/BillingWorkspace.jsx",
+        "lines": 2,
+        "sha256": "d8a31aed6045161e8a8c586a61af7efe735deee6982feecc648881f861035e4e",
+        "findings": []
+      },
+      {
+        "path": "frontend/src/core/billing/pages/BillsWorkspace.jsx",
+        "lines": 2,
+        "sha256": "a18e132cdccff7a34a18e0332bb973b0186c2fe4640513ef1c3f84a6f2b24c17",
+        "findings": []
+      },
+      {
+        "path": "frontend/src/core/billing/utils/orderTracking.js",
+        "lines": 61,
+        "sha256": "8895fbba7c3a11f75750403c98610cb61fb81bbc1d40c09edf7365387efd4376",
+        "findings": []
+      },
+      {
+        "path": "frontend/src/core/modules/components/ModuleGate.jsx",
+        "lines": 14,
+        "sha256": "511030ebe224e077673c8a234381be0aebe3086a203cd68c4b56f0a348944aab",
+        "findings": []
+      },
+      {
+        "path": "frontend/src/core/modules/store/useClientModules.js",
+        "lines": 27,
+        "sha256": "1f3e87503152c3f5f4203e0871a57854b00dc2df3368fe2292c04c623a02b889",
+        "findings": []
+      },
+      {
+        "path": "frontend/src/core/modules/utils/clientModules.js",
+        "lines": 40,
+        "sha256": "2f894150a22c318c775c81682718e7a9de776355189d91f8987219c0755f69d5",
+        "findings": [
+          {
+            "label": "placeholder",
+            "line": 18
+          },
+          {
+            "label": "placeholder",
+            "line": 23
+          }
+        ]
+      },
+      {
+        "path": "frontend/src/core/navigation/config/appNavigation.js",
+        "lines": 34,
+        "sha256": "497106a5686c7989bead043a3975de6f7b057d76fc1b57fa862e337f305b3968",
+        "findings": []
+      },
+      {
+        "path": "frontend/src/core/navigation/utils/appAccess.js",
+        "lines": 40,
+        "sha256": "2f530ed97c4639025a212aa47e278db903516a22dd214ac7cf39afa054d0c21f",
+        "findings": []
+      },
+      {
+        "path": "frontend/src/core/navigation/utils/defaultRoute.js",
+        "lines": 14,
+        "sha256": "9d41c92e2a0f92ad5a1c62019510cbea1b0aa2006037f2c0f62ab6d6982990f7",
+        "findings": []
+      },
+      {
+        "path": "frontend/src/core/offline/offlineQueue.js",
+        "lines": 79,
+        "sha256": "b2dd613328f913be66d7046c5129f8cdfb82f235f1e38982db32bd6737eaf054",
+        "findings": [
+          {
+            "label": "public URL default",
+            "line": 17
+          }
+        ]
+      },
+      {
+        "path": "frontend/src/core/outlets/components/OutletOverviewPanel.jsx",
+        "lines": 76,
+        "sha256": "091091377ca6a7eacfe03e967679d3c33ee21867e4f5318e72ff5aa96dd62771",
+        "findings": []
+      },
+      {
+        "path": "frontend/src/core/outlets/store/ActiveOutletContext.jsx",
+        "lines": 205,
+        "sha256": "cf0f5411f0c9391fa644cd7f059edcd39e435217af20d95cbf3dcb4dee96f988",
+        "findings": [
+          {
+            "label": "public URL default",
+            "line": 20
+          }
+        ]
+      },
+      {
+        "path": "frontend/src/core/payments/utils/paymentMethods.js",
+        "lines": 13,
+        "sha256": "d9a80dbd290dfa9411ad630cc21d88b95e65afb08d1dcf1c42f67985647d7ac0",
+        "findings": []
+      },
+      {
+        "path": "frontend/src/core/platform/components/FeatureGate.jsx",
+        "lines": 14,
+        "sha256": "d24fa0264c6d67516c100a0f586f7730c8dfa1b3cecb7d5a4485867517cd8a4c",
+        "findings": []
+      },
+      {
+        "path": "frontend/src/core/platform/config/activeBusinessConfig.js",
+        "lines": 21,
+        "sha256": "d53ad0a6b313e29282b7bf0fa38ec26de5150eecf6658a02c9b42973f2cc0ba5",
+        "findings": []
+      },
+      {
+        "path": "frontend/src/core/platform/config/businessConfigModel.js",
+        "lines": 38,
+        "sha256": "3e9a8b0b0cc8db01b59b2b0c138029adc2c8364bac6601c19f68c7698398c0f2",
+        "findings": []
+      },
+      {
+        "path": "frontend/src/core/platform/config/businessConfigResolver.js",
+        "lines": 40,
+        "sha256": "a697f87e168e74dd8ae9bbcda1f41bf18e479b22732cee6e074c5daa9f123576",
+        "findings": []
+      },
+      {
+        "path": "frontend/src/core/platform/config/businessPlans.js",
+        "lines": 32,
+        "sha256": "9d6029886f4ae0797457da3feffe51f054ab3f0087deca8fd10824966db20f0b",
+        "findings": []
+      },
+      {
+        "path": "frontend/src/core/platform/features/featureRegistry.js",
+        "lines": 80,
+        "sha256": "6ae8c608e65662d874d88bbfb3e3b686b6781447ae29888970fa84294c687bde",
+        "findings": []
+      },
+      {
+        "path": "frontend/src/core/platform/store/useBusinessTemplate.js",
+        "lines": 31,
+        "sha256": "b7092e45ca950778e6e49eff581be72b046f3b955dc2795046df765f6a43debb",
+        "findings": []
+      },
+      {
+        "path": "frontend/src/core/platform/templates/businessTemplates.js",
+        "lines": 118,
+        "sha256": "abb13257e45cc6b3aef7f1dd8a6dcf408b40f52677d54af7c244f6d03c481c29",
+        "findings": []
+      },
+      {
+        "path": "frontend/src/features/billing/fulfillment/components/FulfillmentDetailsFields.jsx",
+        "lines": 94,
+        "sha256": "173e8d9b2f1880b66d0b7c2d0f8e3bf7929e74f40cb568d3ae6da17785df3387",
+        "findings": [
+          {
+            "label": "placeholder",
+            "line": 51
+          },
+          {
+            "label": "placeholder",
+            "line": 62
+          },
+          {
+            "label": "placeholder",
+            "line": 73
+          },
+          {
+            "label": "placeholder",
+            "line": 86
+          }
+        ]
+      },
+      {
+        "path": "frontend/src/features/billing/fulfillment/components/FulfillmentModeSelector.jsx",
+        "lines": 27,
+        "sha256": "ad7e54c05f52cb67d8c8ae00c451bf26fd6bdaea5a25f4a7c0db7bad7b599fab",
+        "findings": []
+      },
+      {
+        "path": "frontend/src/features/billing/fulfillment/components/FulfillmentTablePanel.jsx",
+        "lines": 988,
+        "sha256": "9829575e1dfd9557e89afdbe5441528222206dca1f327fd11655461a1cea420b",
+        "findings": [
+          {
+            "label": "memory store",
+            "line": 46
+          },
+          {
+            "label": "memory store",
+            "line": 47
+          },
+          {
+            "label": "placeholder",
+            "line": 634
+          },
+          {
+            "label": "placeholder",
+            "line": 644
+          },
+          {
+            "label": "placeholder",
+            "line": 733
+          },
+          {
+            "label": "placeholder",
+            "line": 820
+          },
+          {
+            "label": "placeholder",
+            "line": 830
+          },
+          {
+            "label": "placeholder",
+            "line": 871
+          },
+          {
+            "label": "placeholder",
+            "line": 960
+          }
+        ]
+      },
+      {
+        "path": "frontend/src/features/billing/fulfillment/components/TableManagerPanel.jsx",
+        "lines": 75,
+        "sha256": "24a81d9d338c7ff54eadc99efee9b80dce63c011a4755de568e43ec818dbeba8",
+        "findings": [
+          {
+            "label": "placeholder",
+            "line": 25
+          },
+          {
+            "label": "placeholder",
+            "line": 32
+          }
+        ]
+      },
+      {
+        "path": "frontend/src/features/billing/fulfillment/pages/BillingFulfillmentSection.jsx",
+        "lines": 97,
+        "sha256": "8442f9a8a12e4d597574a92d05eceb2395aa8abf12fde7e6c90c6d1f399b7410",
+        "findings": []
+      },
+      {
+        "path": "frontend/src/features/billing/fulfillment/services/fulfillment.service.js",
+        "lines": 169,
+        "sha256": "94a026c6ecab26ccff93894682a6e6d2fdc7294ee55f870a461486761b12a3f5",
+        "findings": [
+          {
+            "label": "public URL default",
+            "line": 17
+          }
+        ]
+      },
+      {
+        "path": "frontend/src/features/billing/fulfillment/store/useBillingFulfillment.js",
+        "lines": 40,
+        "sha256": "359a6c8bc7584f3e0ce0dbe79ef82c296b48bd7acd1723f94fbe08ec7e800cb7",
+        "findings": []
+      },
+      {
+        "path": "frontend/src/features/billing/fulfillment/utils/fulfillmentMode.js",
+        "lines": 161,
+        "sha256": "f73ad51dfe134386d74ab93ea8f5ea117610404f2b87886924899a5289ccd1cc",
+        "findings": []
+      },
+      {
+        "path": "frontend/src/hooks/use-toast.js",
+        "lines": 156,
+        "sha256": "767e0227c5c9406b5d00e25a57c6d01e9f6e083d36e803ccb0a5e260992a5225",
+        "findings": [
+          {
+            "label": "memory store",
+            "line": 22
+          }
+        ]
+      },
+      {
+        "path": "frontend/src/hooks/useAutoRefresh.js",
+        "lines": 88,
+        "sha256": "9f309e241a23c1efa96b2ff247bb57fbfc656a0cadc75e8dacb2da9b3f1c0ec3",
+        "findings": []
+      },
+      {
+        "path": "frontend/src/index.css",
+        "lines": 50,
+        "sha256": "8aa8c3338e76487bd0f652ed60075d6807f4a559a84aa02db34bf29da7c8698a",
+        "findings": []
+      },
+      {
+        "path": "frontend/src/index.js",
+        "lines": 29,
+        "sha256": "8f25d94381f63c65351a51233dae85279908c4462ba06a7241f97ab2668d00f8",
+        "findings": []
+      },
+      {
+        "path": "frontend/src/lib/apiErrors.js",
+        "lines": 107,
+        "sha256": "f768100870471f400104e94a05bb0433b7b174454155d5f4f99c34c04ff6bb36",
+        "findings": []
+      },
+      {
+        "path": "frontend/src/lib/pos.js",
+        "lines": 217,
+        "sha256": "9012d0d1f57810dd25429be1ac59e9241862c62fd22f90d867c997723beff1e2",
+        "findings": [
+          {
+            "label": "memory store",
+            "line": 165
+          },
+          {
+            "label": "memory store",
+            "line": 182
+          },
+          {
+            "label": "memory store",
+            "line": 183
+          }
+        ]
+      },
+      {
+        "path": "frontend/src/lib/sessionSlots.js",
+        "lines": 29,
+        "sha256": "82db1b828566c08544e67d5cdc02921da3b07bbcccf47b401367fd582d20a3c5",
+        "findings": []
+      },
+      {
+        "path": "frontend/src/lib/utils.js",
+        "lines": 7,
+        "sha256": "5ba0ae526d768600bbfb4a4d345c47f6208cb941adbf456de80804a4cf938350",
+        "findings": []
+      },
+      {
+        "path": "frontend/src/modules/bakery/components/BakeryModulePlaceholder.jsx",
+        "lines": 14,
+        "sha256": "98223b91aa4ad2a9856523a98425c3678292aaf18be8987f89d8815f99f82278",
+        "findings": [
+          {
+            "label": "placeholder",
+            "line": 3
+          },
+          {
+            "label": "placeholder",
+            "line": 7
+          }
+        ]
+      },
+      {
+        "path": "frontend/src/modules/bakery/pages/BakeryPlaceholderPage.jsx",
+        "lines": 12,
+        "sha256": "06d669c9eb7125546c0703e5f89ff439e5c2d27a7ff3060b3327293160f48115",
+        "findings": [
+          {
+            "label": "placeholder",
+            "line": 3
+          },
+          {
+            "label": "placeholder",
+            "line": 5
+          },
+          {
+            "label": "placeholder",
+            "line": 8
+          }
+        ]
+      },
+      {
+        "path": "frontend/src/modules/bakery/services/index.js",
+        "lines": 2,
+        "sha256": "7a225c7cb10ffd8735141fc5af36eba8770935248a6f80a30d717fedc85f6f2b",
+        "findings": []
+      },
+      {
+        "path": "frontend/src/modules/bakery/store/index.js",
+        "lines": 2,
+        "sha256": "f69529060c8d09429707f2ada6a46df043f11dd75ffba06b0094d58629d7ea77",
+        "findings": []
+      },
+      {
+        "path": "frontend/src/modules/bakery/utils/moduleMeta.js",
+        "lines": 6,
+        "sha256": "17cbc88d78dbeb764dba9364fa428eb415ecdd3baa3a9bee72b928f45baf3dd2",
+        "findings": [
+          {
+            "label": "placeholder",
+            "line": 4
+          }
+        ]
+      },
+      {
+        "path": "frontend/src/modules/kirana/components/KiranaModulePlaceholder.jsx",
+        "lines": 14,
+        "sha256": "95c1167aa7fc6f6b81bc1d7d7659de0b0d3196462b56a0fcc47199d98206a1bb",
+        "findings": [
+          {
+            "label": "placeholder",
+            "line": 3
+          },
+          {
+            "label": "placeholder",
+            "line": 7
+          }
+        ]
+      },
+      {
+        "path": "frontend/src/modules/kirana/pages/KiranaPlaceholderPage.jsx",
+        "lines": 12,
+        "sha256": "c738c809e58e22d01b070798514fd63b21ebb6378a1c8d46d5b20eccf43b8706",
+        "findings": [
+          {
+            "label": "placeholder",
+            "line": 3
+          },
+          {
+            "label": "placeholder",
+            "line": 5
+          },
+          {
+            "label": "placeholder",
+            "line": 8
+          }
+        ]
+      },
+      {
+        "path": "frontend/src/modules/kirana/services/index.js",
+        "lines": 2,
+        "sha256": "8d40ca6fd4a5a4e46aec550ec7015be3ca0e09221497108d05788b1bf644340b",
+        "findings": []
+      },
+      {
+        "path": "frontend/src/modules/kirana/store/index.js",
+        "lines": 2,
+        "sha256": "88b6b4a8e3a63ff0b3d09e8eaf488650f09a988e3b49116d382404bc58fbfcc6",
+        "findings": []
+      },
+      {
+        "path": "frontend/src/modules/kirana/utils/moduleMeta.js",
+        "lines": 6,
+        "sha256": "523a6209ffcd316cb3947d050b6b69f9a7b3d3175027b76e1b5e519944109ee5",
+        "findings": [
+          {
+            "label": "placeholder",
+            "line": 4
+          }
+        ]
+      },
+      {
+        "path": "frontend/src/modules/restaurant/components/RestaurantFeatureGate.jsx",
+        "lines": 12,
+        "sha256": "fd9c5674d39b9df97d5317ed521699cddc39b2850191645f3a3ced7b223fd35b",
+        "findings": []
+      },
+      {
+        "path": "frontend/src/modules/restaurant/components/RestaurantModuleGate.jsx",
+        "lines": 9,
+        "sha256": "cf92489f5d28c67854f8a941298b10dbe99bf8ec72790100ff2ce6310d5aa2c0",
+        "findings": []
+      },
+      {
+        "path": "frontend/src/modules/restaurant/pages/RestaurantBillingPage.jsx",
+        "lines": 10,
+        "sha256": "08a1abcc2ceb4592a2507753f3be28626f6e90aa7965c1b5154087f302c1fdf5",
+        "findings": []
+      },
+      {
+        "path": "frontend/src/modules/restaurant/pages/RestaurantBillsPage.jsx",
+        "lines": 10,
+        "sha256": "a3bf13ace66caf61f655f6cc08c330a9e19253f1b3ba12b7dcdf0394f402eb29",
+        "findings": []
+      },
+      {
+        "path": "frontend/src/modules/restaurant/store/index.js",
+        "lines": 2,
+        "sha256": "8082dc8ffcbf0c15af8ec99388043487edda03b93a4192029412633021ad1bf0",
+        "findings": []
+      },
+      {
+        "path": "frontend/src/modules/restaurant/utils/moduleMeta.js",
+        "lines": 6,
+        "sha256": "1eee6b01012a674d42d50e815c4c7afa4c3f877b66ca26973d5d6069e971bb9d",
+        "findings": []
+      },
+      {
+        "path": "frontend/src/pages/AcceptInvite.js",
+        "lines": 120,
+        "sha256": "78133b7211b94b2c00849360afbe0b1e78c3f19267cfb90afda192df7c72377f",
+        "findings": [
+          {
+            "label": "placeholder",
+            "line": 96
+          },
+          {
+            "label": "public URL default",
+            "line": 20
+          }
+        ]
+      },
+      {
+        "path": "frontend/src/pages/Billing.js",
+        "lines": 1522,
+        "sha256": "02586985dc0541c1fee8b37b81272b183d7ed416c336c506f40abf6d5807437c",
+        "findings": [
+          {
+            "label": "memory store",
+            "line": 45
+          },
+          {
+            "label": "placeholder",
+            "line": 88
+          },
+          {
+            "label": "placeholder",
+            "line": 94
+          },
+          {
+            "label": "placeholder",
+            "line": 100
+          },
+          {
+            "label": "placeholder",
+            "line": 109
+          },
+          {
+            "label": "placeholder",
+            "line": 120
+          },
+          {
+            "label": "placeholder",
+            "line": 1012
+          },
+          {
+            "label": "placeholder",
+            "line": 1178
+          },
+          {
+            "label": "placeholder",
+            "line": 1202
+          },
+          {
+            "label": "placeholder",
+            "line": 1486
+          },
+          {
+            "label": "public URL default",
+            "line": 35
+          }
+        ]
+      },
+      {
+        "path": "frontend/src/pages/Bills.js",
+        "lines": 306,
+        "sha256": "fd7217f64021d0c58b87804532619d8e80b1a8e71367032492823030ca92b385",
+        "findings": [
+          {
+            "label": "placeholder",
+            "line": 142
+          },
+          {
+            "label": "placeholder",
+            "line": 144
+          },
+          {
+            "label": "placeholder",
+            "line": 145
+          },
+          {
+            "label": "public URL default",
+            "line": 26
+          }
+        ]
+      },
+      {
+        "path": "frontend/src/pages/CentralKitchen.js",
+        "lines": 741,
+        "sha256": "69d379367c59d80093e83d3479d42fa2d9fa3116db927a1954b7640c7b5712ce",
+        "findings": [
+          {
+            "label": "placeholder",
+            "line": 658
+          },
+          {
+            "label": "placeholder",
+            "line": 718
+          },
+          {
+            "label": "public URL default",
+            "line": 23
+          }
+        ]
+      },
+      {
+        "path": "frontend/src/pages/CentralKitchenMetricDetail.js",
+        "lines": 319,
+        "sha256": "98334ba04a7d9311ad6e758fd14b7e454979222b00df257c59e4819139742c71",
+        "findings": [
+          {
+            "label": "public URL default",
+            "line": 22
+          }
+        ]
+      },
+      {
+        "path": "frontend/src/pages/Chef.js",
+        "lines": 189,
+        "sha256": "63afd910784b91fbd9f4bfb4166b2992efc3101f50c41e0c57f4432432cb7907",
+        "findings": [
+          {
+            "label": "public URL default",
+            "line": 24
+          }
+        ]
+      },
+      {
+        "path": "frontend/src/pages/Dashboard.js",
+        "lines": 467,
+        "sha256": "8966b291e1f9e1b8eb25656f487011aa8039c75842ffa6f538fa873d90014f5d",
+        "findings": [
+          {
+            "label": "public URL default",
+            "line": 24
+          }
+        ]
+      },
+      {
+        "path": "frontend/src/pages/DashboardMetricDetail.js",
+        "lines": 528,
+        "sha256": "75b65af70c5795b2eeec920b4dcd1d359dfa269a6b5a33e6317ff0a951b0ce2e",
+        "findings": [
+          {
+            "label": "public URL default",
+            "line": 23
+          }
+        ]
+      },
+      {
+        "path": "frontend/src/pages/FeedbackForm.js",
+        "lines": 123,
+        "sha256": "ecbd7767008fcf17ee9755b78e95c9a6df07b9fee86cc10ad5d48fa512fa8f01",
+        "findings": [
+          {
+            "label": "public URL default",
+            "line": 19
+          }
+        ]
+      },
+      {
+        "path": "frontend/src/pages/ForgotPassword.js",
+        "lines": 103,
+        "sha256": "b625b8198c24c9286f4089b51951803a49fe9f7f9a4413e9b1b5698c7ee78173",
+        "findings": [
+          {
+            "label": "placeholder",
+            "line": 70
+          },
+          {
+            "label": "public URL default",
+            "line": 20
+          }
+        ]
+      },
+      {
+        "path": "frontend/src/pages/Inventory.js",
+        "lines": 801,
+        "sha256": "c8a6a9f3f99590b0c90112c19b44debd5d4d028b22e7442e891ac7abdb1a80ef",
+        "findings": [
+          {
+            "label": "placeholder",
+            "line": 471
+          },
+          {
+            "label": "placeholder",
+            "line": 637
+          },
+          {
+            "label": "public URL default",
+            "line": 23
+          }
+        ]
+      },
+      {
+        "path": "frontend/src/pages/InventorySummaryPage.js",
+        "lines": 202,
+        "sha256": "5c101b764d1a5c9dc03b3076986b90223613aa29507a7294d205ae493cb8803e",
+        "findings": [
+          {
+            "label": "public URL default",
+            "line": 21
+          }
+        ]
+      },
+      {
+        "path": "frontend/src/pages/Login.js",
+        "lines": 143,
+        "sha256": "9dd9d2f15cef51a65f3b8ff62d2e7b5c8599bb76cd191f3dbc33546cccfdb636",
+        "findings": [
+          {
+            "label": "placeholder",
+            "line": 79
+          },
+          {
+            "label": "placeholder",
+            "line": 94
+          }
+        ]
+      },
+      {
+        "path": "frontend/src/pages/Manager.js",
+        "lines": 296,
+        "sha256": "5d37af4a8dff51e0f6f079c14017d956d37b61be4b002b34f09b9198b7ba3a7c",
+        "findings": [
+          {
+            "label": "public URL default",
+            "line": 24
+          }
+        ]
+      },
+      {
+        "path": "frontend/src/pages/OutletDetailPage.js",
+        "lines": 448,
+        "sha256": "23eeea619538d79f6583366981092cbbe1a3cb9206ffd267d7b45a8eb70423c4",
+        "findings": [
+          {
+            "label": "placeholder",
+            "line": 352
+          },
+          {
+            "label": "public URL default",
+            "line": 23
+          }
+        ]
+      },
+      {
+        "path": "frontend/src/pages/Products.js",
+        "lines": 1362,
+        "sha256": "bb89d1965936e441945050c0a3856e51c5343728a14bd1de59316af2ed0abe7b",
+        "findings": [
+          {
+            "label": "placeholder",
+            "line": 607
+          },
+          {
+            "label": "placeholder",
+            "line": 786
+          },
+          {
+            "label": "placeholder",
+            "line": 820
+          },
+          {
+            "label": "placeholder",
+            "line": 918
+          },
+          {
+            "label": "placeholder",
+            "line": 1001
+          },
+          {
+            "label": "placeholder",
+            "line": 1200
+          },
+          {
+            "label": "placeholder",
+            "line": 1229
+          },
+          {
+            "label": "placeholder",
+            "line": 1241
+          },
+          {
+            "label": "public URL default",
+            "line": 25
+          }
+        ]
+      },
+      {
+        "path": "frontend/src/pages/ProfileSetup.js",
+        "lines": 238,
+        "sha256": "a682da9ed65f8be0b28d546a357436968a160cca50cafd413779658b90921e53",
+        "findings": [
+          {
+            "label": "public URL default",
+            "line": 22
+          }
+        ]
+      },
+      {
+        "path": "frontend/src/pages/QrManagement.js",
+        "lines": 337,
+        "sha256": "611ac921da10ae9c83d27a9f6dc6fe33ae52cbc5a3972a97b3dd0fad6681dcf3",
+        "findings": []
+      },
+      {
+        "path": "frontend/src/pages/QrOrdering.js",
+        "lines": 658,
+        "sha256": "8c0acfedc04934312a242b31e17f4e4d723e8b54f6e32ee0beab69d4ceb6787e",
+        "findings": [
+          {
+            "label": "placeholder",
+            "line": 360
+          },
+          {
+            "label": "placeholder",
+            "line": 492
+          },
+          {
+            "label": "placeholder",
+            "line": 502
+          },
+          {
+            "label": "placeholder",
+            "line": 508
+          },
+          {
+            "label": "placeholder",
+            "line": 522
+          },
+          {
+            "label": "placeholder",
+            "line": 531
+          },
+          {
+            "label": "public URL default",
+            "line": 21
+          }
+        ]
+      },
+      {
+        "path": "frontend/src/pages/Reports.js",
+        "lines": 894,
+        "sha256": "3a4aa80f7d8ccdacc8a7049b534897cd6acb6cd3710cf6fac02a2568cc38cc7a",
+        "findings": [
+          {
+            "label": "public URL default",
+            "line": 23
+          }
+        ]
+      },
+      {
+        "path": "frontend/src/pages/ReservationPlanner.js",
+        "lines": 479,
+        "sha256": "66ab3973dd3cbca5c506a74721a2e76a573f761d7145f09f2c56136b0ae97748",
+        "findings": [
+          {
+            "label": "memory store",
+            "line": 107
+          },
+          {
+            "label": "placeholder",
+            "line": 282
+          },
+          {
+            "label": "placeholder",
+            "line": 286
+          },
+          {
+            "label": "placeholder",
+            "line": 322
+          },
+          {
+            "label": "placeholder",
+            "line": 334
+          }
+        ]
+      },
+      {
+        "path": "frontend/src/pages/ResetPassword.js",
+        "lines": 99,
+        "sha256": "bb2c015494900d13043dcd131b27c8c5489d9dddc4e6ddbbbd2a137ebb817214",
+        "findings": [
+          {
+            "label": "placeholder",
+            "line": 64
+          },
+          {
+            "label": "placeholder",
+            "line": 76
+          },
+          {
+            "label": "public URL default",
+            "line": 20
+          }
+        ]
+      },
+      {
+        "path": "frontend/src/pages/RoleMetricDetail.js",
+        "lines": 354,
+        "sha256": "259fb0b883ce1cc3b237529a68eda2ffa9f5d1db9f75789a2b94f7a45b09425e",
+        "findings": [
+          {
+            "label": "memory store",
+            "line": 36
+          },
+          {
+            "label": "public URL default",
+            "line": 25
+          }
+        ]
+      },
+      {
+        "path": "frontend/src/pages/Settings.js",
+        "lines": 477,
+        "sha256": "fd87c064ae2886b0e3f3739dace74023c557e27802e39ec757c7ba4735962979",
+        "findings": [
+          {
+            "label": "placeholder",
+            "line": 230
+          },
+          {
+            "label": "placeholder",
+            "line": 239
+          },
+          {
+            "label": "placeholder",
+            "line": 279
+          }
+        ]
+      },
+      {
+        "path": "frontend/src/pages/Staff.js",
+        "lines": 780,
+        "sha256": "cf4be83df18f9b956b16869580a2400bfeedfb736c3a9077d2c5ffc168bb9c5c",
+        "findings": [
+          {
+            "label": "public URL default",
+            "line": 34
+          }
+        ]
+      },
+      {
+        "path": "frontend/src/pages/StaffDetailPage.js",
+        "lines": 243,
+        "sha256": "9208776ae207776d4013e239ad70d7e58d6b0da269802114e9d888aebff0c9e2",
+        "findings": [
+          {
+            "label": "public URL default",
+            "line": 23
+          }
+        ]
+      },
+      {
+        "path": "frontend/src/pages/StaffSummaryPage.js",
+        "lines": 176,
+        "sha256": "cf7cd4364463ae9f011e09fe5ba0473c54e9863719162fe83d167024ca9a5e0c",
+        "findings": [
+          {
+            "label": "public URL default",
+            "line": 23
+          }
+        ]
+      },
+      {
+        "path": "frontend/src/pages/Waiter.js",
+        "lines": 411,
+        "sha256": "93316a759e9bbfe0f71b4788f7a908573b2ae575150e6a4e6478b90c7654ba0e",
+        "findings": [
+          {
+            "label": "memory store",
+            "line": 56
+          },
+          {
+            "label": "public URL default",
+            "line": 29
+          }
+        ]
+      },
+      {
+        "path": "frontend/tailwind.config.js",
+        "lines": 56,
+        "sha256": "e78d1ad2f147c698d71f180ff81767b2762501cfe8cf4f858268972b84f73631",
+        "findings": []
+      },
+      {
+        "path": "index.js",
+        "lines": 47,
+        "sha256": "ea756e4ae53bf5cb741f3115eccba5d2cd609ba4b7c821226cdfefd7de627f37",
+        "findings": []
+      },
+      {
+        "path": "render.yaml",
+        "lines": 46,
+        "sha256": "8654b8846f098eb0a7d76a4cb468d8c9721b378a26bd167723017b2f31780593",
+        "findings": []
+      },
+      {
+        "path": "tests/__init__.py",
+        "lines": 1,
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "findings": []
+      }
+    ],
+    "AdminCore": [
+      {
+        "path": "backend/server.py",
+        "lines": 5296,
+        "sha256": "979d1af2aca2134e2bdb7325531a79efd4d6114e43f968b1e9a4b08fa904ae19",
+        "findings": []
+      },
+      {
+        "path": "backend/test_entitlements.py",
+        "lines": 92,
+        "sha256": "65f72def770856ac1bb18db37788aeabcdde0ef9bfad5d679e6b9ab4928b98ab",
+        "findings": []
+      },
+      {
+        "path": "backend_test (2).py",
+        "lines": 598,
+        "sha256": "295ba88a2ce3db110420e3b7875197ac3536e8ab115f14dfc41263870c9eb729",
+        "findings": []
+      },
+      {
+        "path": "frontend/craco.config.js",
+        "lines": 72,
+        "sha256": "55649a97c5c6f7528f988c0f857f34d5d1ecbb48362446a867ad300659db5ca3",
+        "findings": []
+      },
+      {
+        "path": "frontend/plugins/health-check/health-endpoints.js",
+        "lines": 214,
+        "sha256": "cd02f57c2f5921a7134e8de6e794a0f46ba597c592d17bc614d7250f7023cb03",
+        "findings": []
+      },
+      {
+        "path": "frontend/plugins/health-check/webpack-health-plugin.js",
+        "lines": 121,
+        "sha256": "9dc8e0a6fe52decded5ec55ea9f6864ec4a9bb456aa4e8a8524067d9ed58f8a3",
+        "findings": []
+      },
+      {
+        "path": "frontend/postcss.config (1).js",
+        "lines": 7,
+        "sha256": "251ecddd4672c9cf467547e3dc535de00ad2129df26e7e7ae728fa4e5ac45fc5",
+        "findings": []
+      },
+      {
+        "path": "frontend/postcss.config.js",
+        "lines": 7,
+        "sha256": "251ecddd4672c9cf467547e3dc535de00ad2129df26e7e7ae728fa4e5ac45fc5",
+        "findings": []
+      },
+      {
+        "path": "frontend/src/App.css",
+        "lines": 3,
+        "sha256": "ae533fcba6ea52d1c08f9ef172274d105155e741aeb4a50a7d8ca916b3aae5d8",
+        "findings": []
+      },
+      {
+        "path": "frontend/src/App.js",
+        "lines": 113,
+        "sha256": "d4c7354eb3f8dbbb6f1407d891ac8477de854534712f9e8184cd47e7021978f8",
+        "findings": []
+      },
+      {
+        "path": "frontend/src/components/layout/DashboardLayout.js",
+        "lines": 257,
+        "sha256": "5a1136751b79ccbbaa4cf2dcf4e2456c63d935677d2ea3f5c4aa245bbcbbee99",
+        "findings": []
+      },
+      {
+        "path": "frontend/src/components/ui/accordion.jsx",
+        "lines": 42,
+        "sha256": "b47533b3783b8149550b8481e4ae93d54bdcbc51d434793c176b0aec5558ee1c",
+        "findings": []
+      },
+      {
+        "path": "frontend/src/components/ui/alert-dialog.jsx",
+        "lines": 98,
+        "sha256": "a20098cdc2eb2b5915575d3f0fb7a3e8e6c1035c7eef77144f3fc389e0fdbda0",
+        "findings": []
+      },
+      {
+        "path": "frontend/src/components/ui/alert.jsx",
+        "lines": 48,
+        "sha256": "c5baf27fb6a4bf130236fa0f336c21084fee192e8215bb6b20c87436c27f3b38",
+        "findings": []
+      },
+      {
+        "path": "frontend/src/components/ui/aspect-ratio.jsx",
+        "lines": 6,
+        "sha256": "08b0aa0b05efc573c7d63363c03e83d4b101bfeb54140764e96ddea30659cfcc",
+        "findings": []
+      },
+      {
+        "path": "frontend/src/components/ui/avatar.jsx",
+        "lines": 34,
+        "sha256": "dc91f6b15da007904343e580ceeccc58fba37f8c207e12b1edd3057820805475",
+        "findings": []
+      },
+      {
+        "path": "frontend/src/components/ui/badge.jsx",
+        "lines": 35,
+        "sha256": "380dcda78ff8fdd80c82b89cb7dd38ffd84c355735fc8f16300ff647e15988aa",
+        "findings": []
+      },
+      {
+        "path": "frontend/src/components/ui/breadcrumb.jsx",
+        "lines": 93,
+        "sha256": "bb43d4d07119e0cf1a458feac2c9cfb3946b33813b12e11e576d9eb7dcddf189",
+        "findings": []
+      },
+      {
+        "path": "frontend/src/components/ui/button.jsx",
+        "lines": 49,
+        "sha256": "e933a3f77c7ed8bf7186ca1fc049b940bd1e80e75b34eb9853dbb9fae7af9a47",
+        "findings": []
+      },
+      {
+        "path": "frontend/src/components/ui/calendar.jsx",
+        "lines": 72,
+        "sha256": "235b31ac855e8a373d683c1175f14afb065ee3f00a0f4b19e89311665e0934ea",
+        "findings": []
+      },
+      {
+        "path": "frontend/src/components/ui/card.jsx",
+        "lines": 51,
+        "sha256": "8ab6f42e722e9c51752ce2f14aabb2696bddc0b6818041fb8f313f670955c2c4",
+        "findings": []
+      },
+      {
+        "path": "frontend/src/components/ui/carousel.jsx",
+        "lines": 194,
+        "sha256": "62842d0a01459ffd8d9a83b0e5a34b8cc639eb2d06a7076c8488b7ac56864cdd",
+        "findings": []
+      },
+      {
+        "path": "frontend/src/components/ui/checkbox.jsx",
+        "lines": 23,
+        "sha256": "b0260cb7767493d8273f5def1b7d32e844d068db5f5760258d333ae6ad88f0d8",
+        "findings": []
+      },
+      {
+        "path": "frontend/src/components/ui/collapsible.jsx",
+        "lines": 10,
+        "sha256": "6f5be8ba164c177759bf63cc25ad4d49391f162f6784ba624d72e5d5c0c0dde2",
+        "findings": []
+      },
+      {
+        "path": "frontend/src/components/ui/command.jsx",
+        "lines": 117,
+        "sha256": "c1cc8d4ba2b7cc890ffa45c4e5bfc8a1e647f6dd859e9057cb7fedd6621a5e1d",
+        "findings": [
+          {
+            "label": "placeholder",
+            "line": 41
+          }
+        ]
+      },
+      {
+        "path": "frontend/src/components/ui/context-menu.jsx",
+        "lines": 157,
+        "sha256": "46884050ac738ba6f7324425fa491f9b79140d27571318cf4473ddedcdc7b8c6",
+        "findings": []
+      },
+      {
+        "path": "frontend/src/components/ui/dialog.jsx",
+        "lines": 95,
+        "sha256": "29dc317ccbb946ec1f7ce7e60655a39302a430a5e2548559272f0689243c3095",
+        "findings": []
+      },
+      {
+        "path": "frontend/src/components/ui/drawer.jsx",
+        "lines": 91,
+        "sha256": "ad946a1e3d6976f5da19f6fbdaa8a65dc96c6cbce926d1a60889ef5ec449e44c",
+        "findings": []
+      },
+      {
+        "path": "frontend/src/components/ui/dropdown-menu.jsx",
+        "lines": 157,
+        "sha256": "cbc153dda26fd34a196bffd5cd2f056798c08c46174ee45862da90b248f7aa1d",
+        "findings": []
+      },
+      {
+        "path": "frontend/src/components/ui/form.jsx",
+        "lines": 134,
+        "sha256": "68379f589cf2c031104cc39fd944713d611e31e26213be78074eb853e19dbcdf",
+        "findings": []
+      },
+      {
+        "path": "frontend/src/components/ui/hover-card.jsx",
+        "lines": 24,
+        "sha256": "d72f4c6169a6cd06b18d279ae31e73b790f7aba6a38c61442952c01e04cc32af",
+        "findings": []
+      },
+      {
+        "path": "frontend/src/components/ui/input-otp.jsx",
+        "lines": 54,
+        "sha256": "485ea4a1a4ad29e68ab3671eaccaa7b972b47d266e87f767c6137ccdd0f2d0b7",
+        "findings": []
+      },
+      {
+        "path": "frontend/src/components/ui/input.jsx",
+        "lines": 20,
+        "sha256": "7c9f0c756530ae1dbe3b1424f09e32e3f54323826b2f2d817b13c865f96309ad",
+        "findings": [
+          {
+            "label": "placeholder",
+            "line": 10
+          }
+        ]
+      },
+      {
+        "path": "frontend/src/components/ui/label.jsx",
+        "lines": 17,
+        "sha256": "37c6425d2a5c798ade4e60f89f86054d703433a8977e12d796de2b5bb4e3d0b7",
+        "findings": []
+      },
+      {
+        "path": "frontend/src/components/ui/menubar.jsx",
+        "lines": 199,
+        "sha256": "9d170686eb1c56b5981e7108d6108498009fd55abffa1ae4b89d38b44292788b",
+        "findings": []
+      },
+      {
+        "path": "frontend/src/components/ui/navigation-menu.jsx",
+        "lines": 105,
+        "sha256": "5e4efd6acb3836f19205aeca1373da81cf48c35be6fedd62326d704c2ee2a921",
+        "findings": []
+      },
+      {
+        "path": "frontend/src/components/ui/pagination.jsx",
+        "lines": 101,
+        "sha256": "1d519fc3ba1c8c6cf7f2d30c98739ecba2fa7af35cbc024d6793785e7a6d65c8",
+        "findings": []
+      },
+      {
+        "path": "frontend/src/components/ui/popover.jsx",
+        "lines": 28,
+        "sha256": "d85117f748991afb0bfa60856441ca68883720a4a0eca3b1bd82a6fd685b87b0",
+        "findings": []
+      },
+      {
+        "path": "frontend/src/components/ui/progress.jsx",
+        "lines": 22,
+        "sha256": "2d074c6026cd5ca44ef44b9027f267612c39877a7d2eb4a3faa387594c3eb37a",
+        "findings": []
+      },
+      {
+        "path": "frontend/src/components/ui/radio-group.jsx",
+        "lines": 30,
+        "sha256": "4e1e8860ca64733614431a9aa1694d430538478e1fa6859b1e6f65348152876b",
+        "findings": []
+      },
+      {
+        "path": "frontend/src/components/ui/resizable.jsx",
+        "lines": 41,
+        "sha256": "eec5a9ea2861a3946063586f101d4b3d6615cd8e0a00f2834f80aed3bf0cb2c5",
+        "findings": []
+      },
+      {
+        "path": "frontend/src/components/ui/scroll-area.jsx",
+        "lines": 39,
+        "sha256": "3de4bed34be51a940243b0fbf8c6d9324ecb416a91a919d65ca18d15a7ba32a1",
+        "findings": []
+      },
+      {
+        "path": "frontend/src/components/ui/select.jsx",
+        "lines": 120,
+        "sha256": "ce8fc0afd10942d8c9466538035d4e4885af55320e465ede930fcdfb0672eaa2",
+        "findings": [
+          {
+            "label": "placeholder",
+            "line": 17
+          }
+        ]
+      },
+      {
+        "path": "frontend/src/components/ui/separator.jsx",
+        "lines": 24,
+        "sha256": "2c82247abd573d0f4a93eb259166e3b778365b58c0d18921b4739d5ba4b29e7e",
+        "findings": []
+      },
+      {
+        "path": "frontend/src/components/ui/sheet.jsx",
+        "lines": 109,
+        "sha256": "8d2cc6801dd7a47fbacbe2bc78ed6b564dfe12adf188af111bc03a78e5efe2d8",
+        "findings": []
+      },
+      {
+        "path": "frontend/src/components/ui/skeleton.jsx",
+        "lines": 15,
+        "sha256": "78dad1ec71e4fc2c0060dd244ee68b2f9e7fc42ae680dab4f310e2ad8f17b741",
+        "findings": []
+      },
+      {
+        "path": "frontend/src/components/ui/slider.jsx",
+        "lines": 22,
+        "sha256": "1761bfaa0a06480b76b31511e4a5c24903b407732e027fc11ad615dd3d93a562",
+        "findings": []
+      },
+      {
+        "path": "frontend/src/components/ui/sonner.jsx",
+        "lines": 29,
+        "sha256": "20962c4968b5792da4b408680321180f1c9b8f9cf322695d5173c0ef25132b40",
+        "findings": []
+      },
+      {
+        "path": "frontend/src/components/ui/switch.jsx",
+        "lines": 23,
+        "sha256": "880e95637cc1d90ef4476f79114afd2fa7b5f6e5da1f49a70e0efc1f84aa0c8a",
+        "findings": []
+      },
+      {
+        "path": "frontend/src/components/ui/table.jsx",
+        "lines": 87,
+        "sha256": "301509bb8337184f1b299cb15b8d4f8ec8f0d3bbc17a2ffdf33ff58f7eaa444e",
+        "findings": []
+      },
+      {
+        "path": "frontend/src/components/ui/tabs.jsx",
+        "lines": 42,
+        "sha256": "57591bdfb3fa931b06edcf4168b6881a79785c674ad0618003d12cd656072350",
+        "findings": []
+      },
+      {
+        "path": "frontend/src/components/ui/textarea.jsx",
+        "lines": 19,
+        "sha256": "6b2c6dd8023a32be3b52af960d7615018488c5601fb05cec97ed76d1141ae2f4",
+        "findings": [
+          {
+            "label": "placeholder",
+            "line": 9
+          }
+        ]
+      },
+      {
+        "path": "frontend/src/components/ui/toast.jsx",
+        "lines": 86,
+        "sha256": "1865542d8648bb1207bdf3020393387f0a42ca1f5f9f5a8ffab4bb35598c1c5e",
+        "findings": []
+      },
+      {
+        "path": "frontend/src/components/ui/toaster.jsx",
+        "lines": 34,
+        "sha256": "7dd63e25d99c02b93b3868eef5b0c261ecc63b5f5542c4bf7155731ec234ef5d",
+        "findings": []
+      },
+      {
+        "path": "frontend/src/components/ui/toggle-group.jsx",
+        "lines": 44,
+        "sha256": "f40062b4037c151c9bba1b5de1ce60c60ce5b4dc6dc24f8efab85b382a3129fb",
+        "findings": []
+      },
+      {
+        "path": "frontend/src/components/ui/toggle.jsx",
+        "lines": 41,
+        "sha256": "8c563045f231bfa2ca8cde62085f00c0600fa558a60d8c14ea3a1cb5c9c644c5",
+        "findings": []
+      },
+      {
+        "path": "frontend/src/components/ui/tooltip.jsx",
+        "lines": 27,
+        "sha256": "6f5b14ca183b6b4b64427102af2c0773dbde38658a568aaa53ef4de4c7b8045e",
+        "findings": []
+      },
+      {
+        "path": "frontend/src/contexts/AuthContext.js",
+        "lines": 57,
+        "sha256": "30cf437aeb544ee0451a81e686838675ca7cebd6494dfb155d95b0752ea26578",
+        "findings": []
+      },
+      {
+        "path": "frontend/src/hooks/use-toast.js",
+        "lines": 156,
+        "sha256": "767e0227c5c9406b5d00e25a57c6d01e9f6e083d36e803ccb0a5e260992a5225",
+        "findings": [
+          {
+            "label": "memory store",
+            "line": 22
+          }
+        ]
+      },
+      {
+        "path": "frontend/src/hooks/useEntitlement.js",
+        "lines": 45,
+        "sha256": "476c9a39db494274c170e781c62762ddc12bc07c3ec55381521cf4fbec95ccc4",
+        "findings": []
+      },
+      {
+        "path": "frontend/src/index.css",
+        "lines": 103,
+        "sha256": "79fd3751ebce143075c6f1f2d3d4e82adb389b09bda63493ee113054b56cb19e",
+        "findings": []
+      },
+      {
+        "path": "frontend/src/index.js",
+        "lines": 12,
+        "sha256": "63adbf50e0f85c19191f7085ba3458791833ebc3d2edb49a88168d1c5ca0e33c",
+        "findings": []
+      },
+      {
+        "path": "frontend/src/lib/api.js",
+        "lines": 153,
+        "sha256": "588ac314eff526b2030b6f237631f2e225a7c83f7afe7c8da5ff4e645e2fbb35",
+        "findings": [
+          {
+            "label": "public URL default",
+            "line": 5
+          }
+        ]
+      },
+      {
+        "path": "frontend/src/lib/moduleAccess.js",
+        "lines": 44,
+        "sha256": "bdfe4865ef900e1c71ae50f15f91290c8c11832581816edce9fb7cd8bfeac4b2",
+        "findings": []
+      },
+      {
+        "path": "frontend/src/lib/posAdminNav.js",
+        "lines": 29,
+        "sha256": "f75ce94f3051faa040da32329b7e576bd8e69576c94d0303a1785ca7eaeb1ce9",
+        "findings": []
+      },
+      {
+        "path": "frontend/src/lib/utils.js",
+        "lines": 7,
+        "sha256": "5ba0ae526d768600bbfb4a4d345c47f6208cb941adbf456de80804a4cf938350",
+        "findings": []
+      },
+      {
+        "path": "frontend/src/pages/AuditLogsPage.js",
+        "lines": 121,
+        "sha256": "7ee4fe25a895a35f2f30937b64235db3f34b5bece6aaff1290b19e805fa99c75",
+        "findings": [
+          {
+            "label": "placeholder",
+            "line": 71
+          }
+        ]
+      },
+      {
+        "path": "frontend/src/pages/BusinessesPage.js",
+        "lines": 310,
+        "sha256": "32fa3b2fbbceec7783e24df708086fe0886449cf8aeee83b1b66ea9ec3ea1a01",
+        "findings": [
+          {
+            "label": "placeholder",
+            "line": 233
+          },
+          {
+            "label": "placeholder",
+            "line": 261
+          },
+          {
+            "label": "placeholder",
+            "line": 265
+          },
+          {
+            "label": "placeholder",
+            "line": 269
+          }
+        ]
+      },
+      {
+        "path": "frontend/src/pages/ClientsPage.js",
+        "lines": 221,
+        "sha256": "62eaf773ae9600b28ad0963d2c908eac7d2d0c3bea7104cc8b6247dc89ca859b",
+        "findings": [
+          {
+            "label": "placeholder",
+            "line": 125
+          },
+          {
+            "label": "placeholder",
+            "line": 213
+          }
+        ]
+      },
+      {
+        "path": "frontend/src/pages/ControlCenterPage.js",
+        "lines": 190,
+        "sha256": "12f6425140c2b933af831f6573343dee77f5e7e0d88f011b5c65a984468369fd",
+        "findings": []
+      },
+      {
+        "path": "frontend/src/pages/DashboardPage.js",
+        "lines": 198,
+        "sha256": "7b82eafea02afb8504a3861086ad786f181a0bde4b1db9b725757aacb219c4cf",
+        "findings": []
+      },
+      {
+        "path": "frontend/src/pages/FeatureFlagsPage.js",
+        "lines": 151,
+        "sha256": "601fd5cd3065b7ac738f42926a9f63ea93065c6f142ab401c534ec07b46444c7",
+        "findings": [
+          {
+            "label": "placeholder",
+            "line": 137
+          }
+        ]
+      },
+      {
+        "path": "frontend/src/pages/IntegrationsPage.js",
+        "lines": 167,
+        "sha256": "7c5022a9396a55ca1fc7484b1563d087b4bf682bae140e5816e768f5bff5dd0a",
+        "findings": [
+          {
+            "label": "placeholder",
+            "line": 148
+          },
+          {
+            "label": "placeholder",
+            "line": 150
+          }
+        ]
+      },
+      {
+        "path": "frontend/src/pages/LoginPage.js",
+        "lines": 133,
+        "sha256": "ea9ad035f065a14d46f132ca11150f839f74ff4a9554c6c6fcfa8739a3b8dbc0",
+        "findings": [
+          {
+            "label": "placeholder",
+            "line": 81
+          },
+          {
+            "label": "placeholder",
+            "line": 86
+          },
+          {
+            "label": "placeholder",
+            "line": 102
+          },
+          {
+            "label": "placeholder",
+            "line": 106
+          },
+          {
+            "label": "placeholder",
+            "line": 111
+          }
+        ]
+      },
+      {
+        "path": "frontend/src/pages/ModulesPage.js",
+        "lines": 243,
+        "sha256": "7997820760e63737d190ca30c309cab491b8fda5cae6c180d5434cc0037e116d",
+        "findings": [
+          {
+            "label": "placeholder",
+            "line": 184
+          }
+        ]
+      },
+      {
+        "path": "frontend/src/pages/OutletsPage.js",
+        "lines": 176,
+        "sha256": "06a331065b7adc2151411d05deb384a07e1959650850b0f3818394b7ff9fa177",
+        "findings": [
+          {
+            "label": "placeholder",
+            "line": 155
+          }
+        ]
+      },
+      {
+        "path": "frontend/src/pages/PlansPage.js",
+        "lines": 311,
+        "sha256": "a232c2d1f8bc7a9fdac2b21922a6e46f7346205aad42a189945a4dfb44828dff",
+        "findings": []
+      },
+      {
+        "path": "frontend/src/pages/POSAdminPage.js",
+        "lines": 1033,
+        "sha256": "16300f97d8ce877995880415dd0988f2ae0050b68b8b6a6c4931f1315374b3ca",
+        "findings": [
+          {
+            "label": "placeholder",
+            "line": 685
+          },
+          {
+            "label": "placeholder",
+            "line": 700
+          },
+          {
+            "label": "placeholder",
+            "line": 837
+          },
+          {
+            "label": "placeholder",
+            "line": 889
+          },
+          {
+            "label": "placeholder",
+            "line": 916
+          },
+          {
+            "label": "placeholder",
+            "line": 949
+          },
+          {
+            "label": "placeholder",
+            "line": 958
+          },
+          {
+            "label": "placeholder",
+            "line": 962
+          },
+          {
+            "label": "placeholder",
+            "line": 1022
+          }
+        ]
+      },
+      {
+        "path": "frontend/src/pages/POSBridgePage.js",
+        "lines": 387,
+        "sha256": "9ddf6f3e8aa1a633d6d6d956ad20586461ad5d6202e66e3da5d749679d480c21",
+        "findings": []
+      },
+      {
+        "path": "frontend/src/pages/ProductsPage.js",
+        "lines": 190,
+        "sha256": "3da099a0df79a8dc7b963c5509416342d78e078b4b0d78398e721e41d4bc252b",
+        "findings": []
+      },
+      {
+        "path": "frontend/src/pages/SettingsPage.js",
+        "lines": 165,
+        "sha256": "d93c74bc94449dc9fbfd3681da1505cef2ed748ab201037ea32adad214569285",
+        "findings": [
+          {
+            "label": "placeholder",
+            "line": 154
+          }
+        ]
+      },
+      {
+        "path": "frontend/src/pages/SubscriptionsPage.js",
+        "lines": 267,
+        "sha256": "6f369645e407c47773066b820473d897f91fdd4746615b53e9ffcd66da5bec00",
+        "findings": [
+          {
+            "label": "placeholder",
+            "line": 231
+          }
+        ]
+      },
+      {
+        "path": "frontend/src/pages/UsersPage.js",
+        "lines": 243,
+        "sha256": "6d85f35949c21800281dc3db8c5a5e9849e4c92b6b0e770a62ddaa9dca40a7ca",
+        "findings": [
+          {
+            "label": "placeholder",
+            "line": 189
+          }
+        ]
+      },
+      {
+        "path": "frontend/tailwind.config.js",
+        "lines": 82,
+        "sha256": "2dffd76e8cc6702ddca8ad8340b043bfc90e21db74bbde6237dc48387319c0eb",
+        "findings": []
+      },
+      {
+        "path": "tests/__init__.py",
+        "lines": 1,
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "findings": []
+      }
+    ]
+  }
+}

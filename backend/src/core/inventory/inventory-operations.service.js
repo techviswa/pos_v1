@@ -25,6 +25,7 @@ class InventoryOperationsService {
     if (outletId) {
       const outlet = await tx.outlet.findFirst({ where: { id: outletId, businessId } });
       if (outlet) return outlet.id;
+      throw createHttpError({ statusCode: 404, message: "Outlet not found in this business" });
     }
 
     const outlet = await tx.outlet.findFirst({
@@ -76,14 +77,15 @@ class InventoryOperationsService {
 
   async recordMovement({ tx = prisma, businessId, item, movementType, quantity, reason, expiryDate = null }) {
     const signedQuantity = toNumber(quantity, 0);
-    const nextStock = Math.max(0, toNumber(item.stock, 0) + signedQuantity);
-    const updated = await tx.inventoryItem.update({
-      where: { id: item.id },
+    const changed = await tx.inventoryItem.updateMany({
+      where: { id: item.id, businessId, ...(signedQuantity < 0 ? { stock: { gte: -signedQuantity } } : {}) },
       data: {
-        stock: nextStock,
+        stock: { increment: signedQuantity },
         ...(expiryDate ? { expiryDate: new Date(expiryDate) } : {}),
       },
     });
+    if (!changed.count) throw createHttpError({ statusCode: 409, message: "Insufficient stock for this movement" });
+    const updated = await tx.inventoryItem.findUniqueOrThrow({ where: { id: item.id } });
 
     const movement = await tx.inventoryMovement.create({
       data: {
@@ -336,6 +338,8 @@ class InventoryOperationsService {
     });
 
     const approved = await prisma.$transaction(async (tx) => {
+      const claimed = await tx.allocation.updateMany({ where: { id: allocationId, businessId: business.id, status: "pending_approval" }, data: { status: "approved" } });
+      if (!claimed.count) throw createHttpError({ statusCode: 409, message: "Transfer is no longer awaiting approval" });
       const items = cloneJson(allocation.items, []);
       for (const line of items) {
         const item = await this.findOrCreateInventoryItem({ tx, businessId: business.id, line });
@@ -386,6 +390,8 @@ class InventoryOperationsService {
     });
 
     const received = await prisma.$transaction(async (tx) => {
+      const claimed = await tx.allocation.updateMany({ where: { id: allocationId, businessId: business.id, status: "approved" }, data: { status: "received" } });
+      if (!claimed.count) throw createHttpError({ statusCode: 409, message: "Transfer must be approved and can only be received once" });
       const items = cloneJson(allocation.items, []);
       for (const line of items) {
         const item = await this.findOrCreateInventoryItem({ tx, businessId: business.id, line });

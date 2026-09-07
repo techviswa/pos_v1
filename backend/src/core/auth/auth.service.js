@@ -12,9 +12,9 @@ import { userSeedData } from "../../shared/data/core-seed-data.js";
 import { createAuthToken, consumeAuthToken, getAuthToken } from "./auth-tokens.js";
 import { createSessionId, SESSION_TTL_MS } from "./auth-session.js";
 import { hashPassword, isPasswordHash, verifyPassword } from "./passwords.js";
+import { sessions as sessionRecords } from "./session-store.js";
 
 let bootstrapUserPromise = null;
-const sessionRecords = new Map();
 const PASSWORD_RESET_TTL_MS = 1000 * 60 * 30;
 const INVITE_TTL_MS = 1000 * 60 * 60 * 24 * 7;
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -61,6 +61,7 @@ class AuthService {
   }
 
   async ensureBootstrapUser() {
+    if (env.nodeEnv === "production") return null;
     if (!isDatabaseAvailable()) {
       if (env.nodeEnv === "production") {
         return null;
@@ -143,10 +144,10 @@ class AuthService {
     return bootstrapUserPromise;
   }
 
-  createSessionForUser(userId) {
+  async createSessionForUser(userId) {
     const sessionId = createSessionId();
     const now = Date.now();
-    sessionRecords.set(sessionId, {
+    await sessionRecords.set(sessionId, {
       userId,
       createdAt: now,
       expiresAt: now + SESSION_TTL_MS,
@@ -155,38 +156,37 @@ class AuthService {
     return sessionId;
   }
 
-  resolveSessionUserId(sessionId) {
+  async resolveSessionUserId(sessionId) {
     if (!sessionId) {
       return null;
     }
 
-    const record = sessionRecords.get(String(sessionId));
+    const record = await sessionRecords.get(String(sessionId));
     if (!record) {
       return null;
     }
 
     if (record.expiresAt <= Date.now()) {
-      sessionRecords.delete(String(sessionId));
+      await sessionRecords.delete(String(sessionId));
       return null;
     }
 
     record.lastSeenAt = Date.now();
-    sessionRecords.set(String(sessionId), record);
     return record.userId || null;
   }
 
-  refreshSessionRecord(sessionId) {
-    const record = sessionRecords.get(String(sessionId || ""));
+  async refreshSessionRecord(sessionId) {
+    const record = await sessionRecords.get(String(sessionId || ""));
     if (!record || record.expiresAt <= Date.now()) {
       if (sessionId) {
-        sessionRecords.delete(String(sessionId));
+        await sessionRecords.delete(String(sessionId));
       }
       return false;
     }
 
     record.lastSeenAt = Date.now();
     record.expiresAt = Date.now() + SESSION_TTL_MS;
-    sessionRecords.set(String(sessionId), record);
+    await sessionRecords.set(String(sessionId), record);
     return true;
   }
 
@@ -227,16 +227,11 @@ class AuthService {
 
       return {
         user: this.serializeFallbackUser(user),
-        sessionId: this.createSessionForUser(user.id),
+        sessionId: await this.createSessionForUser(user.id),
       };
     }
 
     try {
-      await ensureBusiness({
-        tenantId: env.defaultTenantId,
-        businessId: env.defaultBusinessId,
-      });
-
       const normalizedEmail = String(email || "").trim().toLowerCase();
       let user = await this.findUserByEmail(normalizedEmail);
       const passwordValid = await this.verifyAndUpgradePassword(user, password);
@@ -245,7 +240,7 @@ class AuthService {
         return null;
       }
 
-      if (normalizedEmail === String(env.auth.adminEmail || "").trim().toLowerCase()) {
+      if (env.nodeEnv !== "production" && normalizedEmail === String(env.auth.adminEmail || "").trim().toLowerCase()) {
         const ownerRole = await ensureRole("Owner");
         user = await prisma.user.update({
           where: { id: user.id },
@@ -260,7 +255,7 @@ class AuthService {
 
       return {
         user: serializeUser(user),
-        sessionId: this.createSessionForUser(user.id),
+        sessionId: await this.createSessionForUser(user.id),
       };
     } catch (error) {
       if (!this.shouldUseFallback(error) || env.nodeEnv === "production") {
@@ -278,14 +273,14 @@ class AuthService {
 
       return {
         user: this.serializeFallbackUser(user),
-        sessionId: this.createSessionForUser(user.id),
+        sessionId: await this.createSessionForUser(user.id),
       };
     }
   }
 
   async getCurrentUser({ sessionId } = {}) {
     try {
-      const targetUserId = this.resolveSessionUserId(sessionId);
+      const targetUserId = await this.resolveSessionUserId(sessionId);
       if (!targetUserId) {
         return null;
       }
@@ -304,19 +299,19 @@ class AuthService {
         include: getUserInclude(),
       });
 
-      return user ? serializeUser(user) : null;
+      return user && user.active ? serializeUser(user) : null;
     } catch (error) {
       if (!this.shouldUseFallback(error) || env.nodeEnv === "production") {
         throw error;
       }
 
-      const fallbackUser = this.getFallbackUserById(this.resolveSessionUserId(sessionId)) || null;
+      const fallbackUser = this.getFallbackUserById(await this.resolveSessionUserId(sessionId)) || null;
       return this.serializeFallbackUser(fallbackUser);
     }
   }
 
   async refreshSession({ sessionId } = {}) {
-    if (!this.refreshSessionRecord(sessionId)) {
+    if (!await this.refreshSessionRecord(sessionId)) {
       return null;
     }
 
@@ -332,7 +327,7 @@ class AuthService {
 
   async logout({ sessionId } = {}) {
     if (sessionId) {
-      sessionRecords.delete(String(sessionId));
+      await sessionRecords.delete(String(sessionId));
     }
 
     return { loggedOut: true };
@@ -390,6 +385,8 @@ class AuthService {
         profileRequired: false,
       },
     });
+
+    await prisma.authSession.deleteMany({ where: { userId: record.userId } });
 
     return { reset: true };
   }
@@ -481,9 +478,7 @@ class AuthService {
       tenant_id: user?.tenantId || env.defaultTenantId,
       user,
       authenticated: Boolean(user),
-      expires_at: sessionRecords.get(String(sessionId || ""))?.expiresAt
-        ? new Date(sessionRecords.get(String(sessionId)).expiresAt).toISOString()
-        : null,
+      expires_at: user ? new Date((await sessionRecords.get(String(sessionId)))?.expiresAt).toISOString() : null,
     };
   }
 }

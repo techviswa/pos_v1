@@ -4,12 +4,13 @@ import { printerService } from "../../services/printer/printer.service.js";
 
 class PrinterController {
   async list(req, res) {
-    const data = printerService.listPrintJobs({ status: req.query?.status });
+    const data = await printerService.listPrintJobs({ businessId: req.context.businessId, status: req.query?.status });
     res.status(200).json(apiResponse({ message: "Print jobs fetched successfully", data }));
   }
 
   async create(req, res) {
-    const data = printerService.queuePrintJob({
+    const data = await printerService.queuePrintJob({
+      businessId: req.context.businessId,
       type: req.body?.type,
       target: req.body?.target,
       payload: req.body?.payload,
@@ -20,7 +21,7 @@ class PrinterController {
   }
 
   async getById(req, res) {
-    const data = printerService.getPrintJob(req.params.jobId);
+    const data = await printerService.getPrintJob(req.params.jobId, req.context.businessId);
     if (!data) {
       throw createHttpError({ statusCode: 404, message: "Print job not found" });
     }
@@ -28,7 +29,7 @@ class PrinterController {
   }
 
   async complete(req, res) {
-    const data = printerService.completePrintJob(req.params.jobId);
+    const data = await printerService.completePrintJob(req.params.jobId, req.context.businessId, req.printerAgentId);
     if (!data) {
       throw createHttpError({ statusCode: 404, message: "Print job not found" });
     }
@@ -36,7 +37,7 @@ class PrinterController {
   }
 
   async fail(req, res) {
-    const data = printerService.failPrintJob(req.params.jobId, req.body?.error);
+    const data = await printerService.failPrintJob(req.params.jobId, req.body?.error, req.context.businessId, req.printerAgentId);
     if (!data) {
       throw createHttpError({ statusCode: 404, message: "Print job not found" });
     }
@@ -44,21 +45,23 @@ class PrinterController {
   }
 
   async agentHeartbeat(req, res) {
-    const data = printerService.recordAgentHeartbeat({
-      agentId: req.body?.agent_id || req.headers["x-printer-agent-id"],
+    const data = await printerService.recordAgentHeartbeat({
+      businessId: req.context.businessId,
+      agentId: req.printerAgentId,
       payload: req.body || {},
     });
     res.status(200).json(apiResponse({ message: "Printer agent heartbeat recorded successfully", data }));
   }
 
-  async listAgents(_req, res) {
-    const data = printerService.listAgents();
+  async listAgents(req, res) {
+    const data = await printerService.listAgents(req.context.businessId);
     res.status(200).json(apiResponse({ message: "Printer agents fetched successfully", data }));
   }
 
   async claimNext(req, res) {
-    const data = printerService.claimNextPrintJob({
-      agentId: req.body?.agent_id || req.headers["x-printer-agent-id"],
+    const data = await printerService.claimNextPrintJob({
+      businessId: req.context.businessId,
+      agentId: req.printerAgentId,
       target: req.body?.target || req.query?.target,
     });
     if (!data) {

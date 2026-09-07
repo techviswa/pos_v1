@@ -1,6 +1,7 @@
 import { apiResponse } from "../../shared/utils/apiResponse.js";
 import { isAdminCoreSyncRequest, createSyncEnvelope } from "../sync/sync-contract.js";
 import { billingService } from "./billing.service.js";
+import { createHttpError } from "../../shared/utils/http-error.js";
 
 class BillingController {
   async list(req, res) {
@@ -91,6 +92,10 @@ class BillingController {
   }
 
   async update(req, res) {
+    const protectedFields = ["payments", "refunds", "refunded_amount", "paid_amount", "status", "void_status", "invoice_number", "invoice_sequence", "items", "total", "subtotal", "tax", "discount_amount", "discount_type", "discount_value", "gst_rate"];
+    if (protectedFields.some((key) => Object.hasOwn(req.body || {}, key))) {
+      throw createHttpError({ statusCode: 409, message: "Issued invoice financial fields are immutable. Use payment, refund, or void actions." });
+    }
     const data = await billingService.updateInvoice({
       tenantId: req.context.tenantId,
       invoiceId: req.params.invoiceId,

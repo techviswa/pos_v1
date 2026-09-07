@@ -68,11 +68,8 @@ class FeatureToggleService {
       ),
     ];
 
-    await ensureBusiness({
-      businessId: normalizedBusinessId,
-      tenantId:
-        normalizedBusinessId === env.defaultBusinessId ? env.defaultTenantId : `${normalizedBusinessId}-tenant`,
-    });
+    const business = await findBusinessById(normalizedBusinessId);
+    if (!business) throw new Error("Business must be provisioned before assigning features");
 
     await prisma.$transaction([
       prisma.featureToggle.deleteMany({

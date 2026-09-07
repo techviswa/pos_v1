@@ -24,6 +24,9 @@ const roleDefaults = {
 };
 
 async function main() {
+  if (process.env.NODE_ENV === "production") {
+    throw new Error("Demo seeding is disabled in production. Provision businesses and users through the authenticated API.");
+  }
   const business = await prisma.business.upsert({
     where: { tenantId: "demo-tenant" },
     update: {
