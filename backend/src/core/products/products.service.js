@@ -74,21 +74,7 @@ class ProductsService {
       include: getProductInclude(),
     });
 
-    const serializedProduct = serializeProduct(product);
-    await admincoreChangeSyncService.notifyChange({
-      resource: "products",
-      action: "created",
-      recordId: serializedProduct.id,
-      tenantId,
-      businessId: business.id,
-      metadata: {
-        name: serializedProduct.name,
-        price: serializedProduct.price,
-        active: serializedProduct.active,
-      },
-    });
-
-    return serializedProduct;
+    return serializeProduct(product);
   }
 
   async createProduct({ tenantId, payload }) {
@@ -122,7 +108,7 @@ class ProductsService {
     const serializedProduct = serializeProduct(product);
     await admincoreChangeSyncService.notifyChange({
       resource: "products",
-      action: "updated",
+      action: "created",
       recordId: serializedProduct.id,
       tenantId,
       businessId: business.id,
@@ -180,7 +166,7 @@ class ProductsService {
     const serializedProduct = serializeProduct(product);
     await admincoreChangeSyncService.notifyChange({
       resource: "products",
-      action: "deleted",
+      action: "updated",
       recordId: serializedProduct.id,
       tenantId,
       businessId: business.id,
@@ -206,6 +192,11 @@ class ProductsService {
 
     await prisma.product.delete({
       where: { id: productId },
+    });
+
+    await admincoreChangeSyncService.notifyChange({
+      resource: "products", action: "deleted", recordId: productId,
+      tenantId, businessId: business.id,
     });
 
     return serializeProduct(product);

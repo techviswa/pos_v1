@@ -9,6 +9,14 @@ import { usersService } from "../users/users.service.js";
 import { productsService } from "../products/products.service.js";
 import { outletsService } from "../outlets/outlets.service.js";
 import { createHttpError } from "../../shared/utils/http-error.js";
+import prisma from "../../database/prisma/client.js";
+
+const verifyBridgeBusiness = async (businessId, tenantId) => {
+  const business = await prisma.business.findFirst({ where: { id: businessId, tenantId }, select: { id: true } });
+  if (!business) {
+    throw createHttpError({ statusCode: 403, code: "POS_TENANT_SCOPE_MISMATCH", message: "Business and tenant do not identify the same POS business" });
+  }
+};
 
 export const getConnection = (_req, res) => {
   sendRawResponse(res, {
@@ -55,6 +63,7 @@ export const postBridgeStaff = async (req, res) => {
     });
   }
 
+  await verifyBridgeBusiness(businessId, tenantId);
   const data = await usersService.createUser({
     tenantId,
     businessId,
@@ -63,7 +72,7 @@ export const postBridgeStaff = async (req, res) => {
   sendRawResponse(res, { statusCode: 201, data });
 };
 
-const getBridgeProductContext = (req) => {
+const getBridgeProductContext = async (req) => {
   const businessId = req.body?.business_id || req.body?.businessId || req.get("x-business-id");
   const tenantId = req.body?.tenant_id || req.body?.tenantId || req.get("x-tenant-id");
   if (!businessId || !tenantId) {
@@ -74,10 +83,11 @@ const getBridgeProductContext = (req) => {
     });
   }
 
+  await verifyBridgeBusiness(businessId, tenantId);
   return { businessId, tenantId };
 };
 
-const getBridgeTenantContext = (req, resourceLabel) => {
+const getBridgeTenantContext = async (req, resourceLabel) => {
   const businessId = req.body?.business_id || req.body?.businessId || req.get("x-business-id");
   const tenantId = req.body?.tenant_id || req.body?.tenantId || req.get("x-tenant-id");
   if (!businessId || !tenantId) {
@@ -88,11 +98,18 @@ const getBridgeTenantContext = (req, resourceLabel) => {
     });
   }
 
+  await verifyBridgeBusiness(businessId, tenantId);
   return { businessId, tenantId };
 };
 
+export const putBridgeStaff = async (req, res) => {
+  const { businessId, tenantId } = await getBridgeTenantContext(req, "STAFF");
+  const data = await usersService.updateUser({ businessId, tenantId, userId: req.params.userId, payload: req.body });
+  sendRawResponse(res, { data });
+};
+
 export const postBridgeProduct = async (req, res) => {
-  const { tenantId } = getBridgeProductContext(req);
+  const { tenantId } = await getBridgeProductContext(req);
   const data = await productsService.createProduct({
     tenantId,
     payload: req.body,
@@ -101,7 +118,7 @@ export const postBridgeProduct = async (req, res) => {
 };
 
 export const putBridgeProduct = async (req, res) => {
-  const { tenantId } = getBridgeProductContext(req);
+  const { tenantId } = await getBridgeProductContext(req);
   const data = await productsService.updateProduct({
     tenantId,
     productId: req.params.productId,
@@ -111,7 +128,7 @@ export const putBridgeProduct = async (req, res) => {
 };
 
 export const postBridgeOutlet = async (req, res) => {
-  const { tenantId } = getBridgeTenantContext(req, "OUTLET");
+  const { tenantId } = await getBridgeTenantContext(req, "OUTLET");
   const data = await outletsService.createOutlet({
     tenantId,
     payload: req.body,
@@ -120,7 +137,7 @@ export const postBridgeOutlet = async (req, res) => {
 };
 
 export const putBridgeOutlet = async (req, res) => {
-  const { tenantId } = getBridgeTenantContext(req, "OUTLET");
+  const { tenantId } = await getBridgeTenantContext(req, "OUTLET");
   const data = await outletsService.updateOutlet({
     tenantId,
     outletId: req.params.outletId,
@@ -130,14 +147,7 @@ export const putBridgeOutlet = async (req, res) => {
 };
 
 export const deleteBridgeOutlet = async (req, res) => {
-  const tenantId = req.body?.tenant_id || req.body?.tenantId || req.get("x-tenant-id");
-  if (!tenantId) {
-    throw createHttpError({
-      statusCode: 400,
-      code: "ADMINCORE_OUTLET_CONTEXT_REQUIRED",
-      message: "tenant_id is required for AdminCore outlet deletion",
-    });
-  }
+  const { tenantId } = await getBridgeTenantContext(req, "OUTLET");
 
   const data = await outletsService.deleteOutlet({
     tenantId,
@@ -147,14 +157,7 @@ export const deleteBridgeOutlet = async (req, res) => {
 };
 
 export const deleteBridgeProduct = async (req, res) => {
-  const tenantId = req.body?.tenant_id || req.body?.tenantId || req.get("x-tenant-id");
-  if (!tenantId) {
-    throw createHttpError({
-      statusCode: 400,
-      code: "ADMINCORE_PRODUCT_CONTEXT_REQUIRED",
-      message: "tenant_id is required for AdminCore product deletion",
-    });
-  }
+  const { tenantId } = await getBridgeProductContext(req);
 
   const data = await productsService.deleteProduct({
     tenantId,

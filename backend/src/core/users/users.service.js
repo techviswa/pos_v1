@@ -63,22 +63,7 @@ class UsersService {
       include: getUserInclude(),
     });
 
-    const serializedUser = serializeUser(user);
-    await admincoreChangeSyncService.notifyChange({
-      resource: "staff",
-      action: "created",
-      recordId: serializedUser.id,
-      tenantId,
-      businessId: business.id,
-      metadata: {
-        name: serializedUser.name,
-        email: serializedUser.email,
-        role: serializedUser.role,
-        active: serializedUser.active,
-      },
-    });
-
-    return serializedUser;
+    return serializeUser(user);
   }
 
   async createUser({ tenantId, businessId, payload }) {
@@ -213,12 +198,20 @@ class UsersService {
       await syncUserOutlets(userId, payload.assigned_outlet_ids || []);
     }
 
+    if (payload.password !== undefined || payload.active === false) {
+      await prisma.authSession.deleteMany({ where: { userId } });
+    }
+
     const user = await prisma.user.findUniqueOrThrow({
       where: { id: userId },
       include: getUserInclude(),
     });
 
-    return serializeUser(user);
+    const result = serializeUser(user);
+    await admincoreChangeSyncService.notifyChange({
+      resource: "staff", action: "updated", recordId: userId, tenantId, businessId: business.id,
+    });
+    return result;
   }
 
   async deleteUser({ tenantId, businessId, userId }) {

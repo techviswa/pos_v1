@@ -205,7 +205,15 @@ const run = async () => {
     if (process.env.ADMINCORE_API_KEY) {
       const bridgeHeaders = {
         "x-admincore-api-key": process.env.ADMINCORE_API_KEY,
+        "x-business-id": process.env.DEFAULT_BUSINESS_ID || "demo-business",
+        "x-tenant-id": process.env.DEFAULT_TENANT_ID || "demo-tenant",
       };
+      await request({ baseUrl, path: "/api/sync/export/products", headers: {
+        "x-admincore-api-key": process.env.ADMINCORE_API_KEY,
+      }, expected: [400] });
+      await request({ baseUrl, path: "/api/sync/export/products", headers: {
+        ...bridgeHeaders, "x-tenant-id": "unrelated-tenant",
+      }, expected: [403] });
       const apiKeyOnlyChecks = [
         "/api/sync/export/businesses?limit=5",
         "/api/sync/export/outlets?limit=5",
@@ -237,6 +245,12 @@ const run = async () => {
 
       for (const path of apiKeyOnlyChecks) {
         await request({ baseUrl, path, headers: bridgeHeaders });
+      }
+      for (const resource of ["products", "outlets", "staff"]) {
+        await request({ baseUrl, path: `/api/admincore/${resource}`, method: "POST",
+          headers: bridgeHeaders, body: {
+            business_id: "unrelated-business", tenant_id: bridgeHeaders["x-tenant-id"], name: "Must not be created",
+          }, expected: [403] });
       }
 
       const bridgeOutlet = await request({

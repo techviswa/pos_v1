@@ -10,6 +10,7 @@ import {
   deleteBridgeProduct,
   postBridgeOutlet,
   postBridgeStaff,
+  putBridgeStaff,
   postBridgeProduct,
   postSaasTenant,
   postSyncStatus,
@@ -49,6 +50,7 @@ router.get("/health", asyncHandler(getHealth));
 router.post("/sync-status", requireAdmincoreBridgeKey, asyncHandler(postSyncStatus));
 router.post("/tenants", requireAdmincoreBridgeKey, asyncHandler(postSaasTenant));
 router.post("/staff", requireAdmincoreBridgeKey, asyncHandler(postBridgeStaff));
+router.put("/staff/:userId", requireAdmincoreBridgeKey, asyncHandler(putBridgeStaff));
 router.post("/outlets", requireAdmincoreBridgeKey, asyncHandler(postBridgeOutlet));
 router.put("/outlets/:outletId", requireAdmincoreBridgeKey, asyncHandler(putBridgeOutlet));
 router.delete("/outlets/:outletId", requireAdmincoreBridgeKey, asyncHandler(deleteBridgeOutlet));

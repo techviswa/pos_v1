@@ -21,6 +21,7 @@ import {
   recordAdminCoreSyncLog,
 } from "./admincore-sync-log.repository.js";
 import { createSyncEnvelope } from "./sync-contract.js";
+import { getPagination } from "../../shared/utils/pagination.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -28,6 +29,22 @@ const dataDirectory = path.resolve(__dirname, "../../../data");
 const eventsPath = path.join(dataDirectory, "offline-sync-events.json");
 
 const nowIso = () => new Date().toISOString();
+const collectExportRows = async (fetchPage) => {
+  const rows = [];
+  const seen = new Set();
+  for (let offset = 0; offset < 50000; offset += 250) {
+    const page = await fetchPage({ limit: 250, offset });
+    for (const row of page) {
+      if (!row.id || seen.has(row.id)) {
+        throw createHttpError({ statusCode: 502, code: "POS_PAGINATION_INVALID", message: "Export pagination repeated a record" });
+      }
+      seen.add(row.id);
+      rows.push(row);
+    }
+    if (page.length < 250) return rows;
+  }
+  throw createHttpError({ statusCode: 503, code: "POS_EXPORT_TOO_LARGE", message: "Export exceeds the synchronous limit; a background export is required" });
+};
 const ADMINCORE_SYNC_RESOURCES = [
   "businesses",
   "outlets",
@@ -837,6 +854,9 @@ class SyncService {
 
   async exportResource({ resource, tenantId, businessId, query = {} }) {
     const normalizedResource = normalizeResource(resource);
+    const paginated = ["products", "orders", "bills", "inventory"].includes(normalizedResource);
+    const pagination = getPagination(query);
+    if (paginated) query = { ...query, limit: pagination.limit, offset: pagination.offset };
     const limit = getSyncLimit(query.limit);
     let data;
 
@@ -857,32 +877,15 @@ class SyncService {
       });
     } else if (normalizedResource === "customers") {
       const [bills, orders] = await Promise.all([
-        billingService.listInvoices({
-          tenantId,
-          limit,
-          page: query.page,
-          offset: query.offset,
-        }),
-        ordersService.listOrders({
-          tenantId,
-          query: {
-            limit,
-            page: query.page,
-            offset: query.offset,
-          },
-        }),
+        collectExportRows((page) => billingService.listInvoices({ tenantId, ...page })),
+        collectExportRows((page) => ordersService.listOrders({ tenantId, query: page })),
       ]);
       data = serializeCustomerRows({ bills, orders, tenantId, businessId });
     } else if (normalizedResource === "payments") {
-      const bills = await billingService.listInvoices({
-        tenantId,
-        limit,
-        page: query.page,
-        offset: query.offset,
-      });
+      const bills = await collectExportRows((page) => billingService.listInvoices({ tenantId, ...page }));
       data = serializePaymentRows({
         bills,
-        intents: paymentsService.listIntents({ status: query.status }),
+        intents: await paymentsService.listIntents({ status: query.status, tenantId, businessId }),
         tenantId,
         businessId,
       });
@@ -1038,15 +1041,23 @@ class SyncService {
       message: `Exported ${items.length} ${normalizedResource} records for AdminCore`,
     });
 
-    return {
-      ...createSyncEnvelope({
+    const envelope = createSyncEnvelope({
         resource: normalizedResource,
         data: items,
         tenantId,
         businessId,
         outletId: query.outlet_id || query.outletId || null,
         lastSyncedAt: syncedAt,
-      }),
+      });
+    if (paginated) {
+      envelope.meta.pagination = {
+        limit: pagination.limit, offset: pagination.offset,
+        has_more: items.length === pagination.limit,
+        next_offset: pagination.offset + items.length,
+      };
+    }
+    return {
+      ...envelope,
       sync_log_id: log.id,
     };
   }

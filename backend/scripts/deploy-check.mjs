@@ -13,6 +13,8 @@ const commands = [
   "node --check src/core/sync/sync.routes.js",
   "npm run prisma:validate",
   "node scripts/admincore-reliability-tests.mjs",
+  "node scripts/payment-isolation-tests.mjs",
+  "node scripts/change-notification-tests.mjs",
   "npm run test:smoke",
 ];
 

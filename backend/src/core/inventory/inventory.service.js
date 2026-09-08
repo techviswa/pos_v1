@@ -36,21 +36,7 @@ class InventoryService {
       include: getInventoryInclude(),
     });
 
-    const serializedItem = serializeInventoryItem(item);
-    await admincoreChangeSyncService.notifyChange({
-      resource: "inventory",
-      action: "created",
-      recordId: serializedItem.id,
-      tenantId,
-      businessId: business.id,
-      metadata: {
-        name: serializedItem.name,
-        stock: serializedItem.stock,
-        unit: serializedItem.unit,
-      },
-    });
-
-    return serializedItem;
+    return serializeInventoryItem(item);
   }
 
   async createItem({ tenantId, payload }) {
@@ -66,7 +52,7 @@ class InventoryService {
     const serializedItem = serializeInventoryItem(item);
     await admincoreChangeSyncService.notifyChange({
       resource: "inventory",
-      action: "updated",
+      action: "created",
       recordId: serializedItem.id,
       tenantId,
       businessId: business.id,
@@ -106,6 +92,11 @@ class InventoryService {
       where: { id: itemId },
       data: nextData,
       include: getInventoryInclude(),
+    });
+
+    await admincoreChangeSyncService.notifyChange({
+      resource: "inventory", action: "updated", recordId: itemId,
+      tenantId, businessId: business.id,
     });
 
     return serializeInventoryItem(item);

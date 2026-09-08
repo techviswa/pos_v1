@@ -93,7 +93,7 @@ class ProvisioningTests(unittest.IsolatedAsyncioTestCase):
         self.db.businesses.update_one.assert_not_awaited()
 
     async def test_owner_targets_second_business(self):
-        self.request.return_value = {"data": {"id": "user", "business_id": "second"}}
+        self.request.return_value = {"data": {"id": "user", "business_id": "second", "tenant_id": "admincore-second"}}
         await self.scope["push_admin_user_to_pos"]({"id": "owner", "email": "owner@example.test",
             "role": "Owner", "business_ids": ["first", "second"]}, "test-password", target_business_id="second")
         self.scope["pos_headers_for_admin_business"].assert_awaited_once_with("second")

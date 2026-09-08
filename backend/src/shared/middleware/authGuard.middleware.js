@@ -73,11 +73,8 @@ const createAdminCoreBridgeUser = () => ({
 const resolveRequestContext = async (req, user) => {
   const requestedScope = bridgeScopeFromHeaders(req);
   const isBridgeRequest = isAdminCoreBridgeRequest(req);
-  if (!requestedScope && isBridgeRequest) {
-    return {
-      tenantId: req.context?.tenantId || env.defaultTenantId,
-      businessId: req.context?.businessId || env.defaultBusinessId,
-    };
+  if (isBridgeRequest && (!requestedScope?.businessId || !requestedScope?.tenantId)) {
+    throw createHttpError({ statusCode: 400, code: "POS_TENANT_SCOPE_MISSING", message: "AdminCore bridge requests require an explicit business and tenant scope" });
   }
 
   if (!requestedScope || !isBridgeRequest) {
