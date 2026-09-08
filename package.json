@@ -9,7 +9,7 @@
   },
   "scripts": {
     "start": "npm --prefix backend start",
-    "build": "npm --prefix backend run prisma:generate",
+    "build": "npm --prefix backend ci && npm --prefix backend run prisma:generate",
     "dev": "npm run start:all",
     "start:backend": "set PORT=4001&& npm --prefix backend start",
     "start:frontend": "set PORT=3002&& set GENERATE_SOURCEMAP=false&& npm --prefix frontend start",

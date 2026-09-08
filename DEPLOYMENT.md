@@ -38,7 +38,7 @@ When AdminCore is live, set `ADMINCORE_ENABLED=true`, point `ADMINCORE_API_BASE_
 Backend health URL:
 
 ```txt
-https://YOUR-RENDER-BACKEND.onrender.com/health/ready
+https://YOUR-RENDER-BACKEND.onrender.com/health
 ```
 
 ## 2. Frontend on Vercel
