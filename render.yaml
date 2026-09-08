@@ -5,7 +5,7 @@ services:
     rootDir: backend
     plan: starter
     buildCommand: npm ci && npm run prisma:generate
-    preDeployCommand: npm run prisma:deploy && npm run seed:production
+    preDeployCommand: npm run prisma:deploy && npm run prisma:seed
     startCommand: npm start
     healthCheckPath: /health
     envVars:

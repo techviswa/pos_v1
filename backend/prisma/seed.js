@@ -1,4 +1,5 @@
 import { PrismaClient } from "@prisma/client";
+import { ensureAccessControlSeed } from "../src/database/prisma/helpers.js";
 
 const prisma = new PrismaClient();
 
@@ -25,7 +26,9 @@ const roleDefaults = {
 
 async function main() {
   if (process.env.NODE_ENV === "production") {
-    throw new Error("Demo seeding is disabled in production. Provision businesses and users through the authenticated API.");
+    await ensureAccessControlSeed();
+    console.log("Required access-control defaults are ready; demo seeding is disabled in production.");
+    return;
   }
   const business = await prisma.business.upsert({
     where: { tenantId: "demo-tenant" },
