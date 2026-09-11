@@ -120,7 +120,12 @@ const getEffectivePermissions = (user) => {
   const storedPermissions = Array.isArray(user?.permissions) ? user.permissions : [];
   const roleDefaults = ROLE_DEFAULT_PERMISSIONS[roleName] || [];
 
-  return [...new Set([...storedPermissions, ...roleDefaults])];
+  // Owner is the business administrator. For staff, persisted permissions are
+  // authoritative: merging defaults here silently restores revoked access.
+  if (normalizeAccessValue(roleName) === "owner") {
+    return [...new Set([...storedPermissions, ...(ROLE_DEFAULT_PERMISSIONS.Owner || [])])];
+  }
+  return Array.isArray(user?.permissions) ? [...new Set(storedPermissions)] : roleDefaults;
 };
 
 export const requireAuth = async (req, res, next) => {

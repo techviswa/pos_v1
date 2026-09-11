@@ -37,6 +37,9 @@ class ProvisioningTests(unittest.IsolatedAsyncioTestCase):
         exec(compile(functions, "server-functions", "exec"), self.scope)
 
     async def test_default_outlet_failure_reaches_provisioning_worker(self):
+        async def persist_default(_collection, document):
+            return document, True
+        self.scope["create_default_outlet_once"] = persist_default
         outlet_function = next(node for node in tree.body if isinstance(node, ast.AsyncFunctionDef)
                                and node.name == "ensure_default_outlet_for_business")
         self.scope.update({"logger": logging.getLogger("test"), "ObjectId": lambda: "new-outlet",

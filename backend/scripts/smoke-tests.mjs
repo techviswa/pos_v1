@@ -250,6 +250,10 @@ const run = async () => {
         await request({ baseUrl, path: `/api/admincore/${resource}`, method: "POST",
           headers: bridgeHeaders, body: {
             business_id: "unrelated-business", tenant_id: bridgeHeaders["x-tenant-id"], name: "Must not be created",
+          }, expected: [400] });
+        await request({ baseUrl, path: `/api/admincore/${resource}`, method: "POST",
+          headers: { ...bridgeHeaders, "x-business-id": "unrelated-business" }, body: {
+            business_id: "unrelated-business", tenant_id: bridgeHeaders["x-tenant-id"], name: "Must not be created",
           }, expected: [403] });
       }
 

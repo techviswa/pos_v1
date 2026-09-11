@@ -9,12 +9,26 @@ import unittest
 from unittest.mock import AsyncMock
 
 worker_path = pathlib.Path(sys.argv.pop(1)) / "pos_sync_worker.py"
+sys.path.insert(0, str(worker_path.parent))
 spec = importlib.util.spec_from_file_location("pos_sync_worker", worker_path)
 module = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(module)
 
 
 class SyncWorkerTests(unittest.IsolatedAsyncioTestCase):
+    async def test_failed_snapshot_is_not_fresh_data(self):
+        self.collection.find_one.return_value = {"status": "failed", "updated_at": module.timestamp()}
+        self.collection.find_one_and_update.return_value = {"status": "pending"}
+        result = await self.worker.enqueue_snapshot("orders", "business-1", fresh_for_seconds=60)
+        self.assertEqual(result["status"], "pending")
+        self.collection.find_one_and_update.assert_awaited_once()
+
+    async def test_successful_recent_snapshot_is_reused(self):
+        recent = {"status": "synced", "finished_at": module.timestamp()}
+        self.collection.find_one.return_value = recent
+        self.assertEqual(await self.worker.enqueue_snapshot("orders", "business-1", fresh_for_seconds=60), recent)
+        self.collection.find_one_and_update.assert_not_awaited()
+
     def setUp(self):
         self.collection = AsyncMock()
         self.processor = AsyncMock(return_value={"status": "success", "error_count": 0})

@@ -96,6 +96,7 @@ class AuthController {
       email: req.body?.email,
       role: req.body?.role,
       invitedBy: req.user?.id,
+      actorRole: req.user?.role,
     });
 
     if (!data) {

@@ -5,6 +5,7 @@ import {
   ensureAccessControlSeed,
   ensureBusiness,
   ensureRole,
+  ensurePermissions,
   serializeUser,
   syncUserOutlets,
 } from "../../database/prisma/helpers.js";
@@ -13,6 +14,9 @@ import { createAuthToken, consumeAuthToken, getAuthToken } from "./auth-tokens.j
 import { createSessionId, SESSION_TTL_MS } from "./auth-session.js";
 import { hashPassword, isPasswordHash, verifyPassword } from "./passwords.js";
 import { sessions as sessionRecords } from "./session-store.js";
+import { ROLE_DEFAULT_PERMISSIONS } from "../../shared/constants/access.constants.js";
+import { createHttpError } from "../../shared/utils/http-error.js";
+import { authMailer } from "./auth-mail.js";
 
 let bootstrapUserPromise = null;
 const PASSWORD_RESET_TTL_MS = 1000 * 60 * 30;
@@ -334,18 +338,19 @@ class AuthService {
   }
 
   async requestPasswordReset({ email }) {
+    if (env.nodeEnv === "production") authMailer.requireConfigured();
     const normalizedEmail = String(email || "").trim().toLowerCase();
     if (!isDatabaseAvailable()) {
-      return { accepted: true, reset_token: null };
+      return { accepted: true };
     }
 
     if (!EMAIL_PATTERN.test(normalizedEmail)) {
-      return { accepted: true, reset_token: null };
+      return { accepted: true };
     }
 
     const user = await this.findUserByEmail(normalizedEmail);
     if (!user) {
-      return { accepted: true, reset_token: null };
+      return { accepted: true };
     }
 
     const token = await createAuthToken({
@@ -362,10 +367,11 @@ class AuthService {
       accepted: true,
       expires_in_minutes: PASSWORD_RESET_TTL_MS / 60000,
     };
+    if (authMailer.configured()) await authMailer.send({ email: user.email, token, type: "password_reset" });
     if (env.nodeEnv !== "production") {
       response.reset_token = token;
     }
-    return response;
+    return env.nodeEnv === "production" ? { accepted: true } : response;
   }
 
   async resetPassword({ token, password }) {
@@ -391,12 +397,17 @@ class AuthService {
     return { reset: true };
   }
 
-  async createInvite({ businessId, email, role = "Cashier", invitedBy }) {
+  async createInvite({ businessId, email, role = "Cashier", invitedBy, actorRole }) {
+    if (!Object.hasOwn(ROLE_DEFAULT_PERMISSIONS, role) || (role === "Owner" && actorRole !== "Owner")) {
+      throw createHttpError({ statusCode: 403, message: "You cannot invite this role" });
+    }
     const normalizedEmail = String(email || "").trim().toLowerCase();
     if (!EMAIL_PATTERN.test(normalizedEmail)) {
       return null;
     }
 
+    const existing = await prisma.user.findUnique({ where: { businessId_email: { businessId, email: normalizedEmail } } });
+    if (existing) throw createHttpError({ statusCode: 409, message: "This user already belongs to the business" });
     const token = await createAuthToken({
       type: "invite",
       userId: null,
@@ -409,6 +420,7 @@ class AuthService {
       },
     });
 
+    if (authMailer.configured()) await authMailer.send({ email: normalizedEmail, token, type: "invite" });
     return {
       invite_token: token,
       email: normalizedEmail,
@@ -439,23 +451,14 @@ class AuthService {
       return null;
     }
 
-    const businessId = record.metadata.business_id || env.defaultBusinessId;
+    const businessId = record.metadata.business_id;
+    if (!businessId) return null;
     const role = await ensureRole(record.metadata.role || "Cashier");
-    const user = await prisma.user.upsert({
-      where: {
-        businessId_email: {
-          businessId,
-          email: record.metadata.email,
-        },
-      },
-      update: {
-        name: name || record.metadata.email,
-        roleId: role.id,
-        passwordHash: hashPassword(password),
-        profileRequired: false,
-        active: true,
-      },
-      create: {
+    const permissions = await ensurePermissions(ROLE_DEFAULT_PERMISSIONS[role.name] || []);
+    let user;
+    try {
+      user = await prisma.user.create({
+      data: {
         businessId,
         roleId: role.id,
         name: name || record.metadata.email,
@@ -463,9 +466,14 @@ class AuthService {
         passwordHash: hashPassword(password),
         profileRequired: false,
         active: true,
+        permissions: { create: permissions.map((permission) => ({ permissionId: permission.id })) },
       },
       include: getUserInclude(),
     });
+    } catch (error) {
+      if (error.code === "P2002") return null;
+      throw error;
+    }
 
     return serializeUser(user);
   }

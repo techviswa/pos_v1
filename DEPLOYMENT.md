@@ -11,6 +11,10 @@ Production deployment requires resolving the configuration blockers below:
 
 ## 1. Backend on Render
 
+### Account email
+
+Configure `SMTP_HOST`, `SMTP_PORT` (587 with STARTTLS or 465 with TLS), `SMTP_FROM`, `SMTP_USER`, `SMTP_PASSWORD`, and `AUTH_PUBLIC_URL` (the HTTPS POS frontend origin). Reset emails link to `/reset-password?token=...`; invitations link to `/invite/...`. These values belong only in backend secret configuration. Production password-reset requests return 503 when email configuration is absent, rather than silently creating undeliverable tokens. Staff invitation responses retain a copyable link, and also send email when configured. SMTP acceptance is not proof of inbox delivery; verify the sender domain and delivery with your mail service before release.
+
 ### PostgreSQL backup
 
 Run `node backend/scripts/backup-database.mjs` from the repository root with the intended database configured in the backend environment. It creates a uniquely named custom-format `pg_dump` archive in ignored `backend/data/backups/` and checks its table-of-contents using `pg_restore --list`. PostgreSQL client tools must be installed. Database credentials are passed through the child environment, not command arguments.

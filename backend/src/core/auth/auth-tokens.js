@@ -1,10 +1,18 @@
-import { randomBytes } from "crypto";
+import { createHash, randomBytes } from "crypto";
 
 import { isDatabaseAvailable } from "../../config/db.js";
 import env from "../../config/env.js";
 import prisma from "../../database/prisma/client.js";
 
 const tokenStore = new Map();
+const tokenDigest = (token) => `sha256:${createHash("sha256").update(token).digest("hex")}`;
+const findDbToken = async (token) => {
+  const hashed = await prisma.authToken.findUnique({ where: { token: tokenDigest(token) } });
+  if (hashed) return hashed;
+  // Existing links remain valid until expiry, but stored digests are never bearer tokens.
+  if (!/^[a-f0-9]{64}$/.test(token)) return null;
+  return prisma.authToken.findUnique({ where: { token } });
+};
 
 const canUseMemoryFallback = () => !isDatabaseAvailable() && env.nodeEnv !== "production";
 
@@ -37,7 +45,7 @@ export const createAuthToken = async ({ type, userId, ttlMs, metadata = {} }) =>
 
   await prisma.authToken.create({
     data: {
-      token,
+      token: tokenDigest(token),
       type,
       userId: userId || null,
       metadata,
@@ -52,7 +60,7 @@ export const consumeAuthToken = async ({ token, type }) => {
   const tokenValue = String(token || "");
 
   if (!canUseMemoryFallback()) {
-    const record = await prisma.authToken.findUnique({ where: { token: tokenValue } });
+    const record = await findDbToken(tokenValue);
     if (!record || record.type !== type || record.usedAt || record.expiresAt.getTime() < Date.now()) {
       return null;
     }
@@ -78,7 +86,7 @@ export const getAuthToken = async ({ token, type }) => {
   const tokenValue = String(token || "");
 
   if (!canUseMemoryFallback()) {
-    const record = await prisma.authToken.findUnique({ where: { token: tokenValue } });
+    const record = await findDbToken(tokenValue);
     if (!record || record.type !== type || record.usedAt || record.expiresAt.getTime() < Date.now()) {
       return null;
     }

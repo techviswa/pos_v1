@@ -10,6 +10,7 @@ import { productsService } from "../products/products.service.js";
 import { outletsService } from "../outlets/outlets.service.js";
 import { createHttpError } from "../../shared/utils/http-error.js";
 import prisma from "../../database/prisma/client.js";
+import { resolveBridgeContext } from "./bridge-context.js";
 
 const verifyBridgeBusiness = async (businessId, tenantId) => {
   const business = await prisma.business.findFirst({ where: { id: businessId, tenantId }, select: { id: true } });
@@ -53,8 +54,7 @@ export const postSaasTenant = async (req, res) => {
 };
 
 export const postBridgeStaff = async (req, res) => {
-  const businessId = req.body?.business_id || req.body?.businessId;
-  const tenantId = req.body?.tenant_id || req.body?.tenantId;
+  const { businessId, tenantId } = resolveBridgeContext(req);
   if (!businessId || !tenantId) {
     throw createHttpError({
       statusCode: 400,
@@ -73,8 +73,7 @@ export const postBridgeStaff = async (req, res) => {
 };
 
 const getBridgeProductContext = async (req) => {
-  const businessId = req.body?.business_id || req.body?.businessId || req.get("x-business-id");
-  const tenantId = req.body?.tenant_id || req.body?.tenantId || req.get("x-tenant-id");
+  const { businessId, tenantId } = resolveBridgeContext(req);
   if (!businessId || !tenantId) {
     throw createHttpError({
       statusCode: 400,
@@ -88,8 +87,7 @@ const getBridgeProductContext = async (req) => {
 };
 
 const getBridgeTenantContext = async (req, resourceLabel) => {
-  const businessId = req.body?.business_id || req.body?.businessId || req.get("x-business-id");
-  const tenantId = req.body?.tenant_id || req.body?.tenantId || req.get("x-tenant-id");
+  const { businessId, tenantId } = resolveBridgeContext(req);
   if (!businessId || !tenantId) {
     throw createHttpError({
       statusCode: 400,

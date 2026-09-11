@@ -12,6 +12,48 @@ Follow POS `AGENTS.md`. No AdminCore AGENTS.md was found. User permission includ
 
 ## Exact interruption
 
+### Deployment request: 2026-09-12
+
+- User explicitly requested pushing both projects to Render. Both Git remotes fetched successfully and local HEAD matched origin/master before committing: POS `techviswa/pos_v1` at 52d9ae2; AdminCore `techviswa/tsk-admin-v1` at e2f0069.
+- POS deploy:check passed exit 0 on the current source. AdminCore worker plus authenticated ASGI suite passed 11 tests. No frontend source changes in this batch.
+- Preparing commits containing only source, tests, package manifests/lockfile and documentation. No env files, local backups, logs, dependencies or build output included. Push and Render status must be verified after committing; do not infer a successful deployment from a Git push alone.
+
+### Latest default-outlet continuation
+
+- AdminCore `backend/default_outlet.py` now creates automatic outlets via insert-only upsert on stable Mongo `_id=default-outlet:{business_id}`; concurrent loser reuses the persisted winner and cannot overwrite its ID/settings. `server.py` default-outlet branch uses the helper and audits creation only for the inserter. Existing outlet lookup/identity remains intact. Existing historical duplicates are not merged/deleted.
+- Four helper unit tests pass: stable key/insert-only behavior, concurrent duplicate-key winner reuse, unrelated uniqueness failure, wrong-business rejection. These use mocks, not a live Mongo race test.
+- Reviewed and ran current AdminCore `test_production_authenticated_sync.py`: six ASGI tests pass (mock DB/POS) for own/wrong scope, tenant data access/queue restrictions, unauthenticated rejection, async user/profile provisioning, and checkpoint resume. No real production server contacted.
+- Older extracted-function provisioning suite updated to inject the new persistence helper; nine tests pass. Next: live isolated Mongo concurrency testing if local Mongo is available, review provisioning queue history/leases, then billing/KOT/QR workflow acceptance per PRODUCTION_RELEASE_TRACKER.md. No running commands, push or deployment at checkpoint.
+
+### Latest continuation: 2026-09-12
+
+- Read `docs/PRODUCTION_RELEASE_TRACKER.md` first alongside this checkpoint. It now preserves the entire 13-part scope, per-area evidence/gaps, user-deferred items, external checks, and continuation protocol. No area has been signed off. User expects continuation of the full scope, not isolated fixes treated as completion.
+- Current AdminCore has newer `pos_retry.py`, snapshot/event worker and additional tests added outside the earlier checkpoint. Preserve these changes; review actual code before edits.
+- Reproduced snapshot freshness bug with a failing test: recently failed snapshot returned failed rather than being requeued. Changed AdminCore `backend/pos_sync_worker.py` so freshness reuse requires status synced and a recent finished_at. Nine worker tests now pass, including failure requeue and successful fresh reuse (mock Mongo; not live atomicity verification).
+- Updated POS `backend/scripts/admincore-worker-tests.py` to load sibling AdminCore imports from the supplied backend path. No live deployment, commit or push in this continuation.
+- Reviewed the current AdminCore `test_pos_sync_worker.py` (mock collection/processor only) and ran it: five tests passed covering recent snapshot reuse, concurrent active-job reuse, retry headers, rate-limit cooldown and retry exhaustion.
+- Next: inspect AdminCore `test_pos_sync_worker.py` and `test_production_authenticated_sync.py` before running, assess side effects, then audit default-outlet creation/provisioning concurrency and cross-project identity/deletion propagation. Refresh tracker as evidence accumulates. Earlier SMTP config, dependency advisory and device/live limitations remain. No running command at this checkpoint.
+
+### Latest email/invite continuation
+
+- Added nodemailer and `auth-mail.js`: SMTP with required TLS, fixed configured HTTPS frontend links, timeouts, sender acceptance checks; reset/invite flow sends when configured. Production reset rejects missing email configuration. SMTP settings are documented in DEPLOYMENT.md; no credentials supplied and no real email sent. Invites preserve copy-link behavior when mail is absent. Mail is synchronous; durable encrypted delivery/retry remains a gap.
+- Fixed invitation account takeover: existing users can no longer be password/role-overwritten through acceptance; Manager cannot create Owner invitations; unknown roles rejected; newly invited users receive persisted default role permissions. `invite-security-tests.mjs` passes actual DB takeover/escalation/grants checks. Expected P2002 is logged by Prisma for the duplicate-account test.
+- `auth-mail-tests.mjs` passes links, invalid HTTPS/config, and rejected-recipient tests with mocked transport. Both tests added to deploy:check. Production reset response now uses the same accepted payload for found/unknown emails; timing/SMTP error enumeration and request rate limits still need review.
+- Installed dependency updates: nodemailer 10.0.3, morgan 1.12.0, body-parser 1.20.8; Express qs overridden to ^6.16.0. Latest npm install reports 3 high findings through Prisma -> @prisma/config -> deepmerge-ts 7.1.5 (same advisory propagated). No forced Prisma downgrade performed. Advisory https://github.com/advisories/GHSA-ggr8-5vv4-36mx describes recursive object graph exhaustion; plain JSON alone does not cause it.
+- Full deploy:check passed after final qs override, exit 0 (session 7065). Smoke, new auth/invite/email tests and existing sync/payment tests passed. git diff --check passed with Windows line-ending warnings. No command remains running from this continuation. Earlier live-check skip remains, no push/deployment performed.
+
+### Latest continuation: 2026-09-11
+
+- Follow-on: staff authorization now treats persisted permissions as authoritative instead of restoring role defaults after revocation. Owner retains administrative default permissions. `permission-revocation-tests.mjs` verifies 403 for revoked/partial staff grants, successful explicit grants/owner access, and 401 for anonymous users.
+- Added permission, bridge-context, token-security and startup-recovery tests to deploy:check. Initial smoke failed because conflicting request IDs now return 400 instead of 403; expanded it into separate conflict (400) and consistent-but-invalid tenant mapping (403) cases for staff/products/outlets.
+- Updated deploy suite printed all tests passed including smoke and final `Deploy check passed`. PowerShell returned exit 1 from stderr redirection of Prisma's deprecation warning; `backend/logs/deploy-check-latest.log` shows NativeCommandError for that warning, with no failed test in the final run. Use cmd-owned redirection for subsequent runs. Production DB flow tests also passed. No deployment or frontend changes in this follow-on.
+
+- User reaffirmed responsibility for missing production features, especially cross-project sync and preventing data leaks. Prior instruction to skip live verification still applies.
+- IMPORTANT: working tree was clean at resumption, HEAD `52d9ae2` (Make POS production seed safe). Files contain additional tenant-scope fixes beyond the older checkpoint. Do not assume all historical changes below remain uncommitted or unchanged; inspect current state.
+- Added `bridge-context.js` and integrated it in AdminCore-facing staff/product/outlet controllers. Conflicting snake/camel aliases or identity headers and invalid types now fail before a write; existing business/tenant DB-pair validation remains. `bridge-context-tests.mjs` passed.
+- Reset/invite tokens now store SHA-256 digests instead of usable tokens for new records. Existing raw 64-hex links remain compatible until expiry; stored digests cannot be replayed as bearer tokens. `auth-token-security-tests.mjs` passed digest storage, wrong-type rejection, concurrent single redemption and legacy-link compatibility.
+- POS production DB flow suite passed after these changes. No frontend changes or deployment in this continuation. Full security audit, feature completion, legacy credential cleanup and production readiness remain unfinished.
+
 ### Latest reliability continuation
 
 - User answered "skip this" to production URLs/hosting project question. Skip live deployment verification; continue local implementation. Do not represent this as live validation or ask the same question again.
