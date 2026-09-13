@@ -15,6 +15,7 @@ import {
   createInvoiceNumber,
   createReceiptPrintPayload,
   normalizePayments,
+  normalizeSubmittedPayments,
   nowIso,
   summarizePayments,
   toNumber,
@@ -156,7 +157,7 @@ class BillingService {
           outletCode: payload.outlet_code || payload.outletCode || "MO1",
           sequence: invoiceSequence,
         });
-      const payments = normalizePayments(payload.payments, {
+      const payments = normalizeSubmittedPayments(payload.payments, {
         fallbackMethod: payload.payment_type || payload.paymentType || "Cash",
         total,
       });
@@ -229,67 +230,38 @@ class BillingService {
     return serializedBill;
   }
 
-  async updateInvoice({ tenantId, invoiceId, payload }) {
+  async updateInvoice({ tenantId, invoiceId, payload, initializeFeedback = false }) {
+    const editableFields = new Set([
+      "customer_name", "customerName", "customer_phone", "notes",
+      "kitchen_status", "kitchenStatus", "updated_at",
+    ]);
+    if (initializeFeedback) {
+      editableFields.add("feedback_token");
+      editableFields.add("feedback_link");
+    }
+    if (!payload || Object.keys(payload).some((key) => !editableFields.has(key))) {
+      throw createHttpError({ statusCode: 409, message: "Issued invoice financial and ownership fields are immutable. Use payment, refund, or void actions." });
+    }
     const business = await ensureBusiness({ tenantId });
-    const currentBill = await prisma.bill.findFirstOrThrow({
-      where: {
-        id: invoiceId,
-        businessId: business.id,
-      },
-      include: getBillInclude(),
-    });
-
-    const totals = calculateInvoiceTotals(
-      {
-        ...normalizeBillingMetadata(currentBill.metadata || {}),
-        subtotal: currentBill.subtotal,
-        tax: currentBill.tax,
-        total: currentBill.total,
-        ...payload,
-      },
-      payload.items !== undefined ? payload.items : currentBill.items,
-    );
-
-    await prisma.bill.update({
-      where: { id: invoiceId },
-      data: {
-        orderId: payload.order_id ?? payload.orderId ?? currentBill.orderId,
-        customerName: payload.customerName ?? payload.customer_name ?? currentBill.customerName,
-        currency: payload.currency ?? currentBill.currency,
-        subtotal: totals.subtotal,
-        tax: totals.tax,
-        total: totals.total,
-        status: payload.status ?? currentBill.status,
-        kitchenStatus: payload.kitchen_status ?? payload.kitchenStatus ?? currentBill.kitchenStatus,
-        metadata: extractBillingMetadataFromRequest(
-          {
-            ...payload,
-            discount_amount: totals.discount_amount,
-            gst_breakup: buildGstBreakup({ subtotal: totals.taxable_subtotal, tax: totals.tax, gstRate: totals.gst_rate }),
-          },
-          { base: currentBill.metadata || {} },
-        ),
-      },
-    });
-
-    if (payload.items !== undefined) {
-      await prisma.billItem.deleteMany({
-        where: { billId: invoiceId },
+    const bill = await prisma.$transaction(async (tx) => {
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`bill:${invoiceId}`}))`;
+      const currentBill = await tx.bill.findFirstOrThrow({
+        where: { id: invoiceId, businessId: business.id },
+        include: getBillInclude(),
       });
 
-      if ((payload.items || []).length) {
-        await prisma.billItem.createMany({
-          data: toPrismaBillItems(payload.items).map((item) => ({
-            ...item,
-            billId: invoiceId,
-          })),
-        });
-      }
-    }
-
-    const bill = await prisma.bill.findUniqueOrThrow({
-      where: { id: invoiceId },
-      include: getBillInclude(),
+      return tx.bill.update({
+        where: { id: invoiceId },
+        data: {
+          customerName: payload.customerName ?? payload.customer_name ?? currentBill.customerName,
+          kitchenStatus: payload.kitchen_status ?? payload.kitchenStatus ?? currentBill.kitchenStatus,
+          metadata: extractBillingMetadataFromRequest(
+            { ...payload, updated_at: new Date().toISOString() },
+            { base: currentBill.metadata || {} },
+          ),
+        },
+        include: getBillInclude(),
+      });
     });
 
     const serializedBill = serializeBill(bill);
@@ -388,33 +360,11 @@ class BillingService {
   }
 
   async requestVoid({ tenantId, invoiceId, reason, user }) {
-    return this.updateInvoice({
-      tenantId,
-      invoiceId,
-      payload: {
-        void_status: "pending_approval",
-        void_reason: reason || "",
-        void_requested_by: user?.id || null,
-        void_requested_by_name: user?.name || null,
-        void_requested_at: nowIso(),
-        updated_at: nowIso(),
-      },
-    });
+    return mutateBillPayment({ tenantId, invoiceId, payload: { reason }, user, action: "void_request" });
   }
 
   async approveVoid({ tenantId, invoiceId, approved = true, user }) {
-    return this.updateInvoice({
-      tenantId,
-      invoiceId,
-      payload: {
-        status: approved ? "void" : "issued",
-        void_status: approved ? "approved" : "rejected",
-        void_approved_by: user?.id || null,
-        void_approved_by_name: user?.name || null,
-        void_approved_at: nowIso(),
-        updated_at: nowIso(),
-      },
-    });
+    return mutateBillPayment({ tenantId, invoiceId, payload: { approved }, user, action: "void_approve" });
   }
 
   async getGstInvoice({ tenantId, invoiceId, settings = {} }) {
@@ -497,26 +447,7 @@ class BillingService {
       include: getBillInclude(),
     });
 
-    await prisma.bill.delete({
-      where: { id: invoiceId },
-    });
-
-    const serializedBill = serializeBill(bill);
-    await admincoreChangeSyncService.notifyChange({
-      resource: "bills",
-      action: "deleted",
-      recordId: serializedBill.id,
-      tenantId,
-      businessId: business.id,
-      outletId: serializedBill.outlet_id,
-      metadata: {
-        total: serializedBill.total,
-        status: serializedBill.status,
-        invoice_number: serializedBill.invoice_number,
-      },
-    });
-
-    return serializedBill;
+    throw createHttpError({ statusCode: 409, message: "Issued invoices must be retained for audit. Use the void approval workflow." });
   }
 
   async getBillingSummary({ tenantId }) {

@@ -1,3 +1,5 @@
+import { createHttpError } from "../../shared/utils/http-error.js";
+
 const INR_CURRENCY = "INR";
 const DEFAULT_GST_RATE = 18;
 
@@ -44,6 +46,26 @@ export const normalizePayments = (payments = [], { fallbackMethod = "Cash", tota
   }
 
   return normalized;
+};
+
+export const normalizeSubmittedPayments = (payments, options) => {
+  if (payments !== undefined && !Array.isArray(payments)) {
+    throw createHttpError({ statusCode: 400, message: "Payments must be a list" });
+  }
+  if ((payments || []).some((row) => !row || typeof row !== "object" || !Number.isFinite(Number(row.amount)) || Number(row.amount) <= 0)) {
+    throw createHttpError({ statusCode: 400, message: "Payment amounts must be positive numbers" });
+  }
+  const result = normalizePayments(payments, options).map((row) => {
+    if (typeof row.method !== "string" || !row.method.trim()) {
+      throw createHttpError({ statusCode: 400, message: "Payment method is required" });
+    }
+    const method = row.method.trim();
+    return { ...row, method, status: method.toLowerCase() === "cash" ? "confirmed" : "pending_confirmation" };
+  });
+  if (roundMoney(result.reduce((sum, row) => sum + row.amount, 0)) > roundMoney(options.total)) {
+    throw createHttpError({ statusCode: 400, message: "Payments cannot exceed the invoice total" });
+  }
+  return result;
 };
 
 export const summarizePayments = (payments = [], total = 0) => {

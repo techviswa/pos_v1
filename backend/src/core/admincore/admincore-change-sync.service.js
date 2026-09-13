@@ -1,5 +1,6 @@
 import env from "../../config/env.js";
 import { jobQueue } from "../../services/jobs/job-queue.js";
+import { DurableJobQueue } from "../../services/jobs/durable-job-queue.js";
 import { recordAdminCoreSyncLog } from "../sync/admincore-sync-log.repository.js";
 import { recordAdmincoreSyncStatus } from "./admincore.service.js";
 
@@ -64,7 +65,7 @@ class AdmincoreChangeSyncService {
     return Boolean(env.admincore.enabled && env.admincore.apiBaseUrl);
   }
 
-  async notifyChange(payload = {}) {
+  async notifyChange(payload = {}, { tx } = {}) {
     try {
       const resource = normalizeResource(payload.resource);
       const event = {
@@ -101,15 +102,17 @@ class AdmincoreChangeSyncService {
           ? `Queued ${resource} ${event.action} notification for AdminCore`
           : "AdminCore notification skipped because ADMINCORE_ENABLED/API base URL is not configured",
         metadata: event,
-      });
+      }, tx);
 
       if (!this.isConfigured()) {
         return { queued: false, reason: "not_configured", event };
       }
 
-      const job = await jobQueue.enqueue(JOB_TYPE, event, { maxAttempts: 5 });
+      const queue = tx ? new DurableJobQueue(tx) : jobQueue;
+      const job = await queue.enqueue(JOB_TYPE, event, { maxAttempts: 5 });
       return { queued: true, job_id: job.id, event };
     } catch (error) {
+      if (tx) throw error;
       return {
         queued: false,
         reason: "local_log_failed",

@@ -80,7 +80,7 @@ export const appendKotAudit = (kot = {}, event) => ({
 
 export const summarizeKotTiming = (kot = {}) => {
   const startedAt = kot.accepted_at || kot.created_at;
-  const endedAt = kot.served_at || kot.ready_at || nowIso();
+  const endedAt = kot.ready_at || kot.served_at || kot.rejected_at || nowIso();
   const elapsedMinutes =
     startedAt && endedAt
       ? Math.max(0, Math.round((new Date(endedAt).getTime() - new Date(startedAt).getTime()) / 60000))
@@ -91,7 +91,7 @@ export const summarizeKotTiming = (kot = {}) => {
     estimated_prep_minutes: estimatedPrepMinutes,
     elapsed_prep_minutes: elapsedMinutes,
     sla_status:
-      kot.ready_at && estimatedPrepMinutes > 0 && elapsedMinutes > estimatedPrepMinutes
+      estimatedPrepMinutes > 0 && elapsedMinutes > estimatedPrepMinutes
         ? "breached"
         : "within_sla",
   };

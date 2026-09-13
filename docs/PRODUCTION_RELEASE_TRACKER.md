@@ -30,6 +30,12 @@ This is the authoritative scope tracker for both POS and AdminCore. Read it toge
 
 ## Current next work
 
+Kitchen development: Chef acceptance and per-item progression, station filtering, SLA alerts, reason-based rejection and history UI; Waiter KOT pickup/completion queue. Backend validates transitions and role boundaries, preserves mixed ready/served aggregation, and rejects direct KOT creation for unapproved QR orders. Isolated PostgreSQL + HTTP workflow tests and final frontend/backend builds passed. Browser/device tests, durable KOT-to-AdminCore notifications, cashier settlement and remaining checklist items are still open. Current changes are local.
+
+Latest audit: issued-invoice updates now use a shared payment lock and an edit allowlist across module and legacy routes; audit deletion is blocked. Legacy bill writes enforce backend permissions. PostgreSQL/HTTP regressions verify concurrent edits preserve payments and restricted staff are denied. KOT item updates now share the ticket-creation lock, retain concurrent audit entries, and ticket replay preserves preparation timestamps. These changes are local; full KOT transition rules, QR integration and settlement remain next, alongside the remaining checklist.
+
+Latest workflow changes: manual AdminCore user sync now queues all assigned businesses and returns truthful pending/running status (24 relevant tests passed). POS invoice creation rejects client-confirmed non-cash payments and overpayment; regression uses real isolated PostgreSQL invoices. Additional-payment method formatting can no longer bypass confirmation. These changes are local. Next: confirmation/cancellation/refund/void transitions, then end-to-end cashier/KOT/QR/settlement tests; preserve all other unfinished areas above.
+
 Latest: default-outlet creation now uses a stable Mongo document key and insert-only upsert; four helper tests pass. Six AdminCore authenticated ASGI sync tests pass with mocked database/POS. Historical duplicates and live Mongo concurrency remain unverified. Snapshot freshness regression is fixed (nine worker tests plus five existing AdminCore worker tests passed).
 
 Reconcile and test the current AdminCore snapshot/event worker. Review freshness handling: only a successful completed snapshot should suppress a new refresh; a recently failed job is not fresh data. Then audit default-outlet creation and provisioning queue concurrency. Follow with an isolated cross-project sync test run using the current AdminCore tests after reviewing their database side effects.

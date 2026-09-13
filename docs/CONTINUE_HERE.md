@@ -12,6 +12,64 @@ Follow POS `AGENTS.md`. No AdminCore AGENTS.md was found. User permission includ
 
 ## Exact interruption
 
+### AdminCore release and transactional kitchen sync (latest)
+
+- AdminCore commit 5379db8 pushed to origin/master: manual user sync queues all assigned businesses; truthful pending/running toast; order imports refresh kitchen-tickets before customers/reports and propagate failures for retry. 25 authenticated/profile/worker/batch tests passed. Live rollout check in progress.
+- POS KOT mutations now store the AdminCore order-change job and its sync log inside the same PostgreSQL transaction as ticket/order changes. Optional tx support added to notifyChange/log persistence; transaction failures propagate instead of being swallowed. Existing nontransaction callers retain prior behavior. No outbound network call occurs in the transaction.
+- PostgreSQL regression verifies correct tenant/business/order/kitchen payload and rollback of both queued job and log. Final POS deploy check passed. Prior frontend final build passed and frontend unchanged this turn. Preparing POS changes for publication; confirm commit/push result before claiming deployed.
+- Hosting secret rotation still requires Render environment access; no Render connector/credentials present. Public health and GitHub checks are read-only; do not claim authenticated end-to-end sync verification from health alone.
+
+### Kitchen workflow development (latest)
+
+- Added kot-workflow.js for permitted status progression and aggregation of mixed ready/served/rejected items. General status endpoint delegates to actual actions so timestamps, items and order status change together. Invalid jumps, missing item IDs, unauthorized item actions, edits to closed tickets and blank rejection reasons are rejected. Completion replay retains original history.
+- Chef screen adds acceptance queue, per-item accept/prepare/ready, station filter, elapsed/target time and SLA warning, reason-based rejection, and ticket history. Waiter screen now fetches the actual KOT ready queue and calls complete-service; legacy bill UI remains. Both screens show request errors and disable in-flight actions. Browser/device acceptance is still unverified.
+- QR ticket creation now checks restaurant approval inside the ticket transaction; a pending QR order cannot bypass approval through direct KOT creation. PostgreSQL/HTTP regressions pass for this, full item-to-service progression, closed/reverse action rejection, role restrictions, ready queue HTTP response, mixed service statuses, and active overdue alert.
+- Final backend deploy suite passed after QR guard (exit 0). Final frontend production build including rejection UI passed (session 57455 exit 0); earlier build 2265 also passed. PostgreSQL workflow suite and git diff --check passed. No command remains running. Logs are backend/logs/frontend-build-latest.log and production-flow-latest.log. Changes remain local/uncommitted; no browser or device acceptance claimed.
+- Next: finish build verification, then cashier settlement (current backend auto-opens shifts on reads, lacks history UI, needs atomic closing/collection coordination). Continue cross-project sync verification; KOT changes still need durable AdminCore order notification coverage. Full 13-part tracker remains scope, no production sign-off.
+
+### Invoice edit and legacy permission audit (latest)
+
+- Shared updateInvoice now allows only customer/contact/notes/kitchen edits and server timestamps; feedback initialization is an explicit internal option used only after legacy creation. Financial, audit, ownership, outlet, order and currency edits fail with 409 through both legacy and module routes.
+- General invoice edits now take the same PostgreSQL advisory transaction lock as payments/refunds/voids. They preserve stored totals and merge current metadata inside the lock. Removed the old recalculation/item-replacement path from issued-invoice edits; no route/module was removed.
+- Issued invoices cannot be hard deleted; use void approval to retain audit records. Legacy bill creation/edit/deletion now enforces billing permission; kitchen status writes require Owner/Manager/Chef/Waiter.
+- Real isolated PostgreSQL regressions passed, including concurrent payment vs kitchen edit, unchanged invoice totals/number, wrong-tenant rejection, audit retention, HTTP financial-field rejection through three routes, successful normal kitchen update, and four denied legacy writes for a cashier without grants. Fixtures cleaned. AdminCore's 24 authenticated/profile/worker/batch tests passed again (mock DB/POS, not live).
+- Backend deploy check passed after the final legacy permission changes. These changes and preceding payment/void/manual-sync changes remain local and uncommitted.
+- KOT mutation now re-reads inside the same order/ticket advisory lock used by ticket creation; simultaneous item updates retain both states and both audit entries. Ticket re-provisioning preserves prior preparation timestamps. PostgreSQL regression passed for both cases. Full backend deploy check passed after this last KOT change (exit 0); no command remains running.
+- Next: verify final backend suite, then audit KOT/QR transitions and cashier settlement. Keep full release tracker scope; production bridge-key rotation and live provider/hosting verification remain unresolved. User has not supplied a specific visible issue yet.
+
+### Visible-issues follow-up / payment transitions
+
+- User says visible problems remain. An async question asks for screen/action/actual/expected; no answer received yet. Continue known work without relying on them to rediscover tracker gaps.
+- Confirmation now rejects failed/cancelled payments, blank/nonstring refs, refs already used on another payment, and overpayment. Repeating an already-confirmed identical reference preserves its audit fields; changing reference is rejected. PostgreSQL regression passed.
+- Void request/approval now uses the same advisory-lock transaction as payment/refund changes, preserves amounts, requires a nonblank reason, pending approval and Owner/Manager authority, and prevents void while funds remain unrefunded or payments pending. Rejecting a void preserves prior bill status. Legacy generic update path still requires broader metadata-write audit; do not assume every route is covered.
+- Added concurrent void-vs-cash test: exactly one operation succeeds. Production DB suite passed. Void notifications retain previous `updated` action for AdminCore compatibility.
+- Full backend deploy check rerun started; check running session and backend/logs/deploy-check-latest.log for final status. Changes remain local. Next investigate generic invoice metadata overwrite/delete permissions, then KOT/QR-to-settlement acceptance; incorporate user's visible issues if supplied.
+
+### Latest workflow continuation
+
+- AdminCore manual `POST /users/{id}/sync-pos` now returns 202 and uses the existing durable profile queue for all assigned businesses. It no longer calls POS directly or implicitly syncs just the first business. Existing active/retrying states are returned honestly. UsersPage toast no longer reports synced for running/retrying jobs. 24 AdminCore authenticated/profile/worker/batch tests passed; UsersPage JSX parsed. New code is local, not yet pushed.
+- POS invoice creation now uses `normalizeSubmittedPayments` to reject invalid/negative/excess payments and override client-confirmed non-cash statuses to pending_confirmation. Additional bill payments trim method names and treat all non-cash methods as pending. Historical stored payment normalization remains unchanged. `submitted-payment-tests.mjs` and production DB flows passed, including actual forged-UPI invoice and overpayment rejection. New unit suite wired into deploy:check.
+- Full POS deploy:check passed exit 0 (session 60372), including smoke and payment security checks. git diff --check passed with line-ending warnings. No command remains running. No provider payment or real customer invoice was created; isolated regression fixtures cleaned by suite.
+- Next implementation: verify all confirmation/void/refund transitions (including canceled payments and refund-vs-void races), then KOT/QR-to-settlement acceptance flow. AdminCore public/protected scope and provisioning queues remain part of full release tracker. Production bridge-key rotation still requires hosting configuration access. No competitor-parity claim or production sign-off.
+
+### Review follow-up: 2026-09-13
+
+- Published AdminCore improvement as commit `4edd31f` on origin/master. Push succeeded. Exact live rollout/CI verification is in progress; do not repeat earlier pending-commit statement below as current status.
+
+- User supplied ten concrete sync/reliability findings. See `docs/SYNC_REVIEW_2026-09-13.md` for each finding's current evidence and limits. Existing current code already queues profiles/user creation, paces requests, honors Retry-After, and resumes checkpoints; don't rewrite those as missing.
+- Added AdminCore provisioning progress callback: saves current_step, business pos_provisioning_step, and bounded last-100 history entries (step/status/attempt/time). Completed checkpoints remain unchanged. Business list shows readable current-step labels. New failure regression checks owner-step retry history; new rate-gate regression proves follow-up requests are suppressed after 429 and uses Retry-After value 7.
+- 23 AdminCore authenticated/profile/worker/batch tests passed; changed JSX parsed. New AdminCore source changes pending commit/push as of this checkpoint. No command running.
+- Live POS readiness 200/true. AdminCore first health timed out, retry returned 200 at revision 4f8394c; production_config_ok remains false due development bridge key. No hosting-secret access; must rotate same key in both services. No authenticated live customer-data mutations made.
+
+### Deployment verification after continuation
+
+- Both pushes SUCCEEDED: POS master `ac1aab7477699bed09e5a095a89ed998465c84f2`; AdminCore master `4f8394c9a839d436b6a5d50cf8c6c8dfa052197d`. Do not repeat the old claim that all changes are unpushed.
+- GitHub checks for both commits show backend/frontend success. Both Vercel production deployments report completed successfully.
+- Render AdminCore `/api/health` initially timed out, then returned 200 with revision exactly `4f8394c9a839d436b6a5d50cf8c6c8dfa052197d`. Render deployment of this commit is confirmed.
+- Render POS `/health` and `/health/ready` returned 200; readiness true. Its health response has no revision, so exact deployed POS commit cannot be independently verified from it. No Render deployment checks appeared in GitHub (only Vercel records).
+- IMPORTANT LIVE FINDING: AdminCore health returned `production_config_ok: false` with error `Replace the development POS bridge key in both production services`. No secrets printed. Production shared-key rotation on BOTH Render services remains required. No Render CLI, connector or API credentials were available in this context; hosting configuration was not changed. Do not claim secure production sign-off.
+- Earlier instruction to skip live verification was superseded for this deployment by the explicit push-to-Render request and continuation. No running commands remain. This checkpoint update is local and intentionally not another application deployment.
+
 ### Deployment request: 2026-09-12
 
 - User explicitly requested pushing both projects to Render. Both Git remotes fetched successfully and local HEAD matched origin/master before committing: POS `techviswa/pos_v1` at 52d9ae2; AdminCore `techviswa/tsk-admin-v1` at e2f0069.

@@ -572,7 +572,7 @@ router.delete("/table-reservations/:reservationId", async (req, res, next) => {
   }
 });
 
-router.post("/bills", requireAuth, async (req, res, next) => {
+router.post("/bills", requirePermission("billing"), async (req, res, next) => {
   try {
     const currentUser = await authService.getCurrentUser({
       sessionId: getSessionIdFromRequest(req),
@@ -596,6 +596,7 @@ router.post("/bills", requireAuth, async (req, res, next) => {
     const data = await billingService.updateInvoice({
       tenantId: req.context.tenantId,
       invoiceId: created.id,
+      initializeFeedback: true,
       payload: {
         feedback_token: `feedback-${created.id}`,
         feedback_link: `${req.protocol}://${req.get("host")}/feedback/feedback-${created.id}`,
@@ -620,7 +621,7 @@ router.get("/bills/:invoiceId", async (req, res, next) => {
   }
 });
 
-router.put("/bills/:invoiceId", async (req, res, next) => {
+router.put("/bills/:invoiceId", requirePermission("billing"), async (req, res, next) => {
   try {
     const data = await billingService.updateInvoice({
       tenantId: req.context.tenantId,
@@ -636,7 +637,7 @@ router.put("/bills/:invoiceId", async (req, res, next) => {
   }
 });
 
-router.put("/bills/:invoiceId/kitchen-status", async (req, res, next) => {
+router.put("/bills/:invoiceId/kitchen-status", requireRole("Owner", "Manager", "Chef", "Waiter"), async (req, res, next) => {
   try {
     const data = await billingService.updateInvoice({
       tenantId: req.context.tenantId,
@@ -652,7 +653,7 @@ router.put("/bills/:invoiceId/kitchen-status", async (req, res, next) => {
   }
 });
 
-router.delete("/bills/:invoiceId", async (req, res, next) => {
+router.delete("/bills/:invoiceId", requirePermission("billing"), async (req, res, next) => {
   try {
     const data = await billingService.deleteInvoice({
       tenantId: req.context.tenantId,

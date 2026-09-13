@@ -29,7 +29,7 @@ export const listAdminCoreSyncLogs = async ({ tenantId, resource, status } = {})
   return rows.map((row) => row.data);
 };
 
-export const recordAdminCoreSyncLog = async (payload = {}) => {
+export const recordAdminCoreSyncLog = async (payload = {}, client = prisma) => {
   const log = {
     id: payload.id || `admincore_sync_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
     tenant_id: payload.tenant_id || payload.tenantId || null,
@@ -45,7 +45,7 @@ export const recordAdminCoreSyncLog = async (payload = {}) => {
     synced_at: payload.synced_at || new Date().toISOString(),
   };
 
-  await prisma.adminCoreSyncLog.create({ data: {
+  await client.adminCoreSyncLog.create({ data: {
     id: log.id, tenantId: log.tenant_id, resource: log.resource, status: log.status,
     data: JSON.parse(JSON.stringify(log)),
   } });

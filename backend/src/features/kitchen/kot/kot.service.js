@@ -1,4 +1,6 @@
 import prisma from "../../../database/prisma/client.js";
+import { admincoreChangeSyncService } from "../../../core/admincore/admincore-change-sync.service.js";
+import { aggregateKitchenStatus, validateKitchenTransition } from "./kot-workflow.js";
 import { nextDocumentSequence } from "../../../database/prisma/document-sequence.js";
 import { ensureBusiness } from "../../../database/prisma/helpers.js";
 import { createHttpError } from "../../../shared/utils/http-error.js";
@@ -43,6 +45,7 @@ class KotService {
       business_id: ticket.businessId,
       order_id: ticket.orderId,
       customer_name: order?.customerName || "Walk-in",
+      notes: order?.metadata?.notes || order?.metadata?.customer_note || "",
       channel: order?.channel || "pos",
       table_label: order?.metadata?.table_name || order?.metadata?.table_label || null,
       token_number: order?.metadata?.token_number || kot.token_number || null,
@@ -99,6 +102,9 @@ class KotService {
     if (!order) {
       throw createHttpError({ statusCode: 404, message: "Order not found for KOT" });
     }
+    if (order.channel === "qr" && (order.metadata?.approval_status !== "approved" || ["qr_pending_approval", "qr_rejected"].includes(order.status))) {
+      throw createHttpError({ statusCode: 409, message: "Restaurant approval is required before sending a QR order to the kitchen" });
+    }
 
     let ticket = await tx.kitchenTicket.findFirst({
       where: { businessId, orderId },
@@ -121,6 +127,7 @@ class KotService {
     });
     const kot = appendKotAudit(
       {
+        ...currentKot,
         ticket_number:
           currentKot.ticket_number ||
           createKotTicketNumber({
@@ -222,6 +229,7 @@ class KotService {
   }
 
   async createTicket({ tenantId, payload, actor }) {
+    if (payload.status && payload.status !== KOT_STATUSES.PENDING) throw createHttpError({ statusCode: 400, message: "New kitchen tickets must start pending" });
     const business = await ensureBusiness({ tenantId });
     const ticket = await this.ensureTicketForOrder({
       businessId: business.id,
@@ -233,59 +241,44 @@ class KotService {
   }
 
   async mutateTicket({ tenantId, ticketId, actor, updater }) {
-    const ticket = await this.getTicket({ tenantId, ticketId });
-    const order = ticket.order;
-    const currentKot = this.getOrderKot(order);
-    const next = updater({ ticket, order, kot: currentKot });
-    const nextStatus = next.status || ticket.status;
-    const nextKot = appendKotAudit(
-      {
-        ...currentKot,
-        ...next.kot,
-      },
-      {
-        action: next.action || "ticket_updated",
-        status: nextStatus,
-        actor_id: actor?.id || null,
-        actor_name: actor?.name || null,
-        reason: next.reason || null,
-      },
-    );
-
-    await prisma.$transaction([
-      prisma.kitchenTicket.update({
-        where: { id: ticket.id },
-        data: { status: nextStatus },
-      }),
-      prisma.order.update({
+    const scopedTicket = await this.getTicket({ tenantId, ticketId });
+    return prisma.$transaction(async (tx) => {
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`kot:${scopedTicket.businessId}:${scopedTicket.orderId}`}))`;
+      const ticket = await tx.kitchenTicket.findFirstOrThrow({
+        where: { id: ticketId, businessId: scopedTicket.businessId }, include: getTicketInclude(),
+      });
+      const order = ticket.order;
+      const currentKot = this.getOrderKot(order);
+      const next = updater({ ticket, order, kot: currentKot });
+      const nextStatus = next.status || ticket.status;
+      if (next.action !== "item_status_updated") validateKitchenTransition(ticket.status, nextStatus);
+      if (nextStatus === ticket.status && ["completed", "rejected"].includes(nextStatus)) return this.serializeTicket(ticket);
+      const nextKot = appendKotAudit(
+        { ...currentKot, ...next.kot },
+        { action: next.action || "ticket_updated", status: nextStatus,
+          actor_id: actor?.id || null, actor_name: actor?.name || null, reason: next.reason || null },
+      );
+      await tx.kitchenTicket.update({ where: { id: ticket.id }, data: { status: nextStatus } });
+      await tx.order.update({
         where: { id: order.id },
-        data: {
-          status: next.orderStatus || order.status,
-          metadata: {
-            ...(order.metadata || {}),
-            kot: nextKot,
-          },
-        },
-      }),
-    ]);
-
-    return this.serializeTicket(await this.getTicket({ tenantId, ticketId }));
+        data: { status: next.orderStatus || order.status, metadata: { ...(order.metadata || {}), kot: nextKot } },
+      });
+      await admincoreChangeSyncService.notifyChange({
+        resource: "orders", action: "updated", recordId: order.id,
+        tenantId, businessId: ticket.businessId, outletId: order.metadata?.outlet_id || null,
+        metadata: { kitchen_ticket_id: ticket.id, kitchen_status: nextStatus },
+      }, { tx });
+      return this.serializeTicket(await tx.kitchenTicket.findUniqueOrThrow({
+        where: { id: ticket.id }, include: getTicketInclude(),
+      }));
+    });
   }
 
   async updateTicketStatus({ tenantId, ticketId, kitchenStatus, actor }) {
-    return this.mutateTicket({
-      tenantId,
-      ticketId,
-      actor,
-      updater: ({ kot }) => ({
-        status: kitchenStatus || KOT_STATUSES.PENDING,
-        action: "ticket_status_updated",
-        kot: {
-          ...kot,
-          status: kitchenStatus || KOT_STATUSES.PENDING,
-        },
-      }),
-    });
+    const actions = { accepted: "acceptTicket", preparing: "startPrep", ready: "markReady" };
+    const action = actions[kitchenStatus];
+    if (!action) throw createHttpError({ statusCode: 400, message: "Use accept, prepare, ready, rejection, or service completion actions" });
+    return this[action]({ tenantId, ticketId, actor });
   }
 
   async acceptTicket({ tenantId, ticketId, actor }) {
@@ -314,6 +307,7 @@ class KotService {
   }
 
   async rejectTicket({ tenantId, ticketId, reason, actor }) {
+    if (typeof reason !== "string" || !reason.trim()) throw createHttpError({ statusCode: 400, message: "Rejection reason is required" });
     return this.mutateTicket({
       tenantId,
       ticketId,
@@ -374,6 +368,7 @@ class KotService {
       ticketId,
       actor,
       updater: ({ kot }) => {
+        if ((kot.items || []).some((item) => ["pending", "accepted"].includes(item.status))) throw createHttpError({ statusCode: 409, message: "Start preparation for every active item before marking the ticket ready" });
         const at = nowIso();
         return {
           status: KOT_STATUSES.READY,
@@ -384,7 +379,7 @@ class KotService {
             ready_at: kot.ready_at || at,
             items: (kot.items || []).map((item) => ({
               ...item,
-              status: item.status !== KOT_STATUSES.REJECTED ? KOT_STATUSES.READY : item.status,
+              status: ![KOT_STATUSES.REJECTED, KOT_STATUSES.SERVED].includes(item.status) ? KOT_STATUSES.READY : item.status,
               ready_at: item.ready_at || at,
             })),
           },
@@ -420,11 +415,18 @@ class KotService {
   }
 
   async updateItemStatus({ tenantId, ticketId, itemId, status, reason, actor }) {
+    const allowedRoles = status === KOT_STATUSES.SERVED ? ["Owner", "Manager", "Waiter"] : ["Owner", "Manager", "Chef"];
+    if (!allowedRoles.includes(actor?.role)) throw createHttpError({ statusCode: 403, message: "Your role cannot perform this kitchen action" });
     return this.mutateTicket({
       tenantId,
       ticketId,
       actor,
-      updater: ({ kot }) => {
+      updater: ({ ticket, kot }) => {
+        const currentItem = (kot.items || []).find((item) => item.item_id === itemId);
+        if (!currentItem) throw createHttpError({ statusCode: 404, message: "Kitchen item not found" });
+        if (["completed", "rejected"].includes(ticket.status)) throw createHttpError({ statusCode: 409, message: "Closed kitchen tickets cannot be changed" });
+        validateKitchenTransition(currentItem.status, status, { item: true });
+        if (status === "rejected" && (typeof reason !== "string" || !reason.trim())) throw createHttpError({ statusCode: 400, message: "Rejection reason is required" });
         const at = nowIso();
         const items = (kot.items || []).map((item) => {
           if (item.item_id !== itemId) return item;
@@ -440,17 +442,7 @@ class KotService {
               : {}),
           };
         });
-        const nonRejected = items.filter((item) => item.status !== KOT_STATUSES.REJECTED);
-        const aggregateStatus =
-          nonRejected.length && nonRejected.every((item) => item.status === KOT_STATUSES.SERVED)
-            ? KOT_STATUSES.COMPLETED
-            : nonRejected.length && nonRejected.every((item) => item.status === KOT_STATUSES.READY)
-              ? KOT_STATUSES.READY
-              : nonRejected.some((item) => item.status === KOT_STATUSES.PREPARING)
-                ? KOT_STATUSES.PREPARING
-                : nonRejected.some((item) => item.status === KOT_STATUSES.ACCEPTED)
-                  ? KOT_STATUSES.ACCEPTED
-                  : KOT_STATUSES.PENDING;
+        const aggregateStatus = aggregateKitchenStatus(items);
 
         return {
           status: aggregateStatus,
@@ -460,6 +452,10 @@ class KotService {
           kot: {
             ...kot,
             items,
+            ...(aggregateStatus === "accepted" ? { accepted_at: kot.accepted_at || at } : {}),
+            ...(aggregateStatus === "preparing" ? { prep_started_at: kot.prep_started_at || at } : {}),
+            ...(aggregateStatus === "ready" ? { ready_at: kot.ready_at || at } : {}),
+            ...(aggregateStatus === "completed" ? { served_at: kot.served_at || at, completed_at: kot.completed_at || at } : {}),
           },
         };
       },

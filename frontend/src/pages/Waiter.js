@@ -76,6 +76,9 @@ export const Waiter = () => {
   const { user } = useAuth();
   const [loading, setLoading] = useState(true);
   const [bills, setBills] = useState([]);
+  const [readyKitchen, setReadyKitchen] = useState([]);
+  const [kitchenError, setKitchenError] = useState(null);
+  const [serving, setServing] = useState({});
   const [reservations, setReservations] = useState([]);
   const [staff, setStaff] = useState([]);
   const [swapRequests, setSwapRequests] = useState([]);
@@ -115,6 +118,23 @@ export const Waiter = () => {
   };
 
   useAutoRefresh(fetchData);
+  const fetchKitchen = async () => {
+    try {
+      const response = await axios.get(`${API_URL}/api/kot`, { withCredentials: true, params: { status: "ready", limit: 100 } });
+      setReadyKitchen(toArrayPayload(response.data));
+      setKitchenError(null);
+    } catch (error) { setKitchenError(error); }
+  };
+  useAutoRefresh(fetchKitchen);
+  const serveTicket = async (ticketId) => {
+    setServing((current) => ({ ...current, [ticketId]: true }));
+    try {
+      await axios.post(`${API_URL}/api/kot/${ticketId}/complete-service`, {}, { withCredentials: true });
+      toast.success("Kitchen order marked served");
+      await fetchKitchen();
+    } catch (error) { toast.error(getApiErrorMessage(error, "Unable to mark this order served")); }
+    finally { setServing((current) => ({ ...current, [ticketId]: false })); }
+  };
 
   const dineInBills = useMemo(
     () => bills.filter((bill) => bill.created_by === user?.id && (bill.order_type || "Dine-In") === "Dine-In"),
@@ -216,6 +236,18 @@ export const Waiter = () => {
           </div>
         </div>
 
+        <section className="cf-card cf-card--padded" aria-label="Kitchen pickup queue">
+          <h2>Kitchen orders ready for pickup</h2>
+          {kitchenError ? <ApiErrorPanel error={kitchenError} onRetry={fetchKitchen} /> : readyKitchen.length ? readyKitchen.map((ticket) => (
+            <div key={ticket.id} style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 12, padding: "12px 0" }}>
+              <div style={{ flex: "1 1 220px" }}>
+                <strong>{ticket.ticket_number} · {ticket.table_label || "Counter"}</strong>
+                <p>{(ticket.items || []).filter((item) => item.status !== "rejected").map((item) => `${item.name} ×${item.quantity}`).join(", ")}</p>
+              </div>
+              <button type="button" className="cf-btn cf-btn--primary" style={{ minHeight: 44 }} disabled={serving[ticket.id]} onClick={() => serveTicket(ticket.id)}>Mark served</button>
+            </div>
+          )) : <p>No kitchen orders waiting for pickup.</p>}
+        </section>
         <div className="cf-metrics">
           <button className="cf-metric cf-metric--button" onClick={() => navigate("/waiter/reservations")} type="button">
             <div className="cf-metric__label">Reserved Tables</div>
