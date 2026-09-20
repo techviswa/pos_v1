@@ -490,7 +490,7 @@ export const serializeBill = (bill) => ({
       variation: item.variation,
       addons: cloneJson(item.addons, []),
     })) || [],
-  ...normalizeBillingMetadata(bill.metadata || {}),
+  ...Object.fromEntries(Object.entries(normalizeBillingMetadata(bill.metadata || {})).filter(([key]) => key !== "item_costs")),
 });
 
 export const serializeInventoryItem = (item) => ({

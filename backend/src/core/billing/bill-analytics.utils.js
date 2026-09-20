@@ -43,10 +43,7 @@ export const getBillTax = (bill = {}) => {
 };
 
 export const getBillSubtotal = (bill = {}) => {
-  const total = toAnalyticsNumber(bill.total, 0);
-  const revenue = getBillRevenue(bill);
-  const ratio = total > 0 ? revenue / total : 0;
-  return toAnalyticsNumber(bill.subtotal, 0) * ratio;
+  return Math.max(0, getBillRevenue(bill) - getBillTax(bill));
 };
 
 export const getBillChannel = (bill = {}) => {
@@ -66,5 +63,12 @@ export const getBillLineGrossTotal = (bill = {}) =>
 export const getAllocatedLineRevenue = (bill = {}, item = {}) => {
   const gross = getBillLineGrossTotal(bill);
   const lineGross = toAnalyticsNumber(item.quantity, 0) * toAnalyticsNumber(item.price, 0);
-  return gross > 0 ? getBillRevenue(bill) * (lineGross / gross) : 0;
+  return gross > 0 ? getBillSubtotal(bill) * (lineGross / gross) : 0;
+};
+
+export const getBillLineCost = (bill, item, product) => {
+  const snapshots = bill.item_costs || getBillMetadata(bill).item_costs || [];
+  const saved = snapshots.find((entry) => item.productId ? entry.product_id === item.productId : entry.name === item.name);
+  const historical = saved?.unit_cost != null;
+  return { amount: toAnalyticsNumber(item.quantity) * toAnalyticsNumber(historical ? saved.unit_cost : product?.costPrice), estimated: !historical };
 };

@@ -12,6 +12,8 @@ import { kotService } from "../src/features/kitchen/kot/kot.service.js";
 import { summarizeKotTiming } from "../src/features/kitchen/kot/kot.utils.js";
 import { aggregateKitchenStatus } from "../src/features/kitchen/kot/kot-workflow.js";
 import { admincoreChangeSyncService } from "../src/core/admincore/admincore-change-sync.service.js";
+import { reportsService } from "../src/core/reports/reports.service.js";
+import { inventoryOperationsService } from "../src/core/inventory/inventory-operations.service.js";
 import { printerService } from "../src/services/printer/printer.service.js";
 import { DurableJobQueue } from "../src/services/jobs/durable-job-queue.js";
 
@@ -67,6 +69,57 @@ try {
   assert.ok(bills.every((bill) => bill.invoice_number !== "FORGED" && bill.due_amount === 100));
   const bill = bills[0];
   const user = { id: login.user.id, role: "Owner" };
+  const costProduct = await prisma.product.create({ data: { businessId: id, name: "Cost snapshot fixture", category: "Test", price: 100, costPrice: 30 } });
+  await assert.rejects(billingService.createInvoice({ tenantId, payload: { ...payload, order_id: `${id}-missing-order` } }), /Order not found/);
+  await assert.rejects(billingService.createInvoice({ tenantId, payload: { ...payload, items: [{ productId: `${id}-missing-product`, name: "Forged item", price: 1, quantity: 1 }] } }), /Product not found/);
+  const costBill = await billingService.createInvoice({ tenantId, payload: { items: [{ productId: costProduct.id, name: costProduct.name, price: 100, quantity: 1 }], gst_rate: 18, discount_type: "percent", discount_value: 10, payment_type: "Cash" } });
+  await prisma.product.update({ where: { id: costProduct.id }, data: { costPrice: 90 } });
+  assert.equal(Object.hasOwn(costBill, "item_costs"), false, "Cost snapshots must not leak through ordinary bill responses");
+  const profitability = (await reportsService.productProfitability({ tenantId })).rows.find((row) => row.product_id === costProduct.id);
+  const inventoryCosts = (await inventoryOperationsService.getCogsReport({ tenantId })).rows.find((row) => row.product_id === costProduct.id);
+  assert.equal(profitability.cogs, 30);
+  assert.equal(profitability.estimated_cost, false);
+  assert.equal(profitability.revenue, 90);
+  assert.equal(inventoryCosts.cogs, profitability.cogs);
+  assert.equal(inventoryCosts.revenue, profitability.revenue);
+  const taxRow = (await reportsService.gstTaxReport({ tenantId })).rows.find((row) => row.invoice_number === costBill.invoice_number);
+  assert.equal(taxRow.taxable_value, 90);
+  assert.equal(Math.round(taxRow.tax_total * 100), 1620);
+  const storedCostBill = await prisma.bill.findUnique({ where: { id: costBill.id } });
+  await prisma.bill.update({ where: { id: costBill.id }, data: { metadata: { ...storedCostBill.metadata, gst_breakup: { cgst: 0, sgst: 0, igst: 16.2 } } } });
+  const interstateTax = (await reportsService.gstTaxReport({ tenantId })).rows.find((row) => row.invoice_number === costBill.invoice_number);
+  assert.equal(interstateTax.cgst, 0);
+  assert.equal(interstateTax.sgst, 0);
+  assert.equal(Math.round(interstateTax.igst * 100), 1620, "IGST must not also be counted as CGST/SGST");
+  await billingService.refundInvoice({ tenantId, invoiceId: costBill.id, user, payload: { amount: costBill.total, reason: "Full refund tax regression" } });
+  const refundedTax = (await reportsService.gstTaxReport({ tenantId })).rows.find((row) => row.invoice_number === costBill.invoice_number);
+  if (refundedTax) assert.equal(refundedTax.tax_total + refundedTax.cgst + refundedTax.sgst + refundedTax.igst + refundedTax.taxable_value, 0, "Full refunds must not restore original tax through fallback values");
+  const settlementOutlet = await prisma.outlet.create({ data: { businessId: id, name: "Settlement fixture", code: id } });
+  const settlementScope = { tenantId, outletId: settlementOutlet.id, user };
+  assert.equal(await billingService.getShift(settlementScope), null);
+  await assert.rejects(billingService.openShift({ ...settlementScope, openingCash: -1 }), /non-negative/);
+  const opening = await billingService.openShift({ ...settlementScope, openingCash: 50 });
+  const paidInvoice = await billingService.createInvoice({ tenantId, payload: { ...payload, outlet_id: settlementOutlet.id, payment_type: "Cash" } });
+  const dueInvoice = await billingService.createInvoice({ tenantId, payload: { ...payload, outlet_id: settlementOutlet.id } });
+  assert.equal((await billingService.getCashDrawerReport(settlementScope)).expected_cash, 150);
+  const closing = await billingService.closeShift({ ...settlementScope, shiftId: opening.id, closingCash: 145 });
+  assert.equal(closing.variance, -5);
+  assert.deepEqual(await billingService.closeShift({ ...settlementScope, shiftId: opening.id, closingCash: 145 }), closing);
+  await assert.rejects(billingService.closeShift({ ...settlementScope, shiftId: opening.id, closingCash: 999 }), /cannot be changed/);
+  assert.equal((await billingService.getShift(settlementScope)).status, "closed");
+  const secondShift = await billingService.openShift({ ...settlementScope, openingCash: 20 });
+  await billingService.addPayment({ tenantId, invoiceId: dueInvoice.id, user, payload: { amount: 40, method: "Cash" } });
+  await billingService.refundInvoice({ tenantId, invoiceId: paidInvoice.id, user, payload: { amount: 10, reason: "Settlement regression" } });
+  assert.equal((await billingService.getCashDrawerReport(settlementScope)).expected_cash, 50);
+  assert.equal((await billingService.getCashDrawerReport({ ...settlementScope, shiftId: opening.id })).expected_cash, 150);
+  const closingRace = await Promise.all([
+    billingService.closeShift({ ...settlementScope, shiftId: secondShift.id, closingCash: 50 }),
+    billingService.addPayment({ tenantId, invoiceId: dueInvoice.id, user, payload: { amount: 20, method: "Cash" } }),
+  ]);
+  const attributed = closingRace[1].payments.find((payment) => payment.amount === 20);
+  assert.equal(closingRace[0].expected_cash, attributed.settlement_shift_id === secondShift.id ? 70 : 50);
+  assert.equal((await billingService.getShiftHistory(settlementScope)).length, 2);
+  await assert.rejects(billingService.getCashDrawerReport({ ...settlementScope, outletId: "foreign-outlet", shiftId: opening.id }), /Outlet not found/);
   for (const forbidden of ["payments", "due_amount", "payment_status", "void_approved_by", "outlet_id", "orderId", "currency", "gst_breakup", "created_by", "total", "items", "feedback_token", "feedback_link"]) {
     await assert.rejects(billingService.updateInvoice({ tenantId, invoiceId: bill.id, payload: { [forbidden]: "forged" } }), /immutable/);
   }
@@ -87,6 +140,9 @@ try {
   const apiLogin = await authService.login({ email: provision.owner_email, password });
   await new Promise((resolve, reject) => { server.once("error", reject); server.listen(0, "127.0.0.1", resolve); });
   const apiUrl = `http://127.0.0.1:${server.address().port}`;
+  const settlementHistoryResponse = await fetch(`${apiUrl}/api/billing/shifts/history?outlet_id=${settlementOutlet.id}`, { headers: { "x-cf-session-id": apiLogin.sessionId } });
+  assert.equal(settlementHistoryResponse.status, 200);
+  assert.equal((await settlementHistoryResponse.json()).data.length, 2);
   for (const route of [`/api/bills/${bill.id}`, `/api/bills/${bill.id}/kitchen-status`, `/api/billing/${bill.id}`]) {
     const response = await fetch(`${apiUrl}${route}`, { method: "PUT",
       headers: { "Content-Type": "application/json", "x-cf-session-id": apiLogin.sessionId },

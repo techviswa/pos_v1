@@ -4,12 +4,14 @@ import { serializeBill } from "../../database/prisma/helpers.js";
 import { createHttpError } from "../../shared/utils/http-error.js";
 import { normalizePayments, summarizePayments, roundMoney } from "./billing-depth.utils.js";
 import { admincoreChangeSyncService } from "../admincore/admincore-change-sync.service.js";
+import { lockSettlement, ensureOpenShift } from "./settlement.service.js";
 
 export const mutateBillPayment = async ({ tenantId, invoiceId, action, payload = {}, paymentId, user }) => {
   const result = await prisma.$transaction(async (tx) => {
     await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`bill:${invoiceId}`}))`;
     const bill = await tx.bill.findFirst({ where: { id: invoiceId, business: { tenantId } }, include: { business: true, items: true } });
     if (!bill) throw createHttpError({ statusCode: 404, message: "Invoice not found" });
+    await lockSettlement(tx, bill.businessId);
     if (bill.status === "void") throw createHttpError({ statusCode: 409, message: "Voided invoices cannot accept financial changes" });
     const metadata = { ...(bill.metadata || {}) };
     let payments = metadata.payments || [];
@@ -24,10 +26,11 @@ export const mutateBillPayment = async ({ tenantId, invoiceId, action, payload =
       const submittedMethod = payload.method || payload.payment_method || "Cash";
       if (typeof submittedMethod !== "string" || !submittedMethod.trim()) throw createHttpError({ statusCode: 400, message: "Payment method is required" });
       const method = submittedMethod.trim();
+      const shift = await ensureOpenShift(tx, bill.businessId, metadata.outlet_id || null, user);
       payments = [...payments, ...normalizePayments([{ ...payload, id: randomUUID(), amount, method,
         status: method.toLowerCase() === "cash" ? "confirmed" : "pending_confirmation",
         received_at: at, received_by: user?.id || null,
-      }])];
+      }]).map((payment) => ({ ...payment, settlement_shift_id: shift.id }))];
     } else if (action === "confirm") {
       const payment = payments.find((row) => row.id === paymentId);
       if (!payment) throw createHttpError({ statusCode: 404, message: "Payment not found" });
@@ -43,7 +46,8 @@ export const mutateBillPayment = async ({ tenantId, invoiceId, action, payload =
       }
       const alreadyPaid = summarizePayments(payments.filter((row) => row.id !== paymentId), bill.total).paid_amount;
       if (roundMoney(alreadyPaid + Number(payment.amount)) > roundMoney(bill.total)) throw createHttpError({ statusCode: 409, message: "Confirmation would exceed the invoice total" });
-      payments = payments.map((row) => row.id === paymentId ? { ...row, status: "confirmed", reference: verifiedReference, confirmed_at: at, confirmed_by: user.id } : row);
+      const shift = await ensureOpenShift(tx, bill.businessId, metadata.outlet_id || null, user);
+      payments = payments.map((row) => row.id === paymentId ? { ...row, status: "confirmed", reference: verifiedReference, confirmed_at: at, confirmed_by: user.id, settlement_shift_id: shift.id } : row);
     } else if (action === "void_request") {
       if (!String(payload.reason || "").trim()) throw createHttpError({ statusCode: 400, message: "Void reason is required" });
       Object.assign(metadata, { void_status: "pending_approval", void_reason: String(payload.reason).trim(),
@@ -69,7 +73,11 @@ export const mutateBillPayment = async ({ tenantId, invoiceId, action, payload =
       const amount = roundMoney(payload.amount);
       if (amount <= 0 || amount > roundMoney(paid - alreadyRefunded)) throw createHttpError({ statusCode: 400, message: "Refund exceeds the remaining collected amount" });
       if (!String(payload.reason || "").trim()) throw createHttpError({ statusCode: 400, message: "Refund reason is required" });
-      metadata.refunds = [...refunds, { id: randomUUID(), amount, method: payload.method || "Original Payment", reason: payload.reason, status: "approved", created_by: user.id, created_at: at }];
+      const methods = [...new Set(payments.filter((payment) => payment.status === "confirmed").map((payment) => payment.method))];
+      const method = payload.method && payload.method !== "Original Payment" ? payload.method : methods.length === 1 ? methods[0] : null;
+      if (typeof method !== "string" || !method.trim()) throw createHttpError({ statusCode: 400, message: "Choose the refund payment method" });
+      const shift = await ensureOpenShift(tx, bill.businessId, metadata.outlet_id || null, user);
+      metadata.refunds = [...refunds, { id: randomUUID(), amount, method: method.trim(), reason: payload.reason, status: "approved", created_by: user.id, created_at: at, settlement_shift_id: shift.id }];
       metadata.refunded_amount = roundMoney(alreadyRefunded + amount);
       status = metadata.refunded_amount >= bill.total ? "refunded" : "partially_refunded";
     }

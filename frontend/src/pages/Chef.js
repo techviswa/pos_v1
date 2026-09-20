@@ -55,7 +55,7 @@ export const Chef = () => {
         params: { limit: 50 },
       });
       setTickets(toArrayPayload(response.data));
-      setStations(response.data?.data?.stations || []);
+      setStations((response.data?.data ?? response.data)?.stations || []);
       setLoadError(null);
     } catch (error) {
       setLoadError(error);
@@ -113,7 +113,7 @@ export const Chef = () => {
   const viewHistory = async (ticket) => {
     try {
       const response = await axios.get(`${API_URL}/api/kot/${ticket.id}/history`, { withCredentials: true });
-      setHistoryTicket({ title: ticket.ticket_number, audit: response.data?.data?.audit || [] });
+      setHistoryTicket({ title: ticket.ticket_number, audit: (response.data?.data ?? response.data)?.audit || [] });
     } catch (error) {
       toast.error(getApiErrorMessage(error, "Unable to load ticket history"));
     }

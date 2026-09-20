@@ -11,6 +11,7 @@ import { useAutoRefresh } from "../hooks/useAutoRefresh";
 import { formatScheduledSlot, getTrackingLine } from "../core/billing/utils/orderTracking";
 import { OutletOverviewPanel } from "../core/outlets/components/OutletOverviewPanel";
 import { useActiveOutlet } from "../core/outlets/store/ActiveOutletContext";
+import { CashierSettlement } from "../core/billing/components/CashierSettlement";
 import { BillingFulfillmentSection } from "../features/billing/fulfillment/pages/BillingFulfillmentSection";
 import { fulfillmentService } from "../features/billing/fulfillment/services/fulfillment.service";
 import { useBillingFulfillment } from "../features/billing/fulfillment/store/useBillingFulfillment";
@@ -962,6 +963,7 @@ export const Billing = () => {
 
   return (
     <Layout billingMode title={selectedOutlet ? `Billing · ${selectedOutlet.name}` : "Billing"}>
+      {["Owner", "Manager", "Cashier"].includes(user?.role) && <CashierSettlement key={selectedOutletId} apiUrl={API_URL} outletId={selectedOutletId} />}
       <div className="cf-billing" data-testid="billing-page">
         <div className="cf-billing__products">
           {user?.assigned_outlets?.length ? (

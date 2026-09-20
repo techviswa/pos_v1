@@ -7,6 +7,7 @@ const BILL_METADATA_DEFAULTS = {
   invoice_format: "gst_receipt_v1",
   gstin: null,
   gst_breakup: null,
+  item_costs: [],
   payments: [],
   paid_amount: 0,
   pending_payment_amount: 0,
@@ -59,7 +60,7 @@ const NUMBER_KEYS = new Set([
   "due_amount",
   "refunded_amount",
 ]);
-const JSON_KEYS = new Set(["gst_breakup", "payments", "refunds", "receipt_printer"]);
+const JSON_KEYS = new Set(["gst_breakup", "item_costs", "payments", "refunds", "receipt_printer"]);
 const TEXT_KEYS = new Set(["notes"]);
 
 const hasOwn = (payload, key) => Object.prototype.hasOwnProperty.call(payload || {}, key);
@@ -122,6 +123,7 @@ export const extractBillingMetadataFromRequest = (payload = {}, { base = {} } = 
       ...(hasOwn(payload, "invoice_format") ? { invoice_format: payload.invoice_format } : {}),
       ...(hasOwn(payload, "gstin") ? { gstin: payload.gstin } : {}),
       ...(hasOwn(payload, "gst_breakup") ? { gst_breakup: payload.gst_breakup } : {}),
+      ...(hasOwn(payload, "item_costs") ? { item_costs: payload.item_costs } : {}),
       ...(hasOwn(payload, "payments") ? { payments: payload.payments } : {}),
       ...(hasOwn(payload, "paid_amount") ? { paid_amount: payload.paid_amount } : {}),
       ...(hasOwn(payload, "pending_payment_amount") ? { pending_payment_amount: payload.pending_payment_amount } : {}),

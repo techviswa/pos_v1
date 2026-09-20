@@ -69,6 +69,7 @@ class BillingController {
       tenantId: req.context.tenantId,
       outletId: req.body?.outlet_id || null,
       closingCash: req.body?.closing_cash,
+      shiftId: req.body?.shift_id,
       user: req.user,
     });
     res.status(200).json(apiResponse({ message: "Shift closed successfully", data }));
@@ -83,10 +84,16 @@ class BillingController {
     res.status(200).json(apiResponse({ message: "Cash drawer report fetched successfully", data }));
   }
 
+  async shiftHistory(req, res) {
+    const data = await billingService.getShiftHistory({ tenantId: req.context.tenantId, outletId: req.query?.outlet_id || null });
+    res.status(200).json(apiResponse({ message: "Settlement history fetched", data }));
+  }
+
   async create(req, res) {
     const data = await billingService.createInvoice({
       tenantId: req.context.tenantId,
       payload: req.body,
+      user: req.user,
     });
     res.status(201).json(apiResponse({ message: "Invoice created successfully", data }));
   }

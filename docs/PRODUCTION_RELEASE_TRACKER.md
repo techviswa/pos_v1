@@ -1,6 +1,14 @@
 # Production release tracker
 
-This is the authoritative scope tracker for both POS and AdminCore. Read it together with CONTINUE_HERE.md before resuming. Updated 2026-09-12. None of the thirteen areas is signed off yet. Existing code and passing targeted tests are evidence of progress, not a completed release.
+This is the authoritative scope tracker for both POS and AdminCore. Read it together with CONTINUE_HERE.md before resuming. Updated 2026-09-15. None of the thirteen areas is signed off yet. Existing code and passing targeted tests are evidence of progress, not a completed release.
+
+## Latest evidence (supersedes stale status wording below)
+
+- Both previous releases were verified live on Render; bridge secrets rotated and the legacy missing tenant mapping reconciled with successful authenticated refresh. User subsequently revoked the temporary Render key. Both Render services remain on free plans.
+- Cashier settlement now has opening/counting/closing/history, immutable closed reports, server role checks, and transaction locks coordinating concurrent payments/refunds. Late collections belong to the collecting shift. PostgreSQL regressions passed. One shared drawer per outlet; cash movements and multiple tills remain outside this implementation.
+- Cost snapshots protect new invoice profitability from later catalog changes. Inventory COGS and profitability share tax-exclusive discounted revenue/cost rules; GST allocation/full refunds tested. Catalog costs do not replace recipe/purchase valuation. Export formula/HTML injection regressions pass.
+- Final frontend build and backend deploy check passed. Local installed-Chrome tests passed nine populated/empty screens at 390/768 widths, including actual cashier submission and Chef audit history. These are browser viewport tests; physical phone/printer/provider acceptance remains unverified.
+- Current changes are awaiting publication; consult newest CONTINUE_HERE checkpoint for the exact commit/CI state. The original matrix below is a work inventory, not proof that each old gap remains present.
 
 ## Continuation protocol
 

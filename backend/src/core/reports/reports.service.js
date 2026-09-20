@@ -7,6 +7,7 @@ import { ensureBusiness } from "../../database/prisma/helpers.js";
 import { normalizeBillingMetadata } from "../billing/billing-metadata.utils.js";
 import {
   getAllocatedLineRevenue,
+  getBillLineCost,
   getBillChannel,
   getBillOutletId,
   getBillRefundAmount,
@@ -32,7 +33,13 @@ const inRange = (date, { from, to } = {}) => {
   return true;
 };
 
-const csvEscape = (value) => `"${String(value ?? "").replaceAll('"', '""')}"`;
+const csvEscape = (value) => {
+  const text = String(value ?? "");
+  // Spreadsheet applications evaluate formulas even inside quoted CSV cells.
+  const safe = typeof value === "string" && /^[\s\u0000-\u001f]*[=+@-]/u.test(text) ? `'${text}` : text;
+  return `"${safe.replaceAll('"', '""')}"`;
+};
+const htmlEscape = (value) => String(value).replace(/[&<>"']/g, (character) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[character]);
 
 const toCsv = (rows = []) => {
   if (!rows.length) return "";
@@ -88,16 +95,17 @@ class ReportsService {
       const gst = bill.gst_breakup || {};
       const taxableValue = getBillSubtotal(bill);
       const taxTotal = getBillTax(bill);
+      const splitTotal = toAnalyticsNumber(gst.cgst) + toAnalyticsNumber(gst.sgst) + toAnalyticsNumber(gst.igst);
       const total = getBillRevenue(bill);
       return {
         invoice_number: bill.invoice_number || bill.id,
         date: bill.created_at.slice(0, 10),
         customer_name: bill.customer_name || bill.customerName || "Walk-in",
-        taxable_value: taxableValue || toAnalyticsNumber(gst.taxable_value, bill.subtotal),
-        cgst: taxTotal ? taxTotal / 2 : toAnalyticsNumber(gst.cgst, bill.tax / 2),
-        sgst: taxTotal ? taxTotal / 2 : toAnalyticsNumber(gst.sgst, bill.tax / 2),
-        igst: toAnalyticsNumber(gst.igst, 0),
-        tax_total: taxTotal || toAnalyticsNumber(gst.tax_total, bill.tax),
+        taxable_value: taxableValue,
+        cgst: splitTotal > 0 ? taxTotal * toAnalyticsNumber(gst.cgst) / splitTotal : taxTotal / 2,
+        sgst: splitTotal > 0 ? taxTotal * toAnalyticsNumber(gst.sgst) / splitTotal : taxTotal / 2,
+        igst: splitTotal > 0 ? taxTotal * toAnalyticsNumber(gst.igst) / splitTotal : 0,
+        tax_total: taxTotal,
         invoice_total: total,
         status: bill.status,
       };
@@ -137,13 +145,16 @@ class ReportsService {
           quantity_sold: 0,
           revenue: 0,
           cogs: 0,
+          estimated_cost: false,
           gross_profit: 0,
           margin_percent: 0,
         };
         const quantity = toAnalyticsNumber(item.quantity, 0);
         row.quantity_sold += quantity;
         row.revenue += getAllocatedLineRevenue(bill, item);
-        row.cogs += quantity * toAnalyticsNumber(product?.costPrice, 0);
+        const cost = getBillLineCost(bill, item, product);
+        row.cogs += cost.amount;
+        row.estimated_cost ||= cost.estimated;
         row.gross_profit = row.revenue - row.cogs;
         row.margin_percent = row.revenue > 0 ? (row.gross_profit / row.revenue) * 100 : 0;
         rowsByKey.set(key, row);
@@ -371,7 +382,7 @@ class ReportsService {
       return {
         filename: `${key}-report.html`,
         content_type: "text/html",
-        content: `<html><body><h1>${key} report</h1><pre>${JSON.stringify(report, null, 2)}</pre></body></html>`,
+        content: `<html><body><h1>${htmlEscape(key)} report</h1><pre>${htmlEscape(JSON.stringify(report, null, 2))}</pre></body></html>`,
       };
     }
     return {

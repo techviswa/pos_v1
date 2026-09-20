@@ -1,4 +1,5 @@
 import prisma from "../../database/prisma/client.js";
+import { getAllocatedLineRevenue, getBillLineCost, isRevenueBill } from "../billing/bill-analytics.utils.js";
 import {
   ensureBusiness,
   serializeAllocation,
@@ -550,24 +551,27 @@ class InventoryOperationsService {
     const rows = new Map();
 
     for (const bill of bills) {
+      if (!isRevenueBill(bill)) continue;
       for (const item of bill.items || []) {
         const product = productById.get(item.productId);
         const key = item.productId || item.name;
         const quantity = toNumber(item.quantity, 0);
-        const revenue = quantity * toNumber(item.price, 0);
-        const cost = quantity * toNumber(product?.costPrice, 0);
+        const revenue = getAllocatedLineRevenue(bill, item);
+        const cost = getBillLineCost(bill, item, product);
         const current = rows.get(key) || {
           product_id: item.productId,
           name: item.name,
           quantity_sold: 0,
           revenue: 0,
           cogs: 0,
+          estimated_cost: false,
           gross_profit: 0,
           margin_percent: 0,
         };
         current.quantity_sold += quantity;
         current.revenue += revenue;
-        current.cogs += cost;
+        current.cogs += cost.amount;
+        current.estimated_cost ||= cost.estimated;
         current.gross_profit = current.revenue - current.cogs;
         current.margin_percent = current.revenue > 0 ? (current.gross_profit / current.revenue) * 100 : 0;
         rows.set(key, current);

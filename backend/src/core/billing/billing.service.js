@@ -1,6 +1,6 @@
 import prisma from "../../database/prisma/client.js";
 import { nextDocumentSequence } from "../../database/prisma/document-sequence.js";
-import { readState, writeState } from "../../database/prisma/state-store.js";
+import { settlementService, lockSettlement, ensureOpenShift } from "./settlement.service.js";
 import { createHttpError } from "../../shared/utils/http-error.js";
 import { mutateBillPayment } from "./billing-payments.service.js";
 import {
@@ -30,33 +30,6 @@ const getBillInclude = () => ({
   feedback: true,
   items: true,
 });
-
-const shiftStore = {
-  get: (key) => readState(`shift:${key}`),
-  set: (key, data) => writeState(`shift:${key}`, data),
-};
-
-const getShiftKey = ({ businessId, outletId = "all" }) => `${businessId}:${outletId || "all"}`;
-
-const defaultShift = ({ businessId, outletId = null, openedBy = null, openedByName = null } = {}) => {
-  const openedAt = nowIso();
-  return {
-    id: `shift_${businessId}_${outletId || "all"}_${openedAt.replace(/[-:.TZ]/g, "")}`,
-    business_id: businessId,
-    outlet_id: outletId || null,
-    opened_at: openedAt,
-    opened_by: openedBy,
-    opened_by_name: openedByName,
-    opening_cash: 0,
-    closed_at: null,
-    closed_by: null,
-    closed_by_name: null,
-    closing_cash: null,
-    expected_cash: 0,
-    variance: 0,
-    status: "open",
-  };
-};
 
 class BillingService {
   async getNextInvoiceSequence({ businessId }) {
@@ -113,10 +86,14 @@ class BillingService {
     return serializeBill(bill);
   }
 
-  async createInvoice({ tenantId, payload }) {
+  async createInvoice({ tenantId, payload, user }) {
     const business = await ensureBusiness({ tenantId });
     const createdBill = await prisma.$transaction(async (tx) => {
+      await lockSettlement(tx, business.id);
       const requestedOrderId = payload.order_id || payload.orderId || null;
+      if (requestedOrderId && !await tx.order.findFirst({ where: { id: requestedOrderId, businessId: business.id }, select: { id: true } })) {
+        throw createHttpError({ statusCode: 404, message: "Order not found for this business" });
+      }
       let resolvedItems = payload.items || [];
 
       if (requestedOrderId && !(resolvedItems || []).length) {
@@ -141,6 +118,16 @@ class BillingService {
       }
 
       const totals = calculateInvoiceTotals(payload, resolvedItems);
+      const costProducts = await tx.product.findMany({ where: { businessId: business.id, OR: [
+        { id: { in: resolvedItems.map((item) => item.productId || item.product_id).filter(Boolean) } },
+        { name: { in: resolvedItems.map((item) => item.name).filter(Boolean) } },
+      ] }, select: { id: true, name: true, costPrice: true } });
+      const itemCosts = resolvedItems.map((item) => {
+        const productId = item.productId || item.product_id;
+        const product = costProducts.find((entry) => productId ? entry.id === productId : entry.name === item.name);
+        if (productId && !product) throw createHttpError({ statusCode: 404, message: "Product not found for this business" });
+        return { product_id: productId || null, name: item.name, unit_cost: product ? Number(product.costPrice || 0) : null };
+      });
       const { subtotal, tax, total } = totals;
       const start = new Date();
       start.setHours(0, 0, 0, 0);
@@ -164,6 +151,8 @@ class BillingService {
       const paymentSummary = summarizePayments(payments, total);
       const gstBreakup = buildGstBreakup({ subtotal: totals.taxable_subtotal, tax, gstRate: totals.gst_rate });
       const shift = await this.getCurrentShift({
+        tx,
+        user,
         businessId: business.id,
         outletId: payload.outlet_id || payload.outletId || null,
       });
@@ -181,10 +170,12 @@ class BillingService {
           kitchenStatus: payload.kitchen_status || payload.kitchenStatus || null,
           metadata: extractBillingMetadataFromRequest({
             ...payload,
+            outlet_id: shift.outlet_id,
             invoice_number: invoiceNumber,
             invoice_sequence: invoiceSequence,
             gst_breakup: gstBreakup,
-            payments,
+            item_costs: itemCosts,
+            payments: payments.map((payment) => ({ ...payment, settlement_shift_id: shift.id })),
             ...paymentSummary,
             discount_amount: totals.discount_amount,
             payment_gateway_status: payments.some((payment) => payment.status !== "confirmed")
@@ -282,69 +273,29 @@ class BillingService {
     return serializedBill;
   }
 
-  async getCurrentShift({ businessId, outletId = null, openedBy = null, openedByName = null }) {
-    const key = getShiftKey({ businessId, outletId });
-    const current = await shiftStore.get(key);
-    if (current?.status === "open") {
-      return current;
-    }
-
-    const shift = defaultShift({ businessId, outletId, openedBy, openedByName });
-    await shiftStore.set(key, shift);
-    return shift;
+  async getCurrentShift({ businessId, outletId = null, tx = null, user }) {
+    if (tx) return ensureOpenShift(tx, businessId, outletId, user);
+    return settlementService.current({ businessId, outletId });
   }
 
   async openShift({ tenantId, outletId = null, openingCash = 0, user } = {}) {
     const business = await ensureBusiness({ tenantId });
-    const key = getShiftKey({ businessId: business.id, outletId });
-    const current = await shiftStore.get(key);
-
-    if (current?.status === "open") {
-      return current;
-    }
-
-    const shift = {
-      ...defaultShift({
-        businessId: business.id,
-        outletId,
-        openedBy: user?.id || null,
-        openedByName: user?.name || null,
-      }),
-      opening_cash: toNumber(openingCash, 0),
-      expected_cash: toNumber(openingCash, 0),
-    };
-    await shiftStore.set(key, shift);
-    return shift;
+    return settlementService.open({ businessId: business.id, outletId, openingCash, user });
   }
 
-  async getShift({ tenantId, outletId = null, user } = {}) {
+  async getShift({ tenantId, outletId = null } = {}) {
     const business = await ensureBusiness({ tenantId });
-    return this.getCurrentShift({
-      businessId: business.id,
-      outletId,
-      openedBy: user?.id || null,
-      openedByName: user?.name || null,
-    });
+    return settlementService.current({ businessId: business.id, outletId });
   }
 
-  async closeShift({ tenantId, outletId = null, closingCash = 0, user } = {}) {
+  async closeShift({ tenantId, outletId = null, closingCash, shiftId, user } = {}) {
     const business = await ensureBusiness({ tenantId });
-    const shift = await this.getCurrentShift({ businessId: business.id, outletId });
-    const report = await this.getCashDrawerReport({ tenantId, outletId, shiftId: shift.id });
-    const closedShift = {
-      ...shift,
-      closed_at: nowIso(),
-      closed_by: user?.id || null,
-      closed_by_name: user?.name || null,
-      closing_cash: toNumber(closingCash, 0),
-      expected_cash: report.expected_cash,
-      variance: toNumber(closingCash, 0) - report.expected_cash,
-      status: "closed",
-      report,
-    };
-    await writeState(`shift-history:${closedShift.id}`, closedShift);
-    await shiftStore.set(getShiftKey({ businessId: business.id, outletId }), closedShift);
-    return closedShift;
+    return settlementService.close({ businessId: business.id, outletId, closingCash, shiftId, user });
+  }
+
+  async getShiftHistory({ tenantId, outletId = null }) {
+    const business = await ensureBusiness({ tenantId });
+    return settlementService.history({ businessId: business.id, outletId });
   }
 
   async addPayment({ tenantId, invoiceId, payload, user }) {
@@ -402,39 +353,7 @@ class BillingService {
 
   async getCashDrawerReport({ tenantId, outletId = null, shiftId = null }) {
     const business = await ensureBusiness({ tenantId });
-    const bills = (await prisma.bill.findMany({ where: { businessId: business.id }, include: getBillInclude() })).map(serializeBill);
-    const filteredBills = bills.filter((bill) => {
-      if (outletId && bill.outlet_id !== outletId) return false;
-      if (shiftId && bill.shift_id !== shiftId) return false;
-      return !["void"].includes(bill.status);
-    });
-    const cashTotal = filteredBills
-      .flatMap((bill) => bill.payments || [])
-      .filter((payment) => payment.status === "confirmed" && String(payment.method).toLowerCase() === "cash")
-      .reduce((sum, payment) => sum + toNumber(payment.amount, 0), 0);
-    const nonCashTotal = filteredBills
-      .flatMap((bill) => bill.payments || [])
-      .filter((payment) => payment.status === "confirmed" && String(payment.method).toLowerCase() !== "cash")
-      .reduce((sum, payment) => sum + toNumber(payment.amount, 0), 0);
-    const refunds = filteredBills.reduce((sum, bill) => sum + toNumber(bill.refunded_amount, 0), 0);
-    const cashRefunds = filteredBills.flatMap((bill) => bill.refunds || [])
-      .filter((refund) => String(refund.method).toLowerCase() === "cash")
-      .reduce((sum, refund) => sum + toNumber(refund.amount, 0), 0);
-    const shift = await this.getCurrentShift({ businessId: business.id, outletId });
-
-    return {
-      business_id: business.id,
-      outlet_id: outletId,
-      shift_id: shiftId || shift.id,
-      opening_cash: shift.opening_cash || 0,
-      cash_sales: cashTotal,
-      non_cash_sales: nonCashTotal,
-      refunds,
-      cash_refunds: cashRefunds,
-      expected_cash: toNumber(shift.opening_cash, 0) + cashTotal - cashRefunds,
-      bill_count: filteredBills.length,
-      generated_at: nowIso(),
-    };
+    return settlementService.report({ businessId: business.id, outletId, shiftId });
   }
 
   async deleteInvoice({ tenantId, invoiceId }) {

@@ -592,6 +592,7 @@ router.post("/bills", requirePermission("billing"), async (req, res, next) => {
     const created = await billingService.createInvoice({
       tenantId: req.context.tenantId,
       payload,
+      user: currentUser,
     });
     const data = await billingService.updateInvoice({
       tenantId: req.context.tenantId,
