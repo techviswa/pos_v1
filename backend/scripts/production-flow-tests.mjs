@@ -279,6 +279,19 @@ try {
   assert.equal((await prisma.inventoryItem.findUnique({ where: { id: ingredient.id } })).stock, 10, "Concurrent counts must not apply stale variance twice");
   assert.equal(audits.reduce((total, audit) => total + audit.adjustments[0].variance, 0), 8);
   for (const audit of audits) assert.ok(await prisma.backgroundJob.findFirst({ where: { type: "admincore.notify-change", payload: { path: ["record_id"], equals: audit.record.id } } }));
+  const waste = (quantity) => inventoryOperationsService.recordWastage({ tenantId, itemId: ingredient.id, user, payload: { quantity, reason: "Spoilage fixture" } });
+  for (const quantity of [0, -1, "bad"]) await assert.rejects(waste(quantity), /quantity/);
+  const previousMovementCount = await prisma.inventoryMovement.count({ where: { inventoryItemId: ingredient.id } });
+  const originalNotify = admincoreChangeSyncService.notifyChange;
+  try {
+    admincoreChangeSyncService.notifyChange = async () => { throw new Error("Injected outbox failure"); };
+    await assert.rejects(waste(2), /Injected outbox failure/);
+  } finally { admincoreChangeSyncService.notifyChange = originalNotify; }
+  assert.equal((await prisma.inventoryItem.findUnique({ where: { id: ingredient.id } })).stock, 10, "Failed wastage outbox must roll back stock");
+  assert.equal(await prisma.inventoryMovement.count({ where: { inventoryItemId: ingredient.id } }), previousMovementCount, "Failed wastage must roll back audit movement");
+  const wasted = await waste(2);
+  assert.equal((await prisma.inventoryItem.findUnique({ where: { id: ingredient.id } })).stock, 8);
+  assert.ok(await prisma.backgroundJob.findFirst({ where: { type: "admincore.notify-change", payload: { path: ["metadata", "movement_id"], equals: wasted.movement.id } } }));
   env.admincore.enabled = false;
 
   const print = await printerService.queuePrintJob({ businessId: id, payload: { test: true } });

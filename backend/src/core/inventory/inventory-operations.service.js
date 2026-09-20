@@ -261,31 +261,36 @@ class InventoryOperationsService {
 
   async recordWastage({ tenantId, itemId, payload, user }) {
     const business = await ensureBusiness({ tenantId });
-    const item = await prisma.inventoryItem.findFirstOrThrow({
-      where: { id: itemId, businessId: business.id },
-    });
-    const quantity = Math.max(0, toNumber(payload.quantity, 0));
+    if (typeof itemId !== "string" || !itemId.trim()) throw createHttpError({ statusCode: 400, message: "Inventory item ID is required" });
+    if (!validNumber(payload.quantity) || Number(payload.quantity) <= 0) throw createHttpError({ statusCode: 400, message: "Wastage quantity must be greater than zero" });
+    const quantity = Number(payload.quantity);
     const type = payload.type || payload.movement_type || "wastage";
-    const result = await this.recordMovement({
-      businessId: business.id,
-      item,
-      movementType: ["spoilage", "pilferage"].includes(type) ? type : "wastage",
-      quantity: -quantity,
-      reason: payload.reason || `Recorded by ${user?.name || "system"}`,
-      expiryDate: payload.expiry_date || null,
-    });
+    const result = await prisma.$transaction(async (tx) => {
+      const item = await tx.inventoryItem.findFirst({ where: { id: itemId, businessId: business.id } });
+      if (!item) throw createHttpError({ statusCode: 404, message: "Inventory item not found in this business" });
+      const movement = await this.recordMovement({
+        tx,
+        businessId: business.id,
+        item,
+        movementType: ["spoilage", "pilferage"].includes(type) ? type : "wastage",
+        quantity: -quantity,
+        reason: payload.reason || `Recorded by ${user?.name || "system"}`,
+        expiryDate: payload.expiry_date || null,
+      });
 
-    await admincoreChangeSyncService.notifyChange({
-      resource: "inventory",
-      action: "wastage_recorded",
-      recordId: item.id,
-      tenantId,
-      businessId: business.id,
-      metadata: {
-        movement_id: result.movement.id,
-        quantity,
-        type,
-      },
+      await admincoreChangeSyncService.notifyChange({
+        resource: "inventory",
+        action: "wastage_recorded",
+        recordId: item.id,
+        tenantId,
+        businessId: business.id,
+        metadata: {
+          movement_id: movement.movement.id,
+          quantity,
+          type,
+        },
+      }, { tx });
+      return movement;
     });
 
     return {
