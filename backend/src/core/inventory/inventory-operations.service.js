@@ -15,6 +15,7 @@ const toNumber = (value, fallback = 0) => {
 };
 
 const nowIso = () => new Date().toISOString();
+const validNumber = (value) => ["string", "number"].includes(typeof value) && String(value).trim() !== "" && Number.isFinite(Number(value));
 
 const cloneJson = (value, fallback) => {
   if (value === undefined || value === null) return fallback;
@@ -53,6 +54,7 @@ class InventoryOperationsService {
         },
       });
       if (item) return item;
+      throw createHttpError({ statusCode: 404, message: "Inventory item not found in this business" });
     }
 
     const name = line.inventory_name || line.name || line.ingredient_name || "Inventory Item";
@@ -110,6 +112,7 @@ class InventoryOperationsService {
     }
 
     const result = await prisma.$transaction(async (tx) => {
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`inventory-reconciliation:${business.id}`}))`;
       const outletId = await this.resolveOutletId({
         tx,
         businessId: business.id,
@@ -117,14 +120,20 @@ class InventoryOperationsService {
       });
       const receivedItems = [];
       for (const line of lines) {
-        const item = await this.findOrCreateInventoryItem({ tx, businessId: business.id, line });
-        const quantity = Math.max(0, toNumber(line.quantity ?? line.received_quantity, 0));
-        const unitCost = toNumber(line.unit_cost ?? line.conversion_cost, item.conversionCost);
+        const rawQuantity = line.quantity ?? line.received_quantity;
+        const rawCost = line.unit_cost ?? line.conversion_cost;
+        if (!validNumber(rawQuantity) || Number(rawQuantity) <= 0) throw createHttpError({ statusCode: 400, message: "Received quantity must be greater than zero" });
+        if (rawCost != null && (!validNumber(rawCost) || Number(rawCost) < 0)) throw createHttpError({ statusCode: 400, message: "Unit cost must be a non-negative number" });
+        const resolved = await this.findOrCreateInventoryItem({ tx, businessId: business.id, line });
+        await tx.$queryRaw`SELECT id FROM "InventoryItem" WHERE id = ${resolved.id} AND "businessId" = ${business.id} FOR UPDATE`;
+        const item = await tx.inventoryItem.findUniqueOrThrow({ where: { id: resolved.id } });
+        const quantity = Number(rawQuantity);
+        const unitCost = rawCost == null ? item.conversionCost : Number(rawCost);
 
         const weightedCost =
           quantity > 0
             ? (toNumber(item.stock, 0) * toNumber(item.conversionCost, 0) + quantity * unitCost) /
-              Math.max(1, toNumber(item.stock, 0) + quantity)
+              (toNumber(item.stock, 0) + quantity)
             : item.conversionCost;
 
         await tx.inventoryItem.update({
@@ -174,19 +183,18 @@ class InventoryOperationsService {
         },
       });
 
+      await admincoreChangeSyncService.notifyChange({
+        resource: "inventory",
+        action: "purchase_received",
+        recordId: purchaseOrder.id,
+        tenantId,
+        businessId: business.id,
+        outletId: purchaseOrder.outletId,
+        metadata: {
+          received_item_count: receivedItems.length,
+        },
+      }, { tx });
       return { purchaseOrder, receivedItems };
-    });
-
-    await admincoreChangeSyncService.notifyChange({
-      resource: "inventory",
-      action: "purchase_received",
-      recordId: result.purchaseOrder.id,
-      tenantId,
-      businessId: business.id,
-      outletId: result.purchaseOrder.outletId,
-      metadata: {
-        received_item_count: result.receivedItems.length,
-      },
     });
 
     return {
@@ -465,8 +473,17 @@ class InventoryOperationsService {
     if (!counts.length) {
       throw createHttpError({ statusCode: 400, message: "Stock audit requires at least one counted item" });
     }
+    const countedIds = new Set();
+    for (const count of counts) {
+      const itemId = count.inventory_id || count.inventoryItemId;
+      const quantity = count.counted_quantity ?? count.quantity;
+      if (typeof itemId !== "string" || !itemId.trim() || countedIds.has(itemId)) throw createHttpError({ statusCode: 400, message: "Each counted inventory item must have a unique ID" });
+      if (!validNumber(quantity) || Number(quantity) < 0) throw createHttpError({ statusCode: 400, message: "Counted quantity must be a non-negative number" });
+      countedIds.add(itemId);
+    }
 
     const audit = await prisma.$transaction(async (tx) => {
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`inventory-reconciliation:${business.id}`}))`;
       const outletId = await this.resolveOutletId({
         tx,
         businessId: business.id,
@@ -474,13 +491,16 @@ class InventoryOperationsService {
       });
       const adjustments = [];
       for (const count of counts) {
-        const item = await tx.inventoryItem.findFirstOrThrow({
+        const itemId = count.inventory_id || count.inventoryItemId;
+        await tx.$queryRaw`SELECT id FROM "InventoryItem" WHERE id = ${itemId} AND "businessId" = ${business.id} FOR UPDATE`;
+        const item = await tx.inventoryItem.findFirst({
           where: {
-            id: count.inventory_id || count.inventoryItemId,
+            id: itemId,
             businessId: business.id,
           },
         });
-        const countedQuantity = Math.max(0, toNumber(count.counted_quantity ?? count.quantity, 0));
+        if (!item) throw createHttpError({ statusCode: 404, message: "Inventory item not found in this business" });
+        const countedQuantity = Number(count.counted_quantity ?? count.quantity);
         const variance = countedQuantity - toNumber(item.stock, 0);
         if (variance !== 0) {
           await this.recordMovement({
@@ -519,19 +539,16 @@ class InventoryOperationsService {
         },
       });
 
+      await admincoreChangeSyncService.notifyChange({
+        resource: "inventory",
+        action: "stock_audit_completed",
+        recordId: record.id,
+        tenantId,
+        businessId: business.id,
+        outletId: record.outletId,
+        metadata: { adjustment_count: adjustments.length },
+      }, { tx });
       return { record, adjustments };
-    });
-
-    await admincoreChangeSyncService.notifyChange({
-      resource: "inventory",
-      action: "stock_audit_completed",
-      recordId: audit.record.id,
-      tenantId,
-      businessId: business.id,
-      outletId: audit.record.outletId,
-      metadata: {
-        adjustment_count: audit.adjustments.length,
-      },
     });
 
     return {

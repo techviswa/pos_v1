@@ -4,6 +4,8 @@ This is the authoritative scope tracker for both POS and AdminCore. Read it toge
 
 ## Latest evidence (supersedes stale status wording below)
 
+- September 21: settlement/report batch e1ccae6 published; GitHub CI and Vercel successful. Public POS readiness 200; AdminCore 200 after one timeout. Inventory receiving and audit corrections pass PostgreSQL regressions: fractional/concurrent costing, invalid-input rollback, concurrent count reconciliation and transactionally persisted AdminCore notifications. Exact new Render revision/authenticated flows still unverified.
+
 - Both previous releases were verified live on Render; bridge secrets rotated and the legacy missing tenant mapping reconciled with successful authenticated refresh. User subsequently revoked the temporary Render key. Both Render services remain on free plans.
 - Cashier settlement now has opening/counting/closing/history, immutable closed reports, server role checks, and transaction locks coordinating concurrent payments/refunds. Late collections belong to the collecting shift. PostgreSQL regressions passed. One shared drawer per outlet; cash movements and multiple tills remain outside this implementation.
 - Cost snapshots protect new invoice profitability from later catalog changes. Inventory COGS and profitability share tax-exclusive discounted revenue/cost rules; GST allocation/full refunds tested. Catalog costs do not replace recipe/purchase valuation. Export formula/HTML injection regressions pass.

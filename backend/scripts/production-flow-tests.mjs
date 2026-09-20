@@ -250,6 +250,37 @@ try {
   await assert.rejects(kotService.ensureTicketForOrder({ businessId: id, orderId: pendingQr.id }), /Restaurant approval/);
   assert.equal(await prisma.kitchenTicket.count({ where: { orderId: pendingQr.id } }), 0);
 
+  const ingredient = await prisma.inventoryItem.create({ data: { businessId: id, name: "Fractional purchase fixture", stock: 0, unit: "kg", conversionCost: 0 } });
+  const receiving = (quantity, unit_cost) => inventoryOperationsService.receivePurchase({ tenantId, user, payload: { outlet_id: settlementOutlet.id, items: [{ inventory_id: ingredient.id, quantity, unit_cost }] } });
+  await receiving(0.25, 100);
+  assert.equal((await prisma.inventoryItem.findUnique({ where: { id: ingredient.id } })).conversionCost, 100, "Fractional purchases preserve per-unit cost");
+  await Promise.all([receiving(0.25, 200), receiving(0.5, 50)]);
+  const stocked = await prisma.inventoryItem.findUnique({ where: { id: ingredient.id } });
+  assert.equal(stocked.stock, 1);
+  assert.ok(Math.abs(stocked.conversionCost - 100) < 0.000001, "Concurrent receiving preserves weighted valuation");
+  for (const quantity of [0, -1, "", "invalid", true]) await assert.rejects(receiving(quantity, 10), /quantity/);
+  await assert.rejects(receiving(1, -1), /Unit cost/);
+  const beforeReceipts = await prisma.purchaseOrder.count({ where: { businessId: id } });
+  await assert.rejects(inventoryOperationsService.receivePurchase({ tenantId, user, payload: { outlet_id: settlementOutlet.id, items: [
+    { inventory_id: ingredient.id, quantity: 1, unit_cost: 100 },
+    { inventory_id: "unowned-inventory-item", name: "Must not create", quantity: 1, unit_cost: 100 },
+  ] } }), /not found in this business/);
+  assert.equal((await prisma.inventoryItem.findUnique({ where: { id: ingredient.id } })).stock, 1, "Failed receipt rolls back every line");
+  assert.equal(await prisma.inventoryItem.count({ where: { businessId: id, name: "Must not create" } }), 0);
+  assert.equal(await prisma.purchaseOrder.count({ where: { businessId: id } }), beforeReceipts);
+  env.admincore.enabled = true;
+  env.admincore.apiBaseUrl = "https://admincore.example.invalid";
+  const syncedReceipt = await receiving(1, 100);
+  assert.ok(await prisma.backgroundJob.findFirst({ where: { type: "admincore.notify-change", payload: { path: ["record_id"], equals: syncedReceipt.record.id } } }), "Receiving durably queues its AdminCore update");
+  const stockAudit = (counts) => inventoryOperationsService.createStockAudit({ tenantId, user, payload: { outlet_id: settlementOutlet.id, counts } });
+  for (const counts of [[{ quantity: 0 }], [{ inventory_id: ingredient.id, quantity: "invalid" }], [{ inventory_id: ingredient.id, quantity: -1 }], [{ inventory_id: ingredient.id, quantity: 1 }, { inventory_id: ingredient.id, quantity: 2 }]]) await assert.rejects(stockAudit(counts), /unique ID|non-negative/);
+  assert.equal((await prisma.inventoryItem.findUnique({ where: { id: ingredient.id } })).stock, 2, "Invalid counts must not change stock");
+  const audits = await Promise.all([1, 2].map(() => stockAudit([{ inventory_id: ingredient.id, counted_quantity: 10 }])));
+  assert.equal((await prisma.inventoryItem.findUnique({ where: { id: ingredient.id } })).stock, 10, "Concurrent counts must not apply stale variance twice");
+  assert.equal(audits.reduce((total, audit) => total + audit.adjustments[0].variance, 0), 8);
+  for (const audit of audits) assert.ok(await prisma.backgroundJob.findFirst({ where: { type: "admincore.notify-change", payload: { path: ["record_id"], equals: audit.record.id } } }));
+  env.admincore.enabled = false;
+
   const print = await printerService.queuePrintJob({ businessId: id, payload: { test: true } });
   const claims = await Promise.all(["one", "two"].map((agentId) => printerService.claimNextPrintJob({ businessId: id, agentId })));
   assert.equal(claims.filter(Boolean).length, 1);

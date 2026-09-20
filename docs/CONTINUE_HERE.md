@@ -12,6 +12,14 @@ Follow POS `AGENTS.md`. No AdminCore AGENTS.md was found. User permission includ
 
 ## Exact interruption
 
+### Inventory reconciliation continuation (2026-09-21, latest)
+
+- Published previous verified settlement/report batch as e1ccae64ed4f817d08c5c529000b362437fe418b. GitHub run 35544889361 completed SUCCESS; Vercel commit status SUCCESS. POS public readiness returned 200. AdminCore public health timed out once (25 seconds), then returned 200 on retry. Exact Render backend revision for this batch has not been verified; user revoked temporary key. Do not equate public health with full authenticated production regression.
+- Fixed purchase receiving: fractional stock weighted-cost denominator, concurrent valuation through transaction/advisory and item row locks, strict positive quantities/nonnegative costs, and reject supplied unowned/missing inventory IDs rather than silently creating an item. Entire multi-line receipt rolls back on invalid item.
+- Fixed stock audits: require unique explicit item IDs and finite nonnegative counts; prevents missing IDs selecting an arbitrary item and malformed values becoming zero. Lock before reading stock so concurrent counts do not double-apply stale variance. Receiving/audit AdminCore outbox jobs now commit atomically with their stock changes.
+- Latest PostgreSQL production-flow tests PASS after both changes: fractional/concurrent receiving, invalid receipt rollback, malformed/duplicate counts, concurrent audit variance, persisted sync jobs. Backend deploy check also passed. No frontend change in this continuation; prior build/mobile evidence remains applicable. Inventory changes currently awaiting commit/push and CI result.
+- Next implementation review: stock transfers/wastage and recipe consumption/reversal accounting, then AdminCore report consistency. Preserve remaining full checklist; no claim of production sign-off, real-device validation or connected payment/SMS providers. Checkpoint must be updated after inventory publication.
+
 ### Verified settlement/report batch (2026-09-15, latest; supersedes older running-test notes)
 
 - Frontend build 58809 finished successfully. Native Chrome suite 9348 PASSED all nine routes at 390 and 768 pixels: login, dashboard, billing, chef, waiter, products, reports, QR management and public QR menu. It verifies cashier open/count/close/history and populated kitchen audit history plus public menu products. No root overflow, API fallback, redirected route or runtime failure. Screenshots inspected. This is local Chrome emulation, NOT physical-phone or deployed-device validation.
