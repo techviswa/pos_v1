@@ -23,6 +23,10 @@ const cloneJson = (value, fallback) => {
 };
 
 class InventoryOperationsService {
+  transferQuantity(value) {
+    if (!validNumber(value) || Number(value) <= 0) throw createHttpError({ statusCode: 400, message: "Transfer quantity must be greater than zero" });
+    return Number(value);
+  }
   async resolveOutletId({ tx = prisma, businessId, outletId }) {
     if (outletId) {
       const outlet = await tx.outlet.findFirst({ where: { id: outletId, businessId } });
@@ -307,6 +311,7 @@ class InventoryOperationsService {
 
   async createTransferRequest({ tenantId, payload, user }) {
     const business = await ensureBusiness({ tenantId });
+    if (!Array.isArray(payload.items) || !payload.items.length) throw createHttpError({ statusCode: 400, message: "Transfer requires at least one item" });
     const destinationOutletId = await this.resolveOutletId({
       businessId: business.id,
       outletId: payload.destination_outlet_id || payload.outlet_id || payload.outletId,
@@ -320,8 +325,10 @@ class InventoryOperationsService {
         sourceLocation: payload.source_outlet_id || payload.source_location || "central-store",
         status: "pending_approval",
         items: (payload.items || []).map((item) => ({
-          ...item,
-          requested_quantity: toNumber(item.requested_quantity ?? item.quantity, 0),
+          inventory_id: item.inventory_id || item.inventoryItemId || null,
+          inventory_name: item.inventory_name || item.name || item.ingredient_name || null,
+          unit: item.unit || "unit",
+          requested_quantity: this.transferQuantity(item.requested_quantity ?? item.quantity),
         })),
       },
     });
@@ -362,7 +369,7 @@ class InventoryOperationsService {
           businessId: business.id,
           item,
           movementType: "stock_transfer_out",
-          quantity: -Math.max(0, toNumber(line.approved_quantity ?? line.requested_quantity ?? line.quantity, 0)),
+          quantity: -this.transferQuantity(line.requested_quantity ?? line.quantity),
           reason: `Transfer approved to outlet ${allocation.outletId} by ${user?.name || "system"}`,
         });
       }
@@ -373,7 +380,7 @@ class InventoryOperationsService {
           status: "approved",
           items: items.map((item) => ({
             ...item,
-            approved_quantity: toNumber(item.approved_quantity ?? item.requested_quantity ?? item.quantity, 0),
+            approved_quantity: this.transferQuantity(item.requested_quantity ?? item.quantity),
             approved_by: user?.name || null,
             approved_at: nowIso(),
           })),
@@ -409,7 +416,7 @@ class InventoryOperationsService {
       const items = cloneJson(allocation.items, []);
       for (const line of items) {
         const item = await this.findOrCreateInventoryItem({ tx, businessId: business.id, line });
-        const quantity = Math.max(0, toNumber(line.received_quantity ?? line.approved_quantity ?? line.quantity, 0));
+        const quantity = this.transferQuantity(line.approved_quantity);
 
         await tx.outletInventory.upsert({
           where: {
@@ -448,7 +455,7 @@ class InventoryOperationsService {
           status: "received",
           items: items.map((item) => ({
             ...item,
-            received_quantity: toNumber(item.received_quantity ?? item.approved_quantity ?? item.quantity, 0),
+            received_quantity: this.transferQuantity(item.approved_quantity),
             received_by: user?.name || null,
             received_at: nowIso(),
           })),

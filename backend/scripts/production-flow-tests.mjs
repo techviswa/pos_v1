@@ -294,6 +294,13 @@ try {
   assert.ok(await prisma.backgroundJob.findFirst({ where: { type: "admincore.notify-change", payload: { path: ["metadata", "movement_id"], equals: wasted.movement.id } } }));
   env.admincore.enabled = false;
 
+  const transfer = await inventoryOperationsService.createTransferRequest({ tenantId, user, payload: { destination_outlet_id: settlementOutlet.id, items: [{ inventory_id: ingredient.id, quantity: 2, approved_quantity: 7, received_quantity: 999 }] } });
+  await inventoryOperationsService.approveTransfer({ tenantId, allocationId: transfer.id, user });
+  assert.equal((await prisma.inventoryItem.findUnique({ where: { id: ingredient.id } })).stock, 6, "Approval uses requested quantity, not injected approval fields");
+  await inventoryOperationsService.receiveTransfer({ tenantId, allocationId: transfer.id, user });
+  assert.equal((await prisma.outletInventory.findUnique({ where: { outletId_inventoryItemId: { outletId: settlementOutlet.id, inventoryItemId: ingredient.id } } })).stock, 2, "Receipt cannot inflate approved stock with caller-supplied received_quantity");
+  await assert.rejects(inventoryOperationsService.receiveTransfer({ tenantId, allocationId: transfer.id, user }), /only be received once/);
+
   const print = await printerService.queuePrintJob({ businessId: id, payload: { test: true } });
   const claims = await Promise.all(["one", "two"].map((agentId) => printerService.claimNextPrintJob({ businessId: id, agentId })));
   assert.equal(claims.filter(Boolean).length, 1);
