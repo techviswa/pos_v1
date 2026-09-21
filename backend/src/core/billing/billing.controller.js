@@ -1,9 +1,14 @@
 import { apiResponse } from "../../shared/utils/apiResponse.js";
 import { isAdminCoreSyncRequest, createSyncEnvelope } from "../sync/sync-contract.js";
 import { billingService } from "./billing.service.js";
+import { reverseBillStock } from "./stock-reversal.service.js";
 import { createHttpError } from "../../shared/utils/http-error.js";
 
 class BillingController {
+  async reverseStock(req, res) {
+    const data = await reverseBillStock({ tenantId: req.context.tenantId, invoiceId: req.params.invoiceId, user: req.user, payload: req.body });
+    res.status(200).json(apiResponse({ message: "Unused ingredient stock restored", data }));
+  }
   async list(req, res) {
     const data = await billingService.listInvoices({
       tenantId: req.context.tenantId,

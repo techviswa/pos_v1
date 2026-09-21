@@ -8,6 +8,7 @@ import { useUi } from "../contexts/UiContext";
 import { getTrackingLine } from "../core/billing/utils/orderTracking";
 import { OutletOverviewPanel } from "../core/outlets/components/OutletOverviewPanel";
 import { useActiveOutlet } from "../core/outlets/store/ActiveOutletContext";
+import { StockReversal } from "../core/billing/components/StockReversal";
 
 const API_URL = (() => {
   const configured = String(process.env.REACT_APP_BACKEND_URL || "").replace(/\/+$/, "");
@@ -296,6 +297,7 @@ export const Bills = () => {
                 </div>
               </div>
             ) : null}
+            {selectedBill && ["Owner", "Manager"].includes(user?.role) && <StockReversal key={selectedBill.id} bill={selectedBill} apiUrl={API_URL} />}
           </DialogContent>
         </Dialog>
       </div>

@@ -21,6 +21,7 @@ router.post("/", requirePermission("billing"), asyncHandler(billingController.cr
 router.post("/:invoiceId/payments", requirePermission("billing"), asyncHandler(billingController.addPayment));
 router.post("/:invoiceId/payments/:paymentId/confirm", requirePermission("billing"), asyncHandler(billingController.confirmPayment));
 router.post("/:invoiceId/refunds", requireRole("Owner", "Manager"), asyncHandler(billingController.refund));
+router.post("/:invoiceId/stock-reversal", requireRole("Owner", "Manager"), asyncHandler(billingController.reverseStock));
 router.post("/:invoiceId/void-request", requirePermission("billing"), asyncHandler(billingController.requestVoid));
 router.post("/:invoiceId/void-approval", requireRole("Owner", "Manager"), asyncHandler(billingController.approveVoid));
 router.put("/:invoiceId", requirePermission("billing"), asyncHandler(billingController.update));

@@ -1,6 +1,7 @@
 import prisma from "../../database/prisma/client.js";
 import { createHttpError } from "../../shared/utils/http-error.js";
 import { admincoreChangeSyncService } from "../../core/admincore/admincore-change-sync.service.js";
+import { convertRecipeQuantity } from "../../core/inventory/recipe-units.js";
 import { featureToggleService } from "../featureToggleService.js";
 import { kotService } from "../../features/kitchen/kot/kot.service.js";
 import { FEATURE_KEYS } from "../../shared/constants/module.constants.js";
@@ -52,7 +53,8 @@ const addDemandLine = (demandMap, line, multiplier) => {
     return;
   }
 
-  const current = demandMap.get(inventoryId) || {
+  const key = `${inventoryId}:${normalizeText(line?.unit)}`;
+  const current = demandMap.get(key) || {
     inventoryItemId: inventoryId,
     ingredientName: line?.ingredient_name || line?.ingredientName || "Ingredient",
     unit: line?.unit || "",
@@ -60,7 +62,7 @@ const addDemandLine = (demandMap, line, multiplier) => {
   };
 
   current.quantity += quantity;
-  demandMap.set(inventoryId, current);
+  demandMap.set(key, current);
 };
 
 class OrderFulfillmentService {
@@ -167,6 +169,12 @@ class OrderFulfillmentService {
         productAdjustments.set(product.id, currentProductAdjustment);
 
         const recipeDemand = this.buildInventoryDemandForItem({ product, item });
+        for (const line of recipeDemand) {
+          const ingredient = await tx.inventoryItem.findFirst({ where: { id: line.inventoryItemId, businessId }, select: { unit: true } });
+          if (!ingredient) throw createHttpError({ statusCode: 409, message: "Recipe ingredient does not belong to this business" });
+          line.quantity = convertRecipeQuantity(line.quantity, line.unit, ingredient.unit);
+          line.unit = ingredient.unit;
+        }
         if (recipeDemand.length) recipeItems.push({ productId: product.id, quantity, demand: recipeDemand });
         for (const line of recipeDemand) {
           const currentDemand = inventoryDemand.get(line.inventoryItemId) || { ...line, quantity: 0 };

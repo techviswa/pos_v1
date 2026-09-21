@@ -7,6 +7,8 @@ import env from "../src/config/env.js";
 import { connectDatabase } from "../src/config/db.js";
 import { saasService } from "../src/core/saas/saas.service.js";
 import { billingService } from "../src/core/billing/billing.service.js";
+import { reverseBillStock } from "../src/core/billing/stock-reversal.service.js";
+import { convertRecipeQuantity } from "../src/core/inventory/recipe-units.js";
 import { authService } from "../src/core/auth/auth.service.js";
 import { kotService } from "../src/features/kitchen/kot/kot.service.js";
 import { summarizeKotTiming } from "../src/features/kitchen/kot/kot.utils.js";
@@ -318,7 +320,11 @@ try {
   assert.equal(await outletStock(settlementOutlet.id), 1);
   assert.equal(await outletStock(destination.id), 1);
   assert.equal((await prisma.inventoryItem.findUnique({ where: { id: ingredient.id } })).stock, 6, "Outlet transfer must not deduct central stock");
-  const recipeProduct = await prisma.product.create({ data: { businessId: id, name: "Recipe fixture", category: "Test", price: 100, recipeLines: [{ inventory_id: ingredient.id, quantity: 0.5 }] } });
+  assert.equal(convertRecipeQuantity(500, "g", "kg"), 0.5);
+  assert.equal(convertRecipeQuantity(250, "ml", "litres"), 0.25);
+  assert.equal(convertRecipeQuantity(2, "pcs", "unit"), 2);
+  assert.throws(() => convertRecipeQuantity(1, "kg", "l"), /Cannot convert/);
+  const recipeProduct = await prisma.product.create({ data: { businessId: id, name: "Recipe fixture", category: "Test", price: 100, recipeLines: [{ inventory_id: ingredient.id, quantity: 250, unit: "g" }, { inventory_id: ingredient.id, quantity: 0.25, unit: "kg" }] } });
   const recipePayload = { outlet_id: destination.id, items: [{ productId: recipeProduct.id, name: recipeProduct.name, price: 100, quantity: 1 }], gst_rate: 0, payment_type: "Cash" };
   const recipeBill = await billingService.createInvoice({ tenantId, user, payload: recipePayload });
   const recipeRecord = await prisma.bill.findUnique({ where: { id: recipeBill.id } });
@@ -333,6 +339,24 @@ try {
   assert.equal(await prisma.bill.count({ where: { businessId: id } }), beforeRecipeBills, "Insufficient recipe stock rolls back invoice");
   assert.equal(await outletStock(destination.id), 0.5);
   assert.equal((await prisma.inventoryItem.findUnique({ where: { id: ingredient.id } })).stock, 6);
+
+  const reversalInput = { tenantId, invoiceId: recipeBill.id, user, payload: { unprepared: true, reason: "Cancelled before preparation" } };
+  await assert.rejects(reverseBillStock(reversalInput), /Only voided or fully refunded/);
+  await billingService.refundInvoice({ tenantId, invoiceId: recipeBill.id, user, payload: { amount: recipeBill.total, reason: "Cancelled" } });
+  assert.equal(await outletStock(destination.id), 0.5, "Refund does not automatically restock prepared food");
+  await assert.rejects(reverseBillStock({ ...reversalInput, user: { ...user, role: "Cashier" } }), /Manager approval/);
+  await assert.rejects(reverseBillStock({ ...reversalInput, tenantId: "other-tenant" }), /Invoice not found/);
+  await assert.rejects(reverseBillStock({ ...reversalInput, payload: { reason: "Missing attestation" } }), /Confirm/);
+  try {
+    admincoreChangeSyncService.notifyChange = async () => { throw new Error("Reversal outbox failure"); };
+    await assert.rejects(reverseBillStock(reversalInput), /Reversal outbox failure/);
+  } finally { admincoreChangeSyncService.notifyChange = originalNotify; }
+  assert.equal(await outletStock(destination.id), 0.5, "Failed reversal notification rolls back restored stock");
+  assert.equal((await prisma.bill.findUnique({ where: { id: recipeBill.id } })).metadata.stock_reversal, undefined);
+  const reversals = await Promise.all([reverseBillStock(reversalInput), reverseBillStock(reversalInput)]);
+  assert.deepEqual(reversals[0], reversals[1], "Concurrent stock restoration is idempotent");
+  assert.equal(await outletStock(destination.id), 1);
+  assert.equal(await prisma.inventoryMovement.count({ where: { businessId: id, movementType: "bill_reversal" } }), 1);
 
   const print = await printerService.queuePrintJob({ businessId: id, payload: { test: true } });
   const claims = await Promise.all(["one", "two"].map((agentId) => printerService.claimNextPrintJob({ businessId: id, agentId })));

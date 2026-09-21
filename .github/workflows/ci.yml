@@ -75,6 +75,9 @@ jobs:
       - name: Deployment safety check
         run: npm --prefix backend run deploy:check
 
+      - name: Production database workflow regressions
+        run: node backend/scripts/production-flow-tests.mjs
+
   frontend:
     name: Frontend build
     runs-on: ubuntu-latest

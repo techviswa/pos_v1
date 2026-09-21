@@ -41,6 +41,9 @@ try {
   const table = await prisma.diningTable.create({ data: { businessId: id, name: "Viewport table", meta: { outlet_id: outlet.id } } });
   const qr = await prisma.tableQrCode.create({ data: { businessId: id, tableId: table.id, token: randomUUID() } });
   const auth = await authService.login({ email: `${id}@example.invalid`, password });
+  const restoreIngredient = await prisma.inventoryItem.create({ data: { businessId: id, name: "Unused fixture ingredient", stock: 0, unit: "kg" } });
+  await prisma.outletInventory.create({ data: { outletId: outlet.id, inventoryItemId: restoreIngredient.id, stock: 0 } });
+  const restoreBill = await prisma.bill.create({ data: { businessId: id, customerName: "Reversal fixture", currency: "INR", total: 100, subtotal: 100, tax: 0, status: "refunded", metadata: { outlet_id: outlet.id, refunded_amount: 100, inventory_consumption: [{ inventory_id: restoreIngredient.id, outlet_id: outlet.id, quantity: 1, unit_cost: 20 }] }, items: { create: [{ name: "Unused meal", price: 100, quantity: 1 }] } } });
   await prisma.product.create({ data: { businessId: id, name: "Viewport meal", category: "Meals", price: 100, costPrice: 30 } });
   const order = await prisma.order.create({ data: { businessId: id, customerName: "Viewport guest", channel: "pos", status: "accepted", metadata: { outlet_id: outlet.id }, items: { create: [{ name: "Viewport meal", quantity: 1, price: 100 }] } } });
   const ticket = await kotService.ensureTicketForOrder({ businessId: id, orderId: order.id });
@@ -97,11 +100,22 @@ try {
   const results = [];
   for (const width of [390, 768]) {
     await send("Emulation.setDeviceMetricsOverride", { width, height: 844, deviceScaleFactor: 1, mobile: true }, session);
-    for (const route of ["/login", "/dashboard", "/billing", "/chef", "/waiter", "/products", "/reports", "/qr-management", `/qr/${qr.token}`]) {
+    for (const route of ["/login", "/dashboard", "/billing", "/bills", "/chef", "/waiter", "/products", "/reports", "/qr-management", `/qr/${qr.token}`]) {
       authenticated = route !== "/login" && !route.startsWith("/qr/");
       await send("Page.addScriptToEvaluateOnNewDocument", { source: `sessionStorage.setItem('cashflow-lite-tab-session-id',${JSON.stringify(auth.sessionId)});localStorage.setItem('cashflow-lite-active-outlet',${JSON.stringify(outlet.id)});` }, session);
       await send("Page.navigate", { url: `${webUrl}${route}` }, session);
       await new Promise((resolve) => setTimeout(resolve, 1800));
+      if (route === "/bills") {
+        await evaluate(`document.querySelector('[data-testid="bill-row-${restoreBill.id}"] button').click()`);
+        await new Promise((resolve) => setTimeout(resolve, 400));
+        assert.ok(await evaluate(`document.body.innerText.includes('Restore unused ingredients')`));
+        await evaluate(`document.querySelector('[role="dialog"] form input').focus()`);
+        await send("Input.insertText", { text: "Unused ingredients confirmed by manager" }, session);
+        await evaluate(`document.querySelector('[role="dialog"] input[type="checkbox"]').click(); document.querySelector('[role="dialog"] form').requestSubmit()`);
+        await new Promise((resolve) => setTimeout(resolve, 800));
+        assert.ok(await evaluate(`document.body.innerText.includes('restored to their original stock location')`));
+        assert.equal((await prisma.outletInventory.findUnique({ where: { outletId_inventoryItemId: { outletId: outlet.id, inventoryItemId: restoreIngredient.id } } })).stock, 1);
+      }
       if (route === "/chef") {
         assert.ok(await evaluate(`document.body.innerText.includes('Viewport meal')`), "Chef must render the fixture ticket");
         await evaluate(`[...document.querySelectorAll('button')].find(e=>e.textContent==='History').click()`);
