@@ -1,4 +1,6 @@
 import prisma from "../../database/prisma/client.js";
+import { createHttpError } from "../../shared/utils/http-error.js";
+import { admincoreChangeSyncService } from "../../core/admincore/admincore-change-sync.service.js";
 import { featureToggleService } from "../featureToggleService.js";
 import { kotService } from "../../features/kitchen/kot/kot.service.js";
 import { FEATURE_KEYS } from "../../shared/constants/module.constants.js";
@@ -114,7 +116,7 @@ class OrderFulfillmentService {
   }
 
   buildInventoryDemandForItem({ product, item }) {
-    const quantity = Math.max(1, Number(item?.quantity || 1));
+    const quantity = Number(item?.quantity ?? 1);
     const variationName = item?.variation || "";
     const addonNames = extractAddonNames(item?.addons);
     const removedIngredients = extractRemovedIngredients(item);
@@ -144,15 +146,18 @@ class OrderFulfillmentService {
     businessId,
     orderId,
     billId,
+    outletId = null,
     items = [],
     tx = prisma,
   }) {
     const productAdjustments = new Map();
     const inventoryDemand = new Map();
+    const recipeItems = [];
+    const consumption = [];
 
     for (const item of items || []) {
       const product = await this.findProductForWorkflowItem({ businessId, item, tx });
-      const quantity = Math.max(1, Number(item?.quantity || 1));
+      const quantity = Number(item?.quantity ?? 1);
 
       if (product) {
         const currentProductAdjustment = productAdjustments.get(product.id) || {
@@ -162,6 +167,7 @@ class OrderFulfillmentService {
         productAdjustments.set(product.id, currentProductAdjustment);
 
         const recipeDemand = this.buildInventoryDemandForItem({ product, item });
+        if (recipeDemand.length) recipeItems.push({ productId: product.id, quantity, demand: recipeDemand });
         for (const line of recipeDemand) {
           const currentDemand = inventoryDemand.get(line.inventoryItemId) || { ...line, quantity: 0 };
           currentDemand.quantity += Number(line.quantity || 0);
@@ -178,6 +184,7 @@ class OrderFulfillmentService {
     }
 
     for (const demand of inventoryDemand.values()) {
+      await tx.$queryRaw`SELECT id FROM "InventoryItem" WHERE id = ${demand.inventoryItemId} AND "businessId" = ${businessId} FOR UPDATE`;
       const inventoryItem = await tx.inventoryItem.findFirst({
         where: {
           id: demand.inventoryItemId,
@@ -186,15 +193,15 @@ class OrderFulfillmentService {
       });
 
       if (!inventoryItem) {
-        continue;
+        throw createHttpError({ statusCode: 409, message: "Recipe ingredient does not belong to this business" });
       }
 
-      const nextStock = Math.max(0, Number(inventoryItem.stock || 0) - Number(demand.quantity || 0));
-
-      await tx.inventoryItem.update({
-        where: { id: inventoryItem.id },
-        data: { stock: nextStock },
-      });
+      const quantity = Number(demand.quantity);
+      const changed = outletId
+        ? await tx.outletInventory.updateMany({ where: { outletId, inventoryItemId: inventoryItem.id, stock: { gte: quantity } }, data: { stock: { decrement: quantity } } })
+        : await tx.inventoryItem.updateMany({ where: { id: inventoryItem.id, businessId, stock: { gte: quantity } }, data: { stock: { decrement: quantity } } });
+      if (!changed.count) throw createHttpError({ statusCode: 409, message: `Insufficient recipe stock for ${inventoryItem.name}${outletId ? " at this outlet" : ""}` });
+      consumption.push({ inventory_id: inventoryItem.id, outlet_id: outletId, quantity, unit_cost: Number(inventoryItem.conversionCost || 0) });
 
       await tx.inventoryMovement.create({
         data: {
@@ -202,11 +209,21 @@ class OrderFulfillmentService {
           inventoryItemId: inventoryItem.id,
           movementType: "bill_deduction",
           quantity: -Number(demand.quantity || 0),
-          reason: `Inventory deducted for bill ${billId}`,
+          reason: `Inventory deducted for bill ${billId}${outletId ? ` at outlet ${outletId}` : " from central-store"}`,
         },
       });
     }
 
+    const recipeCosts = new Map();
+    for (const item of recipeItems) {
+      const current = recipeCosts.get(item.productId) || { quantity: 0, cost: 0 };
+      current.quantity += item.quantity;
+      current.cost += item.demand.reduce((total, line) => total + line.quantity * consumption.find((entry) => entry.inventory_id === line.inventoryItemId).unit_cost, 0);
+      recipeCosts.set(item.productId, current);
+    }
+    if (consumption.length) {
+      await admincoreChangeSyncService.notifyChange({ resource: "inventory", action: "recipe_consumed", tenantId, businessId, outletId, recordId: billId }, { tx });
+    }
     if (orderId) {
       await tx.order.update({
         where: { id: orderId },
@@ -221,6 +238,7 @@ class OrderFulfillmentService {
         tx,
       });
     }
+    return { consumption, recipeCosts };
   }
 }
 

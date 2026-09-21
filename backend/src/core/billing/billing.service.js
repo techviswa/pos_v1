@@ -191,14 +191,24 @@ class BillingService {
         include: getBillInclude(),
       });
 
-      await orderFulfillmentService.handleBillIssued({
+      const fulfillment = await orderFulfillmentService.handleBillIssued({
         tenantId,
         businessId: business.id,
         orderId: bill.orderId,
         billId: bill.id,
+        outletId: shift.outlet_id,
         items: resolvedItems,
         tx,
       });
+      if (fulfillment.consumption.length) {
+        const costs = itemCosts.map((entry) => {
+          const productId = entry.product_id || costProducts.find((product) => product.name === entry.name)?.id;
+          const recipe = fulfillment.recipeCosts.get(productId);
+          return recipe ? { ...entry, unit_cost: recipe.cost / recipe.quantity, cost_source: "recipe" } : entry;
+        });
+        bill.metadata = { ...bill.metadata, item_costs: costs, inventory_consumption: fulfillment.consumption };
+        await tx.bill.update({ where: { id: bill.id }, data: { metadata: bill.metadata } });
+      }
 
       return bill;
     });

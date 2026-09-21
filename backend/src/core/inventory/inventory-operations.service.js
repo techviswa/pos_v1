@@ -316,13 +316,18 @@ class InventoryOperationsService {
       businessId: business.id,
       outletId: payload.destination_outlet_id || payload.outlet_id || payload.outletId,
     });
+    const sourceLocation = payload.source_outlet_id || payload.source_location || "central-store";
+    if (sourceLocation !== "central-store") {
+      await this.resolveOutletId({ businessId: business.id, outletId: sourceLocation });
+      if (sourceLocation === destinationOutletId) throw createHttpError({ statusCode: 400, message: "Source and destination outlets must differ" });
+    }
     const allocation = await prisma.allocation.create({
       data: {
         businessId: business.id,
         outletId: destinationOutletId,
         purchaseOrderId: null,
         routePlanId: null,
-        sourceLocation: payload.source_outlet_id || payload.source_location || "central-store",
+        sourceLocation,
         status: "pending_approval",
         items: (payload.items || []).map((item) => ({
           inventory_id: item.inventory_id || item.inventoryItemId || null,
@@ -353,6 +358,7 @@ class InventoryOperationsService {
   }
 
   async approveTransfer({ tenantId, allocationId, user }) {
+    if (!["Owner", "Manager"].includes(user?.role)) throw createHttpError({ statusCode: 403, message: "Manager approval is required for stock transfers" });
     const business = await ensureBusiness({ tenantId });
     const allocation = await prisma.allocation.findFirstOrThrow({
       where: { id: allocationId, businessId: business.id },
@@ -362,8 +368,19 @@ class InventoryOperationsService {
       const claimed = await tx.allocation.updateMany({ where: { id: allocationId, businessId: business.id, status: "pending_approval" }, data: { status: "approved" } });
       if (!claimed.count) throw createHttpError({ statusCode: 409, message: "Transfer is no longer awaiting approval" });
       const items = cloneJson(allocation.items, []);
+      const sourceOutlet = allocation.sourceLocation && allocation.sourceLocation !== "central-store" ? allocation.sourceLocation : null;
+      if (sourceOutlet) {
+        await this.resolveOutletId({ tx, businessId: business.id, outletId: sourceOutlet });
+        if (sourceOutlet === allocation.outletId) throw createHttpError({ statusCode: 400, message: "Source and destination outlets must differ" });
+      }
       for (const line of items) {
         const item = await this.findOrCreateInventoryItem({ tx, businessId: business.id, line });
+        const quantity = this.transferQuantity(line.requested_quantity ?? line.quantity);
+        if (sourceOutlet) {
+          const changed = await tx.outletInventory.updateMany({ where: { outletId: sourceOutlet, inventoryItemId: item.id, stock: { gte: quantity } }, data: { stock: { decrement: quantity } } });
+          if (!changed.count) throw createHttpError({ statusCode: 409, message: "Insufficient stock at the source outlet" });
+          await tx.inventoryMovement.create({ data: { businessId: business.id, inventoryItemId: item.id, movementType: "stock_transfer_out", quantity: -quantity, reason: `Transfer ${allocationId} from outlet ${sourceOutlet} to ${allocation.outletId}` } });
+        } else {
         await this.recordMovement({
           tx,
           businessId: business.id,
@@ -372,9 +389,10 @@ class InventoryOperationsService {
           quantity: -this.transferQuantity(line.requested_quantity ?? line.quantity),
           reason: `Transfer approved to outlet ${allocation.outletId} by ${user?.name || "system"}`,
         });
+        }
       }
 
-      return tx.allocation.update({
+      const updated = await tx.allocation.update({
         where: { id: allocationId },
         data: {
           status: "approved",
@@ -386,20 +404,11 @@ class InventoryOperationsService {
           })),
         },
       });
+      await admincoreChangeSyncService.notifyChange({ resource: "inventory", action: "transfer_approved", recordId: updated.id, tenantId, businessId: business.id, outletId: updated.outletId, metadata: { status: updated.status } }, { tx });
+      return updated;
     });
 
     const serializedAllocation = serializeAllocation(approved, tenantId);
-    await admincoreChangeSyncService.notifyChange({
-      resource: "inventory",
-      action: "transfer_approved",
-      recordId: serializedAllocation.id,
-      tenantId,
-      businessId: business.id,
-      outletId: serializedAllocation.outlet_id,
-      metadata: {
-        status: serializedAllocation.status,
-      },
-    });
 
     return serializedAllocation;
   }
@@ -449,7 +458,7 @@ class InventoryOperationsService {
         });
       }
 
-      return tx.allocation.update({
+      const updated = await tx.allocation.update({
         where: { id: allocationId },
         data: {
           status: "received",
@@ -461,20 +470,11 @@ class InventoryOperationsService {
           })),
         },
       });
+      await admincoreChangeSyncService.notifyChange({ resource: "inventory", action: "transfer_received", recordId: updated.id, tenantId, businessId: business.id, outletId: updated.outletId, metadata: { status: updated.status } }, { tx });
+      return updated;
     });
 
     const serializedAllocation = serializeAllocation(received, tenantId);
-    await admincoreChangeSyncService.notifyChange({
-      resource: "inventory",
-      action: "transfer_received",
-      recordId: serializedAllocation.id,
-      tenantId,
-      businessId: business.id,
-      outletId: serializedAllocation.outlet_id,
-      metadata: {
-        status: serializedAllocation.status,
-      },
-    });
 
     return serializedAllocation;
   }

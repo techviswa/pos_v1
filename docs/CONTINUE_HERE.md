@@ -12,6 +12,14 @@ Follow POS `AGENTS.md`. No AdminCore AGENTS.md was found. User permission includ
 
 ## Exact interruption
 
+### Source transfers and recipe accounting (2026-09-21, newest)
+
+- Transfer source now validates tenant-owned outlet IDs and rejects same source/destination. Approval debits source OutletInventory when specified, otherwise central InventoryItem. Receiving credits destination as before. Owner/Manager approval enforced in service. Approval and receipt notifications now use the same transaction as stock/status changes; injected outbox failure rolls back approval. PostgreSQL tests cover these, source/destination stock conservation and role rejection.
+- Recipe billing now deducts the billing outlet's ingredient stock (or central for unscoped billing), fails on missing/insufficient ingredient stock instead of silently clamping, and rolls back invoice on failure. Fractional item quantities no longer inflate to one. Ingredient costs/quantities are snapshotted in private bill metadata; item cost snapshots use weighted recipe costs per product within the invoice. Historical recipe COGS stays stable after ingredient cost edits. Recipe consumption queues inventory notification transactionally.
+- Full production-flow regression passed after latest source/recipe/role changes. Backend deploy check and 18 populated browser viewport checks (nine routes at 390/768) passed earlier in this batch. No frontend changes. This remains emulation, not actual physical-device testing.
+- Live POS readiness returned 200. AdminCore first request timed out, retry 200: always-on hosting remains unresolved. Temporary Render key is revoked, so exact backend revision/authenticated production actions were not verified. Changes awaiting publication after checkpoint.
+- Still necessary: recipe-unit conversion validation, explicit audited restocking/reversal policy (a money refund must not automatically restore prepared food), outlet-specific ingredient cost valuation (current snapshot uses business ingredient average), transfer request creation outbox, and broader live/device acceptance. Do not claim recipe accounting or entire platform completely finished. Continue from these concrete gaps, preserving completed patches.
+
 ### Inventory reconciliation continuation (2026-09-21, latest)
 
 - FINAL UPDATE superseding publication notes below: e1ccae6 settlement/report and 8a01fc9 receiving/audit are pushed and CI SUCCESS. Wastage fix pushed as 040dbebd6efedfe44ad750801a3990372617d2b0; CI last observed running. Transfer quantity injection is now fixed and DB-tested: new requests retain only allowed fields/positive requested quantity; approval uses requested quantity; receiving uses only approved quantity and rejects replay. Test injected approved=7/received=999 into requested=2 and verifies only 2 deducted/received. Transfer follow-up to be committed after this checkpoint update. No frontend changes after prior successful build.

@@ -301,6 +301,39 @@ try {
   assert.equal((await prisma.outletInventory.findUnique({ where: { outletId_inventoryItemId: { outletId: settlementOutlet.id, inventoryItemId: ingredient.id } } })).stock, 2, "Receipt cannot inflate approved stock with caller-supplied received_quantity");
   await assert.rejects(inventoryOperationsService.receiveTransfer({ tenantId, allocationId: transfer.id, user }), /only be received once/);
 
+  const destination = await prisma.outlet.create({ data: { businessId: id, name: "Transfer destination", code: `${id}-dest` } });
+  const transferInput = { source_outlet_id: settlementOutlet.id, destination_outlet_id: destination.id, items: [{ inventory_id: ingredient.id, quantity: 1 }] };
+  await assert.rejects(inventoryOperationsService.createTransferRequest({ tenantId, user, payload: { ...transferInput, source_outlet_id: "foreign-outlet" } }), /Outlet not found/);
+  await assert.rejects(inventoryOperationsService.createTransferRequest({ tenantId, user, payload: { ...transferInput, destination_outlet_id: settlementOutlet.id } }), /must differ/);
+  const outletTransfer = await inventoryOperationsService.createTransferRequest({ tenantId, user, payload: transferInput });
+  await assert.rejects(inventoryOperationsService.approveTransfer({ tenantId, allocationId: outletTransfer.id, user: { ...user, role: "Cashier" } }), /Manager approval/);
+  try {
+    admincoreChangeSyncService.notifyChange = async () => { throw new Error("Transfer outbox failure"); };
+    await assert.rejects(inventoryOperationsService.approveTransfer({ tenantId, allocationId: outletTransfer.id, user }), /Transfer outbox failure/);
+  } finally { admincoreChangeSyncService.notifyChange = originalNotify; }
+  assert.equal((await prisma.allocation.findUnique({ where: { id: outletTransfer.id } })).status, "pending_approval", "Failed transfer notification rolls back approval and stock");
+  await inventoryOperationsService.approveTransfer({ tenantId, allocationId: outletTransfer.id, user });
+  await inventoryOperationsService.receiveTransfer({ tenantId, allocationId: outletTransfer.id, user });
+  const outletStock = async (outletId) => (await prisma.outletInventory.findUnique({ where: { outletId_inventoryItemId: { outletId, inventoryItemId: ingredient.id } } })).stock;
+  assert.equal(await outletStock(settlementOutlet.id), 1);
+  assert.equal(await outletStock(destination.id), 1);
+  assert.equal((await prisma.inventoryItem.findUnique({ where: { id: ingredient.id } })).stock, 6, "Outlet transfer must not deduct central stock");
+  const recipeProduct = await prisma.product.create({ data: { businessId: id, name: "Recipe fixture", category: "Test", price: 100, recipeLines: [{ inventory_id: ingredient.id, quantity: 0.5 }] } });
+  const recipePayload = { outlet_id: destination.id, items: [{ productId: recipeProduct.id, name: recipeProduct.name, price: 100, quantity: 1 }], gst_rate: 0, payment_type: "Cash" };
+  const recipeBill = await billingService.createInvoice({ tenantId, user, payload: recipePayload });
+  const recipeRecord = await prisma.bill.findUnique({ where: { id: recipeBill.id } });
+  assert.equal(recipeRecord.metadata.inventory_consumption[0].quantity, 0.5);
+  assert.equal(recipeRecord.metadata.item_costs[0].unit_cost, 50);
+  assert.equal(Object.hasOwn(recipeBill, "inventory_consumption"), false);
+  await prisma.inventoryItem.update({ where: { id: ingredient.id }, data: { conversionCost: 900 } });
+  assert.equal((await reportsService.productProfitability({ tenantId })).rows.find((row) => row.product_id === recipeProduct.id).cogs, 50, "Historical recipe cost survives ingredient price changes");
+  assert.equal(await outletStock(destination.id), 0.5);
+  const beforeRecipeBills = await prisma.bill.count({ where: { businessId: id } });
+  await assert.rejects(billingService.createInvoice({ tenantId, user, payload: { ...recipePayload, items: [{ ...recipePayload.items[0], quantity: 2 }] } }), /Insufficient recipe stock/);
+  assert.equal(await prisma.bill.count({ where: { businessId: id } }), beforeRecipeBills, "Insufficient recipe stock rolls back invoice");
+  assert.equal(await outletStock(destination.id), 0.5);
+  assert.equal((await prisma.inventoryItem.findUnique({ where: { id: ingredient.id } })).stock, 6);
+
   const print = await printerService.queuePrintJob({ businessId: id, payload: { test: true } });
   const claims = await Promise.all(["one", "two"].map((agentId) => printerService.claimNextPrintJob({ businessId: id, agentId })));
   assert.equal(claims.filter(Boolean).length, 1);
