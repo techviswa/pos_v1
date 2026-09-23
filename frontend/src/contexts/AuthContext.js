@@ -1,8 +1,10 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
 import axios from 'axios';
+import { canRetryRead, createBackendRecovery, isTemporaryBackendFailure } from '../lib/backendRecovery';
 import { clearTabSessionId, getTabSessionHeaders, getTabSessionId, setTabSessionId } from '../lib/sessionSlots';
 
 const AuthContext = createContext();
+const recoveryClient = axios.create({ timeout: 65000 });
 
 const API_URL = (() => {
   const configured = String(process.env.REACT_APP_BACKEND_URL || "").replace(/\/+$/, "");
@@ -84,13 +86,13 @@ export const useAuth = () => {
 export const AuthProvider = ({ children }) => {
   const [user, setUser] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [waking, setWaking] = useState(false);
+  const [authUnavailable, setAuthUnavailable] = useState(false);
 
   useEffect(() => {
-    checkAuth();
-  }, []);
-
-  useEffect(() => {
+    const wakeBackend = createBackendRecovery(() => recoveryClient.get(`${API_URL}/health/ready`));
     const requestInterceptor = axios.interceptors.request.use((config) => {
+      if (!config.timeout) config.timeout = 20000;
       const method = String(config.method || 'get').toLowerCase();
       const requestUrl = config.url || '';
       const tabSessionId = getTabSessionId();
@@ -196,6 +198,21 @@ export const AuthProvider = ({ children }) => {
         const requestUrl = originalRequest?.url || '';
         const cacheKey = originalRequest?.metadata?.cacheKey;
 
+        if (canRetryRead(error) && !originalRequest.metadata?.servedFromInflight) {
+          const metadata = originalRequest.metadata;
+          originalRequest._wakeRetry = true;
+          setWaking(true);
+          try {
+            await wakeBackend();
+            const response = await axios({ ...originalRequest, skipCache: true });
+            metadata?.resolveInflight?.(response);
+            if (cacheKey) inflightRequests.delete(cacheKey);
+            return response;
+          } catch (recoveryError) {
+            error = recoveryError;
+          } finally { setWaking(false); }
+        }
+
         if (cacheKey) {
           if (!isAuthEndpoint(requestUrl)) {
             originalRequest?.metadata?.rejectInflight?.(error);
@@ -221,7 +238,7 @@ export const AuthProvider = ({ children }) => {
               withCredentials: true,
             });
           } catch (refreshError) {
-            setUser(false);
+            if (refreshError.response?.status === 401) setUser(false);
             return Promise.reject(refreshError);
           }
         }
@@ -240,7 +257,11 @@ export const AuthProvider = ({ children }) => {
     };
   }, []);
 
+  useEffect(() => { checkAuth(); }, []);
+
   const checkAuth = async () => {
+    setLoading(true);
+    setAuthUnavailable(false);
     try {
       const response = await axios.get(`${API_URL}/api/auth/me`, {
         withCredentials: true,
@@ -261,6 +282,10 @@ export const AuthProvider = ({ children }) => {
       setUser(unwrapped);
       return unwrapped;
     } catch (error) {
+      if (isTemporaryBackendFailure(error)) {
+        setAuthUnavailable(true);
+        return false;
+      }
       try {
         const response = await axios.post(`${API_URL}/api/auth/refresh`, {}, {
           withCredentials: true,
@@ -276,7 +301,8 @@ export const AuthProvider = ({ children }) => {
         setUser(unwrapped);
         return unwrapped;
       } catch (refreshError) {
-        setUser(false);
+        if (refreshError.response?.status === 401) setUser(false);
+        else setAuthUnavailable(true);
         return false;
       }
     } finally {
@@ -315,7 +341,8 @@ export const AuthProvider = ({ children }) => {
 
   return (
     <AuthContext.Provider value={{ user, loading, login, logout, checkAuth }}>
-      {children}
+      {waking && <div role="status" style={{ padding: 12, background: '#fff3cd', color: '#332700' }}>The server may be waking up. Reconnecting…</div>}
+      {authUnavailable ? <div role="alert" style={{ padding: 24 }}><p>The server is temporarily unavailable. Your saved session has been kept.</p><button onClick={checkAuth}>Try connecting again</button></div> : children}
     </AuthContext.Provider>
   );
 };

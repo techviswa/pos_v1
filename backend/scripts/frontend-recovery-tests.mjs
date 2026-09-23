@@ -1,0 +1,31 @@
+import assert from 'node:assert/strict';
+import { readFile } from 'node:fs/promises';
+const source = await readFile(new URL('../../frontend/src/lib/backendRecovery.js', import.meta.url), 'utf8');
+const { canRetryRead, createBackendRecovery } = await import(`data:text/javascript;base64,${Buffer.from(source).toString('base64')}`);
+for (const status of [502, 503, 504]) {
+  assert.equal(canRetryRead({ config: { method: 'get' }, response: { status } }), true);
+  for (const method of ['post', 'put', 'patch', 'delete']) assert.equal(canRetryRead({ config: { method }, response: { status } }), false);
+}
+for (const status of [401, 403, 404, 429, 500]) assert.equal(canRetryRead({ config: { method: 'get' }, response: { status } }), false);
+assert.equal(canRetryRead({ config: { method: 'get', _wakeRetry: true } }), false);
+assert.equal(canRetryRead({ config: { method: 'get' }, code: 'ERR_CANCELED' }), false);
+assert.equal(canRetryRead({ config: { method: 'get', signal: { aborted: true } } }), false);
+let calls = 0;
+let release;
+const wake = createBackendRecovery(() => { calls++; return new Promise((resolve) => { release = resolve; }); });
+const requests = [wake(), wake(), wake()];
+await Promise.resolve();
+assert.equal(calls, 1);
+release();
+await Promise.all(requests);
+const next = wake();
+await Promise.resolve();
+assert.equal(calls, 2);
+release();
+await next;
+let attempts = 0;
+const failing = createBackendRecovery(() => { attempts++; throw new Error('unavailable'); });
+await assert.rejects(failing(), /unavailable/);
+await assert.rejects(failing(), /unavailable/);
+assert.equal(attempts, 2);
+console.log('Cold-start recovery: shared probes, bounded read-only retries, cancellation and failed-probe reset passed.');

@@ -22,6 +22,7 @@ const commands = [
   "node scripts/payment-isolation-tests.mjs",
   "node scripts/submitted-payment-tests.mjs",
   "node scripts/report-export-security-tests.mjs",
+  "node scripts/frontend-recovery-tests.mjs",
   "node scripts/change-notification-tests.mjs",
   "npm run test:smoke",
 ];

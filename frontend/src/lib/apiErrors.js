@@ -32,6 +32,7 @@ export const getApiErrorMessage = (error, fallback = "Something went wrong. Plea
   }
 
   const payload = error.response.data || {};
+  if ([502, 503, 504].includes(Number(error.response.status))) return "The server may be waking up or temporarily unavailable. Please try again shortly.";
   const message =
     payload.error?.message ||
     payload.message ||

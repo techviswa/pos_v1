@@ -12,6 +12,16 @@ Follow POS `AGENTS.md`. No AdminCore AGENTS.md was found. User permission includ
 
 ## Exact interruption
 
+### Free-tier recovery continuation (2026-09-23, newest)
+
+- FINAL UPDATE: final POS build 23443 and AdminCore build 78392 PASSED. AdminCore recovery tests: 3/3 PASS; POS recovery unit tests and deploy:check PASS. Browser suite 61751 exited 0: all 20 screen/viewport checks passed with no overflow/API error, including injected initial auth 503 -> readiness probe -> successful retry. AdminCore changes committed/pushed as e0b35ca. POS ready to commit/push after this update. Free plans unchanged. ADB still lists no physical phone; await user's USB connection/authorization.
+
+- User explicitly declined paid Render; keep free plans. User has Android and was asked to connect USB, enable USB debugging, and accept authorization. ADB exists at %LOCALAPPDATA%/Android/Sdk/platform-tools/adb.exe; `adb devices` starts successfully but last scan lists no devices. Do not claim physical tests.
+- POS pending changes: shared readiness probe (65s), bounded one-time read-only recovery for network/502/503/504, 20s default request timeout, visible reconnecting status, preserve session on transient refresh failure, unavailable/retry screen instead of treating outage as logout. Install interceptors before initial auth check. New backend/scripts/frontend-recovery-tests.mjs passes and is included in deploy:check. Updated mobile harness injects initial auth 503 and asserts readiness recovery; must run after final build.
+- AdminCore pending changes: frontend/src/lib/api.js shares concurrent wake probes, covers gateway errors, avoids automatic POST/login/refresh replay, retains tokens during refresh network failure, removes inaccurate CORS-health claims. AuthContext shows unavailable/retry screen and preserves session. New frontend/src/lib/api.recovery.test.js: all 3 tests PASS (concurrent wake deduplication, no write replay, refresh-token preservation).
+- Both first builds passed. Final small fix adds setLoading(true) at start of checkAuth in both apps, preventing login redirect during explicit reconnect. POS final rebuild session 23443 started; AdminCore final build launch is pending in functions cell 81. Logs: POS backend/logs/frontend-build-latest.log; AdminCore frontend-build-validation.log. These builds must finish before mobile suite. Earlier POS backend deploy:check passed.
+- All recovery changes remain uncommitted/unpublished in BOTH repositories. Earlier usage-limit rejection prevented final edit; user continued and edit succeeded. Next: finish builds, run injected cold-start browser suite, review/publish both repos with existing authorization, check CI. Do not claim free services always-on; safe recovery cannot eliminate infrastructure sleep. No Render key access requested again.
+
 ### Recipe units and explicit stock reversal (2026-09-21, latest)
 
 - Implemented recipe-units.js: mass (kg/g/mg), volume (l/ml), count aliases, same custom units; absent recipe unit inherits ingredient unit. Different dimensions/unsupported conversions fail clearly. Demand aggregation preserves units until conversion, so 250 g + 0.25 kg correctly consumes 0.5 kg. Costs use converted quantities.

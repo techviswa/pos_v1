@@ -63,6 +63,8 @@ try {
     chrome.stdio[3].write(JSON.stringify({ id: messageId, method, params, ...(sessionId ? { sessionId } : {}) }) + "\0");
   });
   let authenticated = false;
+  let wakeInjected = false;
+  let readinessProbes = 0;
   let buffer = "";
   chrome.stdio[4].on("data", (chunk) => {
     buffer += chunk.toString();
@@ -77,7 +79,13 @@ try {
           const { requestId, request } = message.params;
           const url = new URL(request.url);
           if (["XHR", "Fetch"].includes(message.params.resourceType)) console.log(JSON.stringify({ requestPath: url.pathname, method: request.method }));
-          if (url.pathname.startsWith("/api/")) {
+          if (!wakeInjected && request.method === "GET" && url.pathname === "/api/auth/me") {
+            wakeInjected = true;
+            await send("Fetch.fulfillRequest", { requestId, responseCode: 503, responseHeaders: [{ name: "Access-Control-Allow-Origin", value: webUrl }, { name: "Access-Control-Allow-Credentials", value: "true" }, { name: "Content-Type", value: "application/json" }], body: Buffer.from(JSON.stringify({ message: "Simulated sleeping backend" })).toString("base64") }, session);
+            return;
+          }
+          if (url.pathname.startsWith("/api/") || url.pathname === "/health/ready") {
+            if (url.pathname === "/health/ready") readinessProbes++;
             const response = await fetch(`${apiUrl}${url.pathname}${url.search}`, {
               method: request.method, headers: { "Content-Type": "application/json", ...(authenticated ? { "x-cf-session-id": auth.sessionId } : {}) },
               ...(request.postData ? { body: request.postData } : {}),
@@ -149,6 +157,7 @@ try {
   }
   await writeFile("backend/logs/mobile-viewport-results.json", JSON.stringify({ results, findings }, null, 2));
   assert.equal(findings.length, 0, "Browser runtime/request failures detected");
+  assert.ok(wakeInjected && readinessProbes >= 1, "A temporary auth failure must trigger readiness recovery");
   assert.ok(results.every((result) => result.route === result.requested), "A requested screen redirected instead of rendering");
   assert.ok(results.every((result) => result.width === result.viewport && !result.body.includes("ENOENT")), "Application did not render at the requested viewport");
   assert.ok(results.every((result) => result.apiErrors.length === 0), "A screen rendered an API error fallback");
