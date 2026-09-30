@@ -119,7 +119,8 @@ try {
   assert.equal(await prisma.marketingMessage.count({ where: { campaignId: campaign.data.id } }), 2);
 
   const config = await prisma.marketingConfig.findUnique({ where: { businessId: bizA } });
-  const openNow = inSendWindow(config) ? new Date() : new Date(nextWindowStart(config).getTime() + 60000);
+  // Use a future open window so campaigns created later in this test are also due.
+  const openNow = new Date(nextWindowStart(config).getTime() + 60000);
   // Outside the window a message waits for the window instead of failing.
   const night = new Date(nextWindowStart(config, openNow).getTime() - 3 * HOUR);
   assert.equal(inSendWindow(config, night), false);
@@ -129,7 +130,8 @@ try {
   assert.equal(deferred.status, "queued");
   assert.equal(deferred.attempts, 0, "waiting for the window is not a failed attempt");
   assert.ok(inSendWindow(config, deferred.nextAttemptAt), "it is retried when the window opens");
-  await prisma.marketingMessage.update({ where: { id: waiting.id }, data: { nextAttemptAt: new Date() } });
+  // Keep the retry due at the simulated dispatch time, even on fast CI runners.
+  await prisma.marketingMessage.update({ where: { id: waiting.id }, data: { nextAttemptAt: openNow } });
 
   calls.length = 0;
   const dispatched = await dispatchBatch({ now: openNow });
@@ -239,7 +241,9 @@ try {
   assert.equal((await prisma.customer.findUnique({ where: { id: ben.id } })).marketingOptIn, true, "START gives consent again");
 
   // ---------------------------------------------------------------- report with returning guests, test send
-  await billingService.createInvoice({ ...scope(bizA), user: cashierActor, payload: { payment_type: "Cash", items: [{ id: product.id, quantity: 2 }], customer_phone: "9000000002", customer_name: "Ben Das" } });
+  const returnVisit = await billingService.createInvoice({ ...scope(bizA), user: cashierActor, payload: { payment_type: "Cash", items: [{ id: product.id, quantity: 2 }], customer_phone: "9000000002", customer_name: "Ben Das" } });
+  // The return visit must follow the simulated send, including when run overnight.
+  await prisma.bill.update({ where: { id: returnVisit.id }, data: { createdAt: new Date(openNow.getTime() + HOUR) } });
   const report = await ok(call("GET", `/api/marketing/campaigns/${campaign.data.id}`, { session: ownerS }), 200, "report");
   assert.equal(report.data.counts.read, 1);
   assert.equal(report.data.counts.failed, 1);

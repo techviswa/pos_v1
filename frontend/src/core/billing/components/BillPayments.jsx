@@ -13,8 +13,8 @@ const REFUND_STATUS = { processed: "refunded", pending: "being refunded", create
  * the button twice or retrying after a timeout never refunds twice.
  */
 export const BillPayments = ({ apiUrl, bill, currency, canRefund, onChanged }) => {
-  const payments = bill.payments || [];
-  const refunds = bill.refunds || [];
+  const payments = useMemo(() => bill.payments || [], [bill.payments]);
+  const refunds = useMemo(() => bill.refunds || [], [bill.refunds]);
   const refundedTotal = refunds.reduce((sum, row) => sum + Number(row.amount || 0), 0);
   const paidTotal = Number(bill.paid_amount || 0);
   const refundable = Math.max(0, Math.round((paidTotal - refundedTotal) * 100) / 100);

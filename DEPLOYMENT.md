@@ -5,9 +5,9 @@ Production deployment requires resolving the configuration blockers below:
 - Frontend: Vercel, using the `frontend` directory.
 - Backend: Render Web Service, using `render.yaml`.
 - Database: Prisma and the Render Blueprint use PostgreSQL. Set `DATABASE_URL` to the intended production PostgreSQL database. The Blueprint requests the Starter service plan; this local configuration does not upgrade or deploy an existing service by itself.
-- Automatic demo seeding has been removed from the build. The demo seed refuses to run with `NODE_ENV=production`.
+- Automatic demo seeding has been removed from the build. With `NODE_ENV=production`, the seed runs access-control defaults only.
 - AdminCore notifications use a PostgreSQL-backed job queue and sync history. AdminCore receives events into its MongoDB-backed worker queue. Both services must run their workers and share the configured bridge credentials.
-- The backend build runs dependency installation and Prisma generation. The pre-deploy command applies migrations and seeds access-control defaults only. Readiness at `/health/ready` checks database schema availability.
+- The backend build runs dependency installation and Prisma generation. The pre-deploy command applies migrations and seeds access-control defaults only. Render uses `/health/ready` to check database schema availability before accepting the release; `/health` checks only whether the HTTP server responds.
 
 ## 1. Backend on Render
 
@@ -90,7 +90,7 @@ The Prisma provider already is PostgreSQL. Do not regenerate or rewrite applied 
 
 Before migrations, take a PostgreSQL custom-format backup using `pg_dump --format=custom --file=pos-backup.dump` with connection settings supplied securely through PostgreSQL environment variables. Store backups encrypted outside the service filesystem, restrict access, define retention, and rehearse restoring to a separate database with `pg_restore`. Do not commit dumps. A scheduled backup job and verified recovery procedure are still deployment requirements.
 
-The Blueprint's free plan has not been changed. Choose an always-on service plan in the hosting dashboard if continuous reachability is required. This is a hosting/billing decision, not a code fix.
+The Blueprint specifies the Starter plan. Verify the existing service's plan in the hosting dashboard; changing this file does not upgrade an existing service by itself.
 
 ## 5. Verification checklist
 

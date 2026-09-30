@@ -7,7 +7,7 @@ services:
     buildCommand: npm ci && npm run prisma:generate
     preDeployCommand: npm run prisma:deploy && npm run prisma:seed
     startCommand: npm start
-    healthCheckPath: /health
+    healthCheckPath: /health/ready
     envVars:
       - key: NODE_ENV
         value: production
