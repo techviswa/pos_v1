@@ -23,12 +23,24 @@ services:
         value: demo-tenant
       - key: DEFAULT_BUSINESS_ID
         value: demo-business
+      # The first Owner's login. Set a real address: the public default is flagged at start-up.
       - key: ADMIN_EMAIL
-        value: owner@pos.com
+        sync: false
       - key: ADMIN_PASSWORD
         sync: false
       - key: JWT_SECRET
         generateValue: true
+      - key: FEEDBACK_TOKEN_SECRET
+        generateValue: true
+      - key: OTP_SECRET
+        generateValue: true
+      # Encrypts each business's WhatsApp/SMS credentials. Never change it once accounts are connected
+      # (stored credentials would have to be entered again).
+      - key: MARKETING_ENCRYPTION_KEY
+        generateValue: true
+      # Public https URL of this API, used in WhatsApp/SMS webhook addresses shown on the Marketing screen.
+      - key: POS_PUBLIC_API_URL
+        sync: false
       - key: CORS_ORIGINS
         sync: false
       - key: POS_BASE_URL

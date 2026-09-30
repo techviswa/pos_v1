@@ -157,6 +157,12 @@ If migrations fail because Postgres user lacks schema permission, run as `postgr
 - Businesses/AdminCore sync: `backend/src/core/businesses`, `backend/src/core/admincore`, `backend/src/core/sync`
 - Outlets: `backend/src/core/outlets`
 - Products/menu: `backend/src/core/products`
+- Menu pricing (choice groups, combos, outlet/channel prices, happy hours): `backend/src/core/menu` — every price goes through `menu-pricing.js`
+- Staff attendance and tips: `backend/src/core/staff` (`/api/attendance`, `/api/tips`); screens `frontend/src/pages/TimeClock.js`, `Attendance.js`, `Tips.js`
+- Customers, loyalty, gift cards: `backend/src/core/customers` (`customer-core.js` holds the bill hooks); payroll: `backend/src/core/staff/payroll.service.js`
+- Marketing (WhatsApp/SMS campaigns, automations, webhooks, sender): `backend/src/core/marketing`; the sender starts in `server.js` (`MARKETING_WORKER=off` disables it on an instance)
+- Local DB is baselined: apply new migrations with `cmd /c npm --prefix backend run prisma:deploy` (back up first)
+- Permissions: one key per screen in `backend/src/shared/constants/access.constants.js` (mirrored in `frontend/src/lib/pos.js`); guard routes with `requirePermission`/`requireAnyPermission`, not role names, unless it is manager authority
 - Billing/orders: `backend/src/core/billing`, `backend/src/core/orders`
 - KOT/kitchen: `backend/src/features/kitchen/kot`
 - QR ordering/table management: `backend/src/features/sales-extensions/qr-ordering`, `backend/src/features/sales-extensions/table-management`
@@ -217,6 +223,11 @@ QR_PUBLIC_BASE_URL
 REACT_APP_BACKEND_URL
 REACT_APP_PUBLIC_FRONTEND_URL
 ```
+
+## Security controls
+
+See `SECURITY_REGISTER.md` for the hardening done so far, required production env vars and known open items.
+New tests run inside `deploy:check`: `security-hardening`, `tenant-lifecycle`, `user-admin-policy`, `billing-integrity`, `access-control`, `production-flow`. Migration `20260930120000_money_decimal_integrity` makes money exact DECIMAL; use `toPlainNumbers` in `database/prisma/client.js` if you add a second Prisma client.
 
 ## Working Rules For Agents
 

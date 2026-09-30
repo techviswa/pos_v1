@@ -1,6 +1,8 @@
 import { apiResponse } from "../../shared/utils/apiResponse.js";
 import { isAdminCoreSyncRequest, createSyncEnvelope } from "../sync/sync-contract.js";
 import { billingService } from "./billing.service.js";
+import { filterByOutletScope } from "../../shared/middleware/outletScope.js";
+import { getBillOutletId } from "./bill-analytics.utils.js";
 import { reverseBillStock } from "./stock-reversal.service.js";
 import { createHttpError } from "../../shared/utils/http-error.js";
 
@@ -10,12 +12,12 @@ class BillingController {
     res.status(200).json(apiResponse({ message: "Unused ingredient stock restored", data }));
   }
   async list(req, res) {
-    const data = await billingService.listInvoices({
+    const data = filterByOutletScope(req, await billingService.listInvoices({
       tenantId: req.context.tenantId,
       limit: req.query?.limit,
       page: req.query?.page,
       offset: req.query?.offset,
-    });
+    }), (bill) => getBillOutletId(bill));
     if (isAdminCoreSyncRequest(req)) {
       return res.status(200).json(
         createSyncEnvelope({

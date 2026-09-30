@@ -3,8 +3,10 @@ import { Router } from "express";
 import { requireAnyPermission, requirePermission, requireRole } from "../../shared/middleware/authGuard.middleware.js";
 import { asyncHandler } from "../../shared/utils/asyncHandler.js";
 import { billingController } from "./billing.controller.js";
+import { applyDefaultOutlet, invoiceOutletGuard } from "../../shared/middleware/recordOutletGuards.js";
 
 const router = Router();
+router.param("invoiceId", invoiceOutletGuard);
 
 router.get("/", requireAnyPermission("billing", "bills"), asyncHandler(billingController.list));
 router.get("/summary", requireAnyPermission("billing", "bills", "reports"), asyncHandler(billingController.summary));
@@ -17,7 +19,7 @@ router.get("/cash-drawer", requireRole("Owner", "Manager", "Cashier"), requireAn
 router.get("/:invoiceId", requireAnyPermission("billing", "bills"), asyncHandler(billingController.getById));
 router.get("/:invoiceId/gst-invoice", requireAnyPermission("billing", "bills"), asyncHandler(billingController.gstInvoice));
 router.get("/:invoiceId/receipt-print", requireAnyPermission("billing", "bills"), asyncHandler(billingController.receiptPrint));
-router.post("/", requirePermission("billing"), asyncHandler(billingController.create));
+router.post("/", requirePermission("billing"), applyDefaultOutlet, asyncHandler(billingController.create));
 router.post("/:invoiceId/payments", requirePermission("billing"), asyncHandler(billingController.addPayment));
 router.post("/:invoiceId/payments/:paymentId/confirm", requirePermission("billing"), asyncHandler(billingController.confirmPayment));
 router.post("/:invoiceId/refunds", requireRole("Owner", "Manager"), asyncHandler(billingController.refund));

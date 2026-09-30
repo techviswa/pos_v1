@@ -1,10 +1,11 @@
 import React, { useEffect, useEffectEvent, useMemo, useRef, useState } from "react";
 import axios from "axios";
+import { apiData } from "../lib/apiData";
 import { Layout } from "../components/Layout";
 import { ApiErrorPanel } from "../components/ApiErrorPanel";
 import { toast } from "sonner";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "../components/ui/dialog";
-import { formatCurrency } from "../lib/pos";
+import { formatCurrency, hasPermission, newClientKey } from "../lib/pos";
 import { useUi } from "../contexts/UiContext";
 import { useAuth } from "../contexts/AuthContext";
 import { useAutoRefresh } from "../hooks/useAutoRefresh";
@@ -12,6 +13,10 @@ import { formatScheduledSlot, getTrackingLine } from "../core/billing/utils/orde
 import { OutletOverviewPanel } from "../core/outlets/components/OutletOverviewPanel";
 import { useActiveOutlet } from "../core/outlets/store/ActiveOutletContext";
 import { CashierSettlement } from "../core/billing/components/CashierSettlement";
+import { CheckoutExtras } from "../core/customers/CheckoutExtras";
+import { RazorpayCollect } from "../core/payments/RazorpayCollect";
+import { applyUnsyncedStock, canQueueOffline, isNetworkFailure, queueOfflineBill } from "../core/offline/offlineQueue";
+import { loadOfflineData, saveOfflineData, setOfflineScope } from "../lib/offlineCache";
 import { BillingFulfillmentSection } from "../features/billing/fulfillment/pages/BillingFulfillmentSection";
 import { fulfillmentService } from "../features/billing/fulfillment/services/fulfillment.service";
 import { useBillingFulfillment } from "../features/billing/fulfillment/store/useBillingFulfillment";
@@ -192,13 +197,27 @@ export const Billing = () => {
   const [inventoryCatalog, setInventoryCatalog] = useState([]);
   const [search, setSearch] = useState("");
   const [category, setCategory] = useState("");
+  const checkoutKeyRef = useRef({ signature: "", key: "" });
   const [cart, setCart] = useState({});
   const [payment, setPayment] = useState(settings.paymentMethods[0] || "Cash");
   const [receipt, setReceipt] = useState(null);
+  // Set when the menu shown is the copy saved on this device, because the server cannot be reached.
+  const [offlineMenuSavedAt, setOfflineMenuSavedAt] = useState(null);
   const [paymentIntent, setPaymentIntent] = useState(null);
   const [customizingProduct, setCustomizingProduct] = useState(null);
-  const [customization, setCustomization] = useState({ variation: "", addons: [], removals: [], customNote: "" });
+  const [customization, setCustomization] = useState({ variation: "", addons: [], removals: [], customNote: "", modifiers: [] });
   const [discount, setDiscount] = useState({ label: "", type: "none", value: "" });
+  // A tip is paid with the bill but is not taxed; it goes to one person or to the shared pool.
+  const [tip, setTip] = useState({ amount: "", staffId: "" });
+  const [tipTeam, setTipTeam] = useState([]);
+  // The customer behind the phone number, their points, and an optional gift card payment.
+  const [loyaltyInfo, setLoyaltyInfo] = useState(null);
+  const [lookingUpCustomer, setLookingUpCustomer] = useState(false);
+  const [redeem, setRedeem] = useState({ enabled: false, points: "" });
+  const [giftPay, setGiftPay] = useState({ code: "", card: null, amount: "" });
+  const [marketingOptIn, setMarketingOptIn] = useState(false);
+  // Whether this business collects UPI/card payments through its own Razorpay account.
+  const [gatewayEnabled, setGatewayEnabled] = useState(false);
   const [billingErrors, setBillingErrors] = useState({});
   const [loadError, setLoadError] = useState(null);
   const hasLoadedProductsRef = useRef(false);
@@ -216,7 +235,54 @@ export const Billing = () => {
     hydrateFromOrder,
   } = useBillingFulfillment(recentOrders);
   const menuContextKey = `${menuChannel}|${selectedOutletId || "all-outlets"}`;
-  const canManageTables = ["Owner", "Manager", "Admin"].includes(user?.role);
+  const canManageTables = hasPermission(user, "qr_management") || hasPermission(user, "reservations");
+  const customerPhoneDigits = String(orderMeta.customer_phone || "").replace(/\D/g, "");
+
+  useEffect(() => {
+    let cancelled = false;
+    axios.get(`${API_URL}/api/payments/gateway/status`, { withCredentials: true })
+      .then((response) => { if (!cancelled) setGatewayEnabled(Boolean(apiData(response)?.enabled)); })
+      .catch(() => { if (!cancelled) setGatewayEnabled(false); });
+    return () => { cancelled = true; };
+  }, []);
+
+  useEffect(() => {
+    setRedeem({ enabled: false, points: "" });
+    setMarketingOptIn(false);
+    if (customerPhoneDigits.length !== 10) {
+      setLoyaltyInfo(null);
+      setLookingUpCustomer(false);
+      return undefined;
+    }
+    let cancelled = false;
+    setLookingUpCustomer(true);
+    const timer = window.setTimeout(() => {
+      axios.get(`${API_URL}/api/customers/lookup`, { params: { phone: customerPhoneDigits }, withCredentials: true })
+        .then((response) => { if (!cancelled) setLoyaltyInfo(apiData(response) || null); })
+        .catch(() => { if (!cancelled) setLoyaltyInfo(null); })
+        .finally(() => { if (!cancelled) setLookingUpCustomer(false); });
+    }, 350);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, [customerPhoneDigits]);
+
+  useEffect(() => {
+    let cancelled = false;
+    axios.get(`${API_URL}/api/attendance/team`, { withCredentials: true })
+      .then((response) => {
+        const team = apiData(response) || [];
+        if (cancelled || !Array.isArray(team)) return;
+        setTipTeam(team);
+        saveOfflineData("tip-team", team);
+      })
+      .catch(() => {
+        const saved = loadOfflineData("tip-team");
+        if (!cancelled && Array.isArray(saved?.data)) setTipTeam(saved.data);
+      });
+    return () => { cancelled = true; };
+  }, []);
 
   const refreshTableData = async () => {
     try {
@@ -260,12 +326,13 @@ export const Billing = () => {
         }),
         fulfillmentService.fetchTableManagement({ includeHistory: true }).catch(() => null),
       ]);
-      setProducts(productsResponse.data);
+      setProducts(applyUnsyncedStock(productsResponse.data));
       setRecentOrders(billsResponse.data || []);
       if (tableResponse) {
         setTableData(tableResponse.tables || { items: [], summary: {}, settings: {}, areas: [] });
         setTableReservations(tableResponse.reservations || { items: [] });
       }
+      setOfflineMenuSavedAt(null);
       try {
         const [centralInventoryResponse, outletInventoryResponse] = await Promise.all([
           axios.get(`${API_URL}/api/inventory`, { withCredentials: true }).catch(() => ({ data: { items: [] } })),
@@ -285,17 +352,38 @@ export const Billing = () => {
       hasLoadedProductsRef.current = true;
       lastFetchedMenuContextRef.current = menuContextKey;
       setLoadError(null);
+      // Keep a copy of this outlet's menu so the till can still sell after a reload with no connection.
+      setOfflineScope(user);
+      saveOfflineData(`billing:${selectedOutletId}:${menuChannel}`, {
+        products: productsResponse.data,
+        tableData: tableResponse?.tables || null,
+        tableReservations: tableResponse?.reservations || null,
+      });
     } catch (error) {
       if (!hasLoadedProductsRef.current) {
-        setLoadError(error);
-        toast.error(getApiErrorMessage(error, "Failed to load billing data"));
+        setOfflineScope(user);
+        const snapshot = isNetworkFailure(error) ? loadOfflineData(`billing:${selectedOutletId}:${menuChannel}`) : null;
+        if (snapshot?.data?.products) {
+          setProducts(applyUnsyncedStock(snapshot.data.products));
+          if (snapshot.data.tableData) setTableData(snapshot.data.tableData);
+          if (snapshot.data.tableReservations) setTableReservations(snapshot.data.tableReservations);
+          setRecentOrders([]);
+          setOfflineMenuSavedAt(snapshot.savedAt);
+          hasLoadedProductsRef.current = true;
+          lastFetchedMenuContextRef.current = menuContextKey;
+          setLoadError(null);
+        } else {
+          setLoadError(error);
+          toast.error(getApiErrorMessage(error, "Failed to load billing data"));
+        }
       }
     } finally {
       setLoading(false);
     }
   };
 
-  useAutoRefresh(fetchProducts);
+  // Another terminal selling the last units changes what can be sold here.
+  useAutoRefresh(fetchProducts, { liveResources: ["products", "inventory", "bills"] });
 
   const refreshMenuForOrderContext = useEffectEvent(() => {
     if (loading || !hasLoadedProductsRef.current || lastFetchedMenuContextRef.current === menuContextKey) return;
@@ -427,9 +515,22 @@ export const Billing = () => {
     }
     return 0;
   }, [discount.type, discountValue, subtotal]);
-  const taxableSubtotal = Math.max(0, subtotal - discountAmount);
+  const loyaltyRules = loyaltyInfo?.loyalty;
+  const afterDiscount = Math.max(0, subtotal - discountAmount);
+  // Points pay at most the configured share of the bill (after the staff discount), and never more than they hold.
+  const maxRedeemPoints = loyaltyInfo?.customer && loyaltyRules?.enabled
+    ? Math.max(0, Math.min(loyaltyInfo.customer.loyalty_points, Math.floor((Math.round(afterDiscount * loyaltyRules.max_redeem_percent) / 100) / loyaltyRules.point_value)))
+    : 0;
+  const redeemPoints = redeem.enabled ? Math.max(0, Math.min(maxRedeemPoints, Math.floor(Number(redeem.points) || 0))) : 0;
+  const loyaltyDiscount = redeemPoints && loyaltyRules ? Math.min(afterDiscount, Math.round(redeemPoints * loyaltyRules.point_value * 100) / 100) : 0;
+  const taxableSubtotal = Math.max(0, afterDiscount - loyaltyDiscount);
   const tax = Math.round(taxableSubtotal * (settings.taxRate / 100) * 100) / 100;
-  const total = taxableSubtotal + tax;
+  const tipAmount = Math.max(0, Math.round(Number(tip.amount || 0) * 100) / 100) || 0;
+  const tipStaffName = tip.staffId ? tipTeam.find((member) => member.id === tip.staffId)?.name || "" : "";
+  const total = taxableSubtotal + tax + tipAmount;
+  const giftAmount = giftPay.card
+    ? Math.max(0, Math.round(Math.min(Number(giftPay.amount) || 0, giftPay.card.balance, total) * 100) / 100)
+    : 0;
   const quickOrders = useMemo(() => recentOrders.slice(0, 6), [recentOrders]);
   const canApplyDiscount = user?.role === "Owner" || user?.role === "Manager";
   const printableOfferTitle = String(settings.receiptOfferTitle || "").trim();
@@ -438,8 +539,8 @@ export const Billing = () => {
     () => getCustomizationProfile(customizingProduct),
     [customizingProduct]
   );
-  const buildCartKey = (productId, variation, addons, removals, customNote) =>
-    `${productId}::${variation || "base"}::${(addons || []).slice().sort().join("|")}::${(removals || []).slice().sort().join("|")}::${(customNote || "").trim()}`;
+  const buildCartKey = (productId, variation, addons, removals, customNote, modifiers = []) =>
+    `${productId}::${variation || "base"}::${(addons || []).slice().sort().join("|")}::${(removals || []).slice().sort().join("|")}::${(customNote || "").trim()}::${(modifiers || []).slice().sort().join("|")}`;
 
   const clearBillingError = (field) => {
     setBillingErrors((current) => {
@@ -600,7 +701,25 @@ export const Billing = () => {
       }
     }, "Reservation deleted");
 
-  const addConfiguredItemToCart = (product, variationName = "", addonNames = [], removalNames = [], customNote = "") => {
+  // Checks each choice group's minimum and maximum, as the server will.
+  const getModifierProblem = (product, modifierIds) => {
+    for (const group of product.modifier_groups || []) {
+      const count = (group.options || []).filter((option) => modifierIds.includes(option.id)).length;
+      const min = Number(group.min_select || 0);
+      const max = Number(group.max_select || 0);
+      if (count < min) return `Choose ${min === 1 ? "one" : `at least ${min}`} for "${group.name}"`;
+      if (max > 0 && count > max) return `Choose at most ${max} for "${group.name}"`;
+    }
+    return "";
+  };
+
+  const addConfiguredItemToCart = (product, variationName = "", addonNames = [], removalNames = [], customNote = "", modifierIds = []) => {
+    const modifierProblem = getModifierProblem(product, modifierIds);
+    if (modifierProblem) {
+      toast.error(modifierProblem);
+      return false;
+    }
+    const chosenOptions = (product.modifier_groups || []).flatMap((group) => group.options || []).filter((option) => modifierIds.includes(option.id));
     if (hasConflictingCustomization(addonNames, removalNames)) {
       toast.error("You cannot select an add-on and remove the same ingredient together");
       return false;
@@ -616,15 +735,17 @@ export const Billing = () => {
     const unitPrice =
       Number(product.price || 0) +
       Number(variationOption?.price || 0) +
-      addonOptions.reduce((sum, item) => sum + Number(item.price || 0), 0);
+      addonOptions.reduce((sum, item) => sum + Number(item.price || 0), 0) +
+      chosenOptions.reduce((sum, item) => sum + Number(item.price || 0), 0);
     const detailParts = [
       variationName,
+      chosenOptions.length ? `(${chosenOptions.map((option) => option.name).join(", ")})` : "",
       addonNames.length ? `+ ${addonNames.join(", ")}` : "",
       removalNames.length ? removalNames.join(", ") : "",
       customNote.trim(),
     ].filter(Boolean);
     const displayNameParts = [product.name, ...detailParts];
-    const cartKey = buildCartKey(product.id, variationName, addonNames, removalNames, customNote);
+    const cartKey = buildCartKey(product.id, variationName, addonNames, removalNames, customNote, modifierIds);
 
     setCart((current) => {
       const existing = current[cartKey];
@@ -640,6 +761,7 @@ export const Billing = () => {
           addons: addonNames,
           removals: removalNames,
           customNote: customNote.trim() || null,
+          modifiers: modifierIds,
           displayName: displayNameParts.join(" "),
         },
       };
@@ -649,7 +771,7 @@ export const Billing = () => {
 
   const addToCart = (product) => {
     const profile = getCustomizationProfile(product);
-    if ((product.variation_options || []).length || (product.addon_options || []).length || profile.removeOptions.length || profile.enabled) {
+    if ((product.variation_options || []).length || (product.addon_options || []).length || (product.modifier_groups || []).length || profile.removeOptions.length || profile.enabled) {
       const firstAvailableVariation = (product.variation_options || []).find(
         (option) => !getConfiguredAvailability(product, option.name, [], []).blockedReason
       );
@@ -659,6 +781,10 @@ export const Billing = () => {
         addons: [],
         removals: [],
         customNote: "",
+        // Pre-select the first option of required single-choice groups; staff can change it.
+        modifiers: (product.modifier_groups || [])
+          .filter((group) => Number(group.min_select) === 1 && Number(group.max_select) === 1 && group.options?.length)
+          .map((group) => group.options[0].id),
       });
       return;
     }
@@ -731,7 +857,8 @@ export const Billing = () => {
       const removals = item.removed_ingredients || [];
       const variation = item.variation || null;
       const customNote = item.custom_note || "";
-      const key = buildCartKey(item.id, variation, addons, removals, customNote);
+      const modifiers = (item.modifiers?.options || []).map((option) => option.option_id).filter(Boolean);
+      const key = buildCartKey(item.id, variation, addons, removals, customNote, modifiers);
       nextCart[key] = {
         key,
         product,
@@ -741,6 +868,7 @@ export const Billing = () => {
         addons,
         removals,
         customNote,
+        modifiers,
         displayName: item.name,
       };
     });
@@ -779,6 +907,14 @@ export const Billing = () => {
   const generateBill = async () => {
     if (!cartEntries.length) {
       toast.error("Cart is empty");
+      return;
+    }
+    if (giftPay.code.trim() && !giftPay.card) {
+      toast.error("Check the gift card or remove it");
+      return;
+    }
+    if (redeem.enabled && redeemPoints < (loyaltyRules?.min_redeem_points || 0)) {
+      toast.error(`At least ${loyaltyRules?.min_redeem_points} points are needed to redeem`);
       return;
     }
     const nextErrors = getBillingValidationErrors();
@@ -824,8 +960,11 @@ export const Billing = () => {
         await refreshTableData();
       }
     } catch (error) {
-      toast.error(getApiErrorMessage(error, "Unable to lock the table for this bill"));
-      return;
+      if (!isNetworkFailure(error)) {
+        toast.error(getApiErrorMessage(error, "Unable to lock the table for this bill"));
+        return;
+      }
+      // Offline: the bill can still be taken; the table status is updated once the connection returns.
     }
 
     const nextOrderMeta = {
@@ -834,8 +973,9 @@ export const Billing = () => {
     };
 
     const payload = {
-      items: cartEntries.map(({ product, quantity, unitPrice, variation, addons, removals, customNote, displayName }) => ({
+      items: cartEntries.map(({ product, quantity, unitPrice, variation, addons, removals, customNote, displayName, modifiers }) => ({
         id: product.id,
+        modifiers: modifiers || [],
         name: displayName || product.name,
         quantity,
         price: unitPrice || product.price,
@@ -849,6 +989,7 @@ export const Billing = () => {
       tax,
       total,
       payment_type: payment,
+      menu_channel: menuChannel,
       outlet_id: selectedOutletId || null,
       order_type: nextOrderMeta.order_type,
       service_mode: nextOrderMeta.fulfillment_mode,
@@ -871,19 +1012,42 @@ export const Billing = () => {
       discount_amount: discount.type !== "none" ? discountAmount : 0,
       printable_offer_title: printableOfferTitle || null,
       printable_offer_message: printableOfferMessage || null,
+      tip_amount: tipAmount,
+      tip_staff_id: tipAmount > 0 && tip.staffId ? tip.staffId : null,
+      ...(redeemPoints ? { loyalty_redeem_points: redeemPoints } : {}),
+      ...(marketingOptIn ? { marketing_opt_in: true } : {}),
+      ...(giftAmount > 0 ? { payments: [{ method: "Gift Card", gift_card_code: giftPay.code, amount: giftAmount }] } : {}),
     };
+
+    // One key per distinct checkout: a double tap or a retry after a timeout returns the original bill.
+    const checkoutSignature = JSON.stringify([payload.items, payload.discount_type, payload.discount_value, payload.payment_type, payload.outlet_id, payload.table_id, payload.tip_amount, payload.tip_staff_id, payload.loyalty_redeem_points, payload.payments, payload.customer_phone]);
+    if (checkoutKeyRef.current.signature !== checkoutSignature) checkoutKeyRef.current = { signature: checkoutSignature, key: newClientKey() };
+    payload.client_request_id = checkoutKeyRef.current.key;
 
     try {
       const response = await axios.post(`${API_URL}/api/bills`, payload, { withCredentials: true });
       const generatedBill = response.data?.data || response.data;
       let nextPaymentIntent = null;
-      if (payment === "UPI") {
+      const amountOwed = Number(generatedBill.due_amount ?? generatedBill.total);
+      if (gatewayEnabled && ["UPI", "Card"].includes(payment) && amountOwed > 0) {
+        // Razorpay: a UPI QR on screen, or a payment link for cards; either confirms itself.
+        try {
+          const intentResponse = await axios.post(`${API_URL}/api/payments/intents`, {
+            provider: "razorpay", razorpay_mode: payment === "Card" ? "link" : "qr", method: payment, amount: amountOwed,
+            invoice_id: generatedBill.id, customer_phone: nextOrderMeta.customer_phone || undefined, note: `Bill ${generatedBill.invoice_number || generatedBill.id}`,
+          }, { withCredentials: true });
+          nextPaymentIntent = apiData(intentResponse);
+        } catch (paymentError) {
+          toast.error(getApiErrorMessage(paymentError, "Bill created, but the Razorpay payment request could not be made; take the payment another way"));
+        }
+      } else if (payment === "UPI") {
         try {
           const intentResponse = await axios.post(
             `${API_URL}/api/payments/intents`,
             {
               method: "UPI",
-              amount: generatedBill.total,
+              // Only what is still owed after a gift card.
+              amount: Number(generatedBill.due_amount ?? generatedBill.total),
               currency: "INR",
               invoice_id: generatedBill.id,
               customer_phone: nextOrderMeta.customer_phone,
@@ -896,6 +1060,7 @@ export const Billing = () => {
           toast.error(getApiErrorMessage(paymentError, "Bill created, but UPI payment request could not be generated"));
         }
       }
+      checkoutKeyRef.current = { signature: "", key: "" };
       setPaymentIntent(nextPaymentIntent);
       setReceipt({
         ...generatedBill,
@@ -908,6 +1073,13 @@ export const Billing = () => {
         discountType: generatedBill.discount_type || payload.discount_type,
         discountValue: generatedBill.discount_value ?? payload.discount_value,
         discountAmount: generatedBill.discount_amount ?? payload.discount_amount,
+        tipAmount: Number(generatedBill.tip_amount || 0),
+        loyaltyDiscount: Number(generatedBill.loyalty_discount || 0),
+        loyaltyPointsRedeemed: Number(generatedBill.loyalty_redeem_points || 0),
+        loyaltyPointsEarned: Number(generatedBill.loyalty_points_earned || 0),
+        loyaltyBalance: generatedBill.loyalty_balance_after,
+        giftCardPaid: (generatedBill.payments || []).filter((row) => row.method === "Gift Card").reduce((sum, row) => sum + Number(row.amount || 0), 0),
+        tipStaffName: generatedBill.tip_staff_name || "",
         printableOfferTitle,
         printableOfferMessage,
         orderMeta: nextOrderMeta,
@@ -918,11 +1090,70 @@ export const Billing = () => {
       clearCart();
       resetOrderMeta();
       setDiscount({ label: "", type: "none", value: "" });
+      setTip({ amount: "", staffId: "" });
+      setRedeem({ enabled: false, points: "" });
+      setGiftPay({ code: "", card: null, amount: "" });
       setBillingErrors({});
       fetchProducts();
       toast.success(`Bill ${generatedBill.id} generated`);
     } catch (error) {
-      toast.error(getApiErrorMessage(error, "Failed to generate bill"));
+      if (!isNetworkFailure(error)) {
+        toast.error(getApiErrorMessage(error, "Failed to generate bill"));
+        return;
+      }
+      // No connection: keep a cash/due bill on this device and sync it later with the same checkout id,
+      // so it can never be recorded twice. Card/UPI need the server to confirm the payment.
+      if (redeemPoints || giftAmount) {
+        toast.error("No connection. Points and gift cards need the server; remove them to take the bill offline.");
+        return;
+      }
+      if (!["Cash", "Due"].includes(payment) || !canQueueOffline()) {
+        toast.error(`No connection. ${payment} payments need the server; take cash or try again when back online.`);
+        return;
+      }
+      const provisionalId = `OFFLINE-${payload.client_request_id.slice(0, 8).toUpperCase()}`;
+      try {
+        queueOfflineBill({ payload, summary: { label: provisionalId, total: formatCurrency(total, settings.currency) } });
+      } catch (queueError) {
+        toast.error(queueError.message || "Could not save the bill on this device");
+        return;
+      }
+      checkoutKeyRef.current = { signature: "", key: "" };
+      setPaymentIntent(null);
+      setReceipt({
+        id: provisionalId,
+        offline: true,
+        items: payload.items,
+        subtotal,
+        tax,
+        total,
+        payment,
+        discountLabel: payload.discount_label,
+        discountType: payload.discount_type,
+        discountValue: payload.discount_value,
+        discountAmount: payload.discount_amount,
+        tipAmount,
+        tipStaffName,
+        printableOfferTitle,
+        printableOfferMessage,
+        orderMeta: nextOrderMeta,
+        feedbackLink: "",
+        dateLabel: new Date().toLocaleDateString("en-IN"),
+        timeLabel: new Date().toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" }),
+      });
+      clearCart();
+      resetOrderMeta();
+      setDiscount({ label: "", type: "none", value: "" });
+      setTip({ amount: "", staffId: "" });
+      setRedeem({ enabled: false, points: "" });
+      setGiftPay({ code: "", card: null, amount: "" });
+      setBillingErrors({});
+      // The list already excludes earlier offline sales; take this bill's units off too.
+      setProducts((current) => (current || []).map((product) => {
+        const sold = payload.items.filter((item) => item.id === product.id).reduce((sum, item) => sum + Number(item.quantity || 0), 0);
+        return sold ? { ...product, stock: Math.max(0, Number(product.stock || 0) - sold) } : product;
+      }));
+      toast.warning(`Offline: bill ${provisionalId} saved on this device and will sync when the connection returns.`);
     }
   };
 
@@ -963,7 +1194,13 @@ export const Billing = () => {
 
   return (
     <Layout billingMode title={selectedOutlet ? `Billing · ${selectedOutlet.name}` : "Billing"}>
-      {["Owner", "Manager", "Cashier"].includes(user?.role) && <CashierSettlement key={selectedOutletId} apiUrl={API_URL} outletId={selectedOutletId} />}
+      {offlineMenuSavedAt || user?.offline ? (
+        <div role="status" className="cf-offline-banner" style={{ padding: "8px 12px", background: "#fff3cd", color: "#332700", borderRadius: 6, margin: "0 0 8px" }}>
+          Offline till: cash and due bills are saved on this device and sync automatically.
+          {offlineMenuSavedAt ? ` Menu and stock as of ${new Date(offlineMenuSavedAt).toLocaleString("en-IN")}.` : ""}
+        </div>
+      ) : null}
+      {["Owner", "Manager", "Cashier"].includes(user?.role) && !user?.offline && <CashierSettlement key={selectedOutletId} apiUrl={API_URL} outletId={selectedOutletId} />}
       <div className="cf-billing" data-testid="billing-page">
         <div className="cf-billing__products">
           {user?.assigned_outlets?.length ? (
@@ -1072,7 +1309,16 @@ export const Billing = () => {
                   ) : null}
                 </div>
                 <div className="cf-product-card__name">{product.name}</div>
-                <div className="cf-product-card__price">{formatCurrency(product.price, settings.currency)}</div>
+                <div className="cf-product-card__price">
+                  {product.price_rule && Number(product.list_price) > Number(product.price) ? (
+                    <>
+                      <s style={{ opacity: 0.6, marginRight: 4 }}>{formatCurrency(product.list_price, settings.currency)}</s>
+                      {formatCurrency(product.price, settings.currency)}
+                      <span className="cf-badge cf-badge--amber" style={{ marginLeft: 4 }} title={product.price_rule.name}>{product.price_rule.name}</span>
+                    </>
+                  ) : formatCurrency(product.price, settings.currency)}
+                  {product.is_combo ? <span className="cf-badge cf-badge--blue" style={{ marginLeft: 4 }}>Combo</span> : null}
+                </div>
                 {(product.variation_options?.length || product.addon_options?.length) ? (
                   <div className="cf-product-card__cat" style={{ marginTop: 6 }}>
                     {(product.variation_options?.length || 0) ? `${product.variation_options.length} variations` : ""}
@@ -1222,10 +1468,83 @@ export const Billing = () => {
               <span id="cart-tax-label">Tax ({settings.taxRate}%)</span>
               <span id="cart-tax">{formatCurrency(tax, settings.currency)}</span>
             </div>
+            {loyaltyDiscount > 0 ? (
+              <div className="cf-cart__line">
+                <span>Points ({redeemPoints})</span>
+                <span>-{formatCurrency(loyaltyDiscount, settings.currency)}</span>
+              </div>
+            ) : null}
+            <CheckoutExtras
+              apiUrl={API_URL}
+              currency={settings.currency}
+              giftPay={giftPay}
+              lookingUp={lookingUpCustomer}
+              loyaltyInfo={loyaltyInfo}
+              maxRedeemPoints={maxRedeemPoints}
+              offline={Boolean(user?.offline || offlineMenuSavedAt)}
+              redeem={redeem}
+              total={total}
+              marketingOptIn={marketingOptIn}
+              onGiftPayChange={setGiftPay}
+              onMarketingOptInChange={setMarketingOptIn}
+              onRedeemChange={setRedeem}
+            />
+            <div className="cf-field" data-testid="tip-field">
+              <label htmlFor="cart-tip">Tip (not taxed)</label>
+              <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                <input
+                  className="cf-input"
+                  id="cart-tip"
+                  inputMode="decimal"
+                  min="0"
+                  placeholder="0"
+                  step="0.01"
+                  style={{ flex: "1 1 80px" }}
+                  type="number"
+                  value={tip.amount}
+                  onChange={(event) => setTip((current) => ({ ...current, amount: event.target.value }))}
+                />
+                {[5, 10].map((percent) => (
+                  <button
+                    className="cf-btn cf-btn--secondary cf-btn--small"
+                    disabled={!taxableSubtotal}
+                    key={percent}
+                    type="button"
+                    onClick={() => setTip((current) => ({ ...current, amount: String(Math.round(taxableSubtotal * percent) / 100) }))}
+                  >
+                    {percent}%
+                  </button>
+                ))}
+                <select
+                  aria-label="Tip goes to"
+                  className="cf-select"
+                  style={{ flex: "1 1 140px" }}
+                  value={tip.staffId}
+                  onChange={(event) => setTip((current) => ({ ...current, staffId: event.target.value }))}
+                >
+                  <option value="">Shared tip pool</option>
+                  {tipTeam.map((member) => (
+                    <option key={member.id} value={member.id}>{member.name} ({member.role})</option>
+                  ))}
+                </select>
+              </div>
+            </div>
+            {tipAmount > 0 ? (
+              <div className="cf-cart__line">
+                <span>Tip{tipStaffName ? ` for ${tipStaffName}` : " (pool)"}</span>
+                <span>{formatCurrency(tipAmount, settings.currency)}</span>
+              </div>
+            ) : null}
             <div className="cf-cart__line cf-cart__line--total">
               <span>Total</span>
               <strong id="cart-total">{formatCurrency(total, settings.currency)}</strong>
             </div>
+            {giftAmount > 0 ? (
+              <div className="cf-cart__line">
+                <span>Gift card pays / rest by {payment}</span>
+                <span>{formatCurrency(giftAmount, settings.currency)} / {formatCurrency(Math.max(0, total - giftAmount), settings.currency)}</span>
+              </div>
+            ) : null}
             <div className="cf-field">
               <label>Payment Method</label>
               <select className="cf-select" id="cart-payment" onChange={(event) => setPayment(event.target.value)} value={payment}>
@@ -1266,6 +1585,13 @@ export const Billing = () => {
                   {receipt.dateLabel} {receipt.timeLabel}
                 </span>
               </div>
+              {receipt.offline ? (
+                <div role="note" style={{ border: "1px dashed var(--cf-text-2)", padding: 6, fontSize: 11, margin: "6px 0" }}>
+                  Provisional receipt taken offline. The tax invoice number is issued when this bill syncs.
+                  <br />
+                  Kitchen: this order is not on the kitchen screen until it syncs. Print this receipt and hand it to the kitchen.
+                </div>
+              ) : null}
               <div style={{ color: "var(--cf-text-2)", fontSize: 10, marginBottom: 10 }}>
                 {getTrackingLine({ ...receipt.orderMeta, pickup_slot: receipt.orderMeta?.pickup_slot })}
                 {receipt.orderMeta?.customer_name ? ` · ${receipt.orderMeta.customer_name}` : ""}
@@ -1293,18 +1619,44 @@ export const Billing = () => {
                     <span>-{formatCurrency(receipt.discountAmount, settings.currency)}</span>
                   </div>
                 ) : null}
+                {receipt.loyaltyDiscount > 0 ? (
+                  <div className="cf-receipt__row">
+                    <span>Loyalty points ({receipt.loyaltyPointsRedeemed})</span>
+                    <span>-{formatCurrency(receipt.loyaltyDiscount, settings.currency)}</span>
+                  </div>
+                ) : null}
                 <div className="cf-receipt__row">
                   <span>Tax ({settings.taxRate}%)</span>
                   <span>{formatCurrency(receipt.tax, settings.currency)}</span>
                 </div>
+                {receipt.tipAmount > 0 ? (
+                  <div className="cf-receipt__row">
+                    <span>Tip{receipt.tipStaffName ? ` (${receipt.tipStaffName})` : ""}</span>
+                    <span>{formatCurrency(receipt.tipAmount, settings.currency)}</span>
+                  </div>
+                ) : null}
                 <div className="cf-receipt__grand">
                   <span>TOTAL</span>
                   <span>{formatCurrency(receipt.total, settings.currency)}</span>
                 </div>
                 <div style={{ color: "var(--cf-text-2)", fontSize: 10, marginTop: 8 }}>
-                  Payment: <b>{receipt.payment}</b>
+                  Payment: <b>{receipt.giftCardPaid > 0 ? `Gift card ${formatCurrency(receipt.giftCardPaid, settings.currency)}${receipt.total - receipt.giftCardPaid > 0 ? ` + ${receipt.payment}` : ""}` : receipt.payment}</b>
                 </div>
-                {paymentIntent ? (
+                {receipt.loyaltyPointsEarned > 0 || receipt.loyaltyBalance !== null && receipt.loyaltyBalance !== undefined ? (
+                  <div style={{ color: "var(--cf-text-2)", fontSize: 10 }}>
+                    {receipt.loyaltyPointsEarned > 0 ? `Points earned: ${receipt.loyaltyPointsEarned}. ` : ""}
+                    {receipt.loyaltyBalance !== null && receipt.loyaltyBalance !== undefined ? `Points balance: ${receipt.loyaltyBalance}` : ""}
+                  </div>
+                ) : null}
+                {paymentIntent?.razorpay ? (
+                  <RazorpayCollect
+                    apiUrl={API_URL}
+                    currency={settings.currency}
+                    customerPhone={receipt.orderMeta?.customer_phone || receipt.customer_phone}
+                    intent={paymentIntent}
+                    onIntentChange={setPaymentIntent}
+                  />
+                ) : paymentIntent ? (
                   <div className="cf-payment-intent">
                     <div className="cf-page__overline" style={{ marginBottom: 8 }}>UPI Payment Request</div>
                     <div className="cf-table__mono">Ref: {paymentIntent.reference}</div>
@@ -1329,7 +1681,7 @@ export const Billing = () => {
               <div className="cf-feedback-box">
                 <div className="cf-page__overline" style={{ marginBottom: 10 }}>Customer Feedback</div>
                 <p className="cf-feedback-box__text">This feedback link is meant to stay on the printed receipt only. It is not sent separately by SMS or WhatsApp.</p>
-                {receipt.feedbackLink ? (
+                {receipt.feedbackLink && !receipt.offline ? (
                   <img
                     alt="Feedback QR code"
                     className="cf-feedback-box__qr"
@@ -1481,6 +1833,43 @@ export const Billing = () => {
                   </div>
                 </div>
               ) : null}
+              {(customizingProduct.modifier_groups || []).map((group) => {
+                const single = Number(group.max_select) === 1;
+                const min = Number(group.min_select || 0);
+                const max = Number(group.max_select || 0);
+                const hint = single ? (min ? "choose 1" : "optional, choose 1") : `${min ? `at least ${min}` : "optional"}${max ? `, up to ${max}` : ""}`;
+                return (
+                  <div className="cf-field" key={group.id} data-testid={`modifier-group-${group.id}`}>
+                    <label>{group.name} <span className="cf-card__meta">({hint})</span></label>
+                    <div className="cf-checkbox-row">
+                      {(group.options || []).filter((option) => option.active !== false).map((option) => {
+                        const selected = (customization.modifiers || []).includes(option.id);
+                        const groupSelected = (customization.modifiers || []).filter((id) => group.options.some((entry) => entry.id === id));
+                        const toggleOption = () => setCustomization((current) => {
+                          const currentIds = current.modifiers || [];
+                          if (single) {
+                            const others = currentIds.filter((id) => !group.options.some((entry) => entry.id === id));
+                            return { ...current, modifiers: selected && !min ? others : [...others, option.id] };
+                          }
+                          return { ...current, modifiers: selected ? currentIds.filter((id) => id !== option.id) : [...currentIds, option.id] };
+                        });
+                        return (
+                          <label key={option.id}>
+                            <input
+                              type={single ? "radio" : "checkbox"}
+                              name={`modifier-${group.id}`}
+                              checked={selected}
+                              disabled={!single && !selected && max > 0 && groupSelected.length >= max}
+                              onChange={toggleOption}
+                            />
+                            {option.name}{Number(option.price) ? ` (+${formatCurrency(option.price, settings.currency)})` : ""}
+                          </label>
+                        );
+                      })}
+                    </div>
+                  </div>
+                );
+              })}
               <div className="cf-field">
                 <label>Extra Instruction</label>
                 <textarea
@@ -1502,7 +1891,8 @@ export const Billing = () => {
                       customization.variation,
                       customization.addons,
                       customization.removals,
-                      customization.customNote
+                      customization.customNote,
+                      customization.modifiers || []
                     );
                     if (added) {
                       setCustomizingProduct(null);

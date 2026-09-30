@@ -103,7 +103,7 @@ export const buildGstBreakup = ({ subtotal = 0, tax = 0, gstRate = DEFAULT_GST_R
 
 export const roundMoney = (value) => Math.round(toNumber(value, 0) * 100) / 100;
 
-export const calculateInvoiceTotals = (payload = {}, items = payload.items || []) => {
+export const calculateInvoiceTotals = (payload = {}, items = payload.items || [], { serviceCharge = 0, tip = 0, loyaltyDiscount = 0 } = {}) => {
   const subtotalFromItems = (items || []).reduce(
     (sum, item) => sum + Math.max(0, toNumber(item.quantity, 0)) * Math.max(0, toNumber(item.price, 0)),
     0,
@@ -119,14 +119,23 @@ export const calculateInvoiceTotals = (payload = {}, items = payload.items || []
         ? Math.min(subtotal, discountValue || requestedDiscount)
         : Math.min(subtotal, requestedDiscount),
   );
-  const taxableSubtotal = roundMoney(Math.max(0, subtotal - discountAmount));
-  const gstRate = toNumber(payload.gst_rate ?? payload.gstRate, DEFAULT_GST_RATE);
+  // A negative or absurd rate would turn tax into a discount; the rate is always a percentage from 0 to 100.
+  const gstRate = Math.min(100, Math.max(0, toNumber(payload.gst_rate ?? payload.gstRate, DEFAULT_GST_RATE)));
+  const serviceChargeAmount = roundMoney(Math.max(0, toNumber(serviceCharge, 0)));
+  const tipAmount = roundMoney(Math.max(0, toNumber(tip, 0)));
+  // Loyalty points are redeemed as a discount before tax (on what is left after the staff discount).
+  const loyaltyAmount = roundMoney(Math.min(Math.max(0, subtotal - discountAmount), Math.max(0, toNumber(loyaltyDiscount, 0))));
+  // Service charge is part of the taxable value; a tip is not taxed.
+  const taxableSubtotal = roundMoney(Math.max(0, subtotal - discountAmount - loyaltyAmount) + serviceChargeAmount);
   const tax = roundMoney(taxableSubtotal * (gstRate / 100));
-  const total = roundMoney(taxableSubtotal + tax);
+  const total = roundMoney(taxableSubtotal + tax + tipAmount);
 
   return {
     subtotal,
     discount_amount: discountAmount,
+    loyalty_discount: loyaltyAmount,
+    service_charge: serviceChargeAmount,
+    tip_amount: tipAmount,
     taxable_subtotal: taxableSubtotal,
     tax,
     total,
@@ -152,7 +161,12 @@ export const createReceiptPrintPayload = ({ bill, business, settings = {} }) => 
     items: bill.items || [],
     subtotal: bill.subtotal,
     discount_amount: bill.discount_amount || 0,
+    loyalty_discount: bill.loyalty_discount || 0,
+    loyalty_points_earned: bill.loyalty_points_earned || 0,
+    service_charge: bill.service_charge || 0,
     tax: bill.tax,
+    tip_amount: bill.tip_amount || 0,
+    tip_staff_name: bill.tip_staff_name || null,
     total: bill.total,
     payments: bill.payments || [],
     payment_status: bill.payment_status,

@@ -2,26 +2,21 @@ import React, { createContext, useContext, useState, useEffect } from 'react';
 import axios from 'axios';
 import { canRetryRead, createBackendRecovery, isTemporaryBackendFailure } from '../lib/backendRecovery';
 import { clearTabSessionId, getTabSessionHeaders, getTabSessionId, setTabSessionId } from '../lib/sessionSlots';
+import { API_URL } from '../lib/apiUrl';
+import { setOfflineOwner } from '../core/offline/offlineQueue';
+import {
+  clearOfflineData,
+  clearOfflineSession,
+  isUnreachable,
+  loadOfflineSession,
+  saveOfflineSession,
+  setOfflineScope,
+} from '../lib/offlineCache';
 
 const AuthContext = createContext();
 const recoveryClient = axios.create({ timeout: 65000 });
 
-const API_URL = (() => {
-  const configured = String(process.env.REACT_APP_BACKEND_URL || "").replace(/\/+$/, "");
-  if (typeof window === "undefined") return configured;
-
-  const currentOrigin = window.location.origin.replace(/\/+$/, "");
-  const currentHost = window.location.hostname;
-  if (configured && configured !== currentOrigin && !configured.includes("vercel.app")) {
-    return configured;
-  }
-
-  if (currentHost === "localhost" || currentHost === "127.0.0.1") {
-    return configured || "http://localhost:4001";
-  }
-
-  return "https://pos-v1-fwjm.onrender.com";
-})();
+export { API_URL };
 const isWrappedApiResponse = (payload) =>
   payload &&
   typeof payload === 'object' &&
@@ -85,9 +80,16 @@ export const useAuth = () => {
 
 export const AuthProvider = ({ children }) => {
   const [user, setUser] = useState(null);
+  // Offline bills and offline data copies are kept per signed-in user and business.
+  useEffect(() => {
+    setOfflineOwner(user || null);
+    setOfflineScope(user || null);
+    if (user && !user.offline) saveOfflineSession(user);
+  }, [user]);
   const [loading, setLoading] = useState(true);
   const [waking, setWaking] = useState(false);
   const [authUnavailable, setAuthUnavailable] = useState(false);
+  const [tenantNotice, setTenantNotice] = useState(null);
 
   useEffect(() => {
     const wakeBackend = createBackendRecovery(() => recoveryClient.get(`${API_URL}/health/ready`));
@@ -197,8 +199,14 @@ export const AuthProvider = ({ children }) => {
         const status = error.response?.status;
         const requestUrl = originalRequest?.url || '';
         const cacheKey = originalRequest?.metadata?.cacheKey;
+        const errorCode = error.response?.data?.error?.code;
 
-        if (canRetryRead(error) && !originalRequest.metadata?.servedFromInflight) {
+        // Subscription lifecycle: tell the user why everything is refused instead of failing silently.
+        if (errorCode === 'TENANT_SUSPENDED' || errorCode === 'SUBSCRIPTION_INACTIVE') {
+          setTenantNotice({ code: errorCode, message: error.response.data.error.message });
+        }
+
+        if (canRetryRead(error) && !originalRequest.metadata?.servedFromInflight && navigator.onLine !== false) {
           const metadata = originalRequest.metadata;
           originalRequest._wakeRetry = true;
           setWaking(true);
@@ -282,6 +290,14 @@ export const AuthProvider = ({ children }) => {
       setUser(unwrapped);
       return unwrapped;
     } catch (error) {
+      // No connection at all: a cashier who was signed in on this tab keeps working from the tab's snapshot.
+      // The server re-checks the session as soon as it is reachable again.
+      const snapshot = isUnreachable(error) ? loadOfflineSession() : null;
+      if (snapshot) {
+        const offlineUser = { ...snapshot.user, offline: true };
+        setUser(offlineUser);
+        return offlineUser;
+      }
       if (isTemporaryBackendFailure(error)) {
         setAuthUnavailable(true);
         return false;
@@ -310,10 +326,39 @@ export const AuthProvider = ({ children }) => {
     }
   };
 
-  const login = async (email, password) => {
+  useEffect(() => {
+    if (!user?.offline) return undefined;
+    let cancelled = false;
+    const revalidate = async () => {
+      if (navigator.onLine === false) return;
+      try {
+        const response = await axios.get(`${API_URL}/api/auth/me`, {
+          withCredentials: true,
+          headers: getTabSessionHeaders(),
+          skipCache: true,
+          validateStatus: (status) => status < 500,
+        });
+        if (cancelled) return;
+        const fresh = response.status === 401 ? null : unwrapApiData(response.data);
+        // Signed out or revoked while offline: back to the login screen. Queued bills stay for this user.
+        setUser(fresh || false);
+      } catch {
+        // still unreachable; keep working offline
+      }
+    };
+    const timer = window.setInterval(revalidate, 30000);
+    window.addEventListener('online', revalidate);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+      window.removeEventListener('online', revalidate);
+    };
+  }, [user?.offline]);
+
+  const login = async (email, password, businessId = null) => {
     const { data } = await axios.post(
       `${API_URL}/api/auth/login`,
-      { email, password },
+      { email, password, ...(businessId ? { business_id: businessId } : {}) },
       { withCredentials: true }
     );
     const unwrapped = unwrapApiData(data);
@@ -333,6 +378,8 @@ export const AuthProvider = ({ children }) => {
     } catch (error) {
       console.error('Logout error:', error);
     } finally {
+      clearOfflineData();
+      clearOfflineSession();
       clearTabSessionId();
       clearRequestCaches();
       setUser(false);
@@ -342,6 +389,13 @@ export const AuthProvider = ({ children }) => {
   return (
     <AuthContext.Provider value={{ user, loading, login, logout, checkAuth }}>
       {waking && <div role="status" style={{ padding: 12, background: '#fff3cd', color: '#332700' }}>The server may be waking up. Reconnecting…</div>}
+      {tenantNotice && (
+        <div role="alert" style={{ padding: 12, background: '#fdecea', color: '#611a15', display: 'flex', gap: 12, alignItems: 'center' }}>
+          <span style={{ flex: 1 }}>{tenantNotice.message}</span>
+          {tenantNotice.code === 'TENANT_SUSPENDED' && <button onClick={() => { setTenantNotice(null); logout(); }}>Sign out</button>}
+          {tenantNotice.code === 'SUBSCRIPTION_INACTIVE' && <button onClick={() => setTenantNotice(null)}>Dismiss</button>}
+        </div>
+      )}
       {authUnavailable ? <div role="alert" style={{ padding: 24 }}><p>The server is temporarily unavailable. Your saved session has been kept.</p><button onClick={checkAuth}>Try connecting again</button></div> : children}
     </AuthContext.Provider>
   );

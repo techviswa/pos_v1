@@ -4,9 +4,12 @@ import { requirePermission } from "../../shared/middleware/authGuard.middleware.
 import { asyncHandler } from "../../shared/utils/asyncHandler.js";
 import { reportsController } from "./reports.controller.js";
 
+import { scopeOutletQuery } from "../../shared/middleware/recordOutletGuards.js";
+
 const router = Router();
 
 router.use(requirePermission("reports"));
+router.use(scopeOutletQuery);
 
 router.get("/", asyncHandler(reportsController.overview));
 router.get("/sales-by-date", asyncHandler(reportsController.sales));

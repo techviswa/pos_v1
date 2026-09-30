@@ -22,9 +22,17 @@ let webpackConfig = {
   eslint: {
     configure: {
       extends: ["plugin:react-hooks/recommended"],
+      env: { browser: true, es2022: true, jest: true, node: true, serviceworker: true },
+      parserOptions: { ecmaVersion: "latest", sourceType: "module", ecmaFeatures: { jsx: true } },
+      plugins: ["react"],
       rules: {
         "react-hooks/rules-of-hooks": "error",
         "react-hooks/exhaustive-deps": "warn",
+        // A name that is not defined only fails when that code runs (e.g. a missing import): stop the build instead.
+        "no-undef": "error",
+        "react/jsx-no-undef": "error",
+        "react/jsx-uses-vars": "error",
+        "react/jsx-uses-react": "error",
       },
     },
   },

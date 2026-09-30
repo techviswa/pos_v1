@@ -4,6 +4,8 @@ import {
   serializePurchaseOrder,
 } from "../../../database/prisma/helpers.js";
 import { logisticsWorkflowService } from "../../../services/workflows/logistics-workflow.service.js";
+import { assertOwnedIds } from "../../../database/prisma/scope.js";
+import { createNotFoundError } from "../../../shared/utils/http-error.js";
 
 class OutletPurchaseOrdersService {
   async listPurchaseOrders({ tenantId }) {
@@ -36,6 +38,8 @@ class OutletPurchaseOrdersService {
 
   async createPurchaseOrder({ tenantId, payload }) {
     const business = await ensureBusiness({ tenantId });
+    await assertOwnedIds({ kind: "outlet", ids: [payload.outletId || payload.outlet_id], businessId: business.id });
+    await assertOwnedIds({ kind: "user", ids: [payload.requestedById || payload.requested_by_id], businessId: business.id });
     const purchaseOrder = await prisma.purchaseOrder.create({
       data: {
         businessId: business.id,
@@ -61,6 +65,8 @@ class OutletPurchaseOrdersService {
       },
     });
 
+    await assertOwnedIds({ kind: "outlet", ids: [payload.outletId ?? payload.outlet_id], businessId: business.id });
+    await assertOwnedIds({ kind: "user", ids: [payload.requestedById ?? payload.requested_by_id], businessId: business.id });
     const purchaseOrder = await prisma.purchaseOrder.update({
       where: { id: purchaseOrderId },
       data: {
@@ -85,10 +91,12 @@ class OutletPurchaseOrdersService {
   async approvePurchaseOrder({ tenantId, purchaseOrderId }) {
     const business = await ensureBusiness({ tenantId });
     const purchaseOrder = await prisma.$transaction(async (tx) => {
-      const approvedPurchaseOrder = await tx.purchaseOrder.update({
-        where: { id: purchaseOrderId },
+      const claimed = await tx.purchaseOrder.updateMany({
+        where: { id: purchaseOrderId, businessId: business.id },
         data: { status: "approved" },
       });
+      if (!claimed.count) throw createNotFoundError("Purchase order", { purchaseOrderId });
+      const approvedPurchaseOrder = await tx.purchaseOrder.findFirstOrThrow({ where: { id: purchaseOrderId, businessId: business.id } });
 
       await logisticsWorkflowService.handlePurchaseOrderApproved({
         tenantId,

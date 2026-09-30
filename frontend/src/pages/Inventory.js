@@ -5,6 +5,7 @@ import { Layout } from "../components/Layout";
 import { toast } from "sonner";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "../components/ui/dialog";
 import { useAutoRefresh } from "../hooks/useAutoRefresh";
+import { InventoryAccounting } from "../core/inventory/InventoryAccounting";
 
 const API_URL = (() => {
   const configured = String(process.env.REACT_APP_BACKEND_URL || "").replace(/\/+$/, "");
@@ -377,6 +378,7 @@ export const Inventory = () => {
           </div>
         </div>
 
+        <InventoryAccounting apiUrl={API_URL} onChanged={fetchInventory} inventory={inventory} />
         <div className="cf-metrics">
           <button className="cf-metric cf-metric--button" onClick={() => navigateToSummary("items")} type="button">
             <div className="cf-metric__label">Inventory Items</div>

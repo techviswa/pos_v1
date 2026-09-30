@@ -61,6 +61,16 @@ class PaymentsController {
     res.status(200).json(apiResponse({ message: "Payment intent confirmed successfully", data }));
   }
 
+  async refresh(req, res) {
+    const data = await paymentsService.refreshIntent({ ...req.context, intentId: req.params.intentId });
+    res.status(200).json(apiResponse({ message: "Payment status checked", data }));
+  }
+
+  async cancel(req, res) {
+    const data = await paymentsService.cancelIntent({ ...req.context, intentId: req.params.intentId });
+    res.status(200).json(apiResponse({ message: "Payment request cancelled", data }));
+  }
+
   async webhook(req, res) {
     const data = await paymentsService.recordWebhook({
       provider: req.params.provider,

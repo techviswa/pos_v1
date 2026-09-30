@@ -14,11 +14,35 @@ import {
 } from "../../database/prisma/helpers.js";
 import { createHttpError, createNotFoundError } from "../../shared/utils/http-error.js";
 import { featureToggleService } from "../../services/featureToggleService.js";
-import { ACTIVE_SUBSCRIPTION_STATUSES, DEFAULT_SAAS_PLAN, getPlan, SAAS_PLANS } from "./saas-plans.js";
+import {
+  ACTIVE_SUBSCRIPTION_STATUSES,
+  accessModeForStatus,
+  DEFAULT_SAAS_PLAN,
+  getPlan,
+  normalizeSubscriptionStatus,
+  SAAS_PLANS,
+  SUBSCRIPTION_STATUSES,
+} from "./saas-plans.js";
 import { saasStore } from "./saas-store.js";
 import { hashPassword, isPasswordHash } from "../auth/passwords.js";
 
 const normalizeId = (value, fallback) => String(value || fallback).trim();
+
+const ACCESS_CACHE_TTL_MS = 15_000;
+const accessCache = new Map();
+
+const requireValidStatus = (value) => {
+  if (value === undefined || value === null || value === "") return undefined;
+  const status = normalizeSubscriptionStatus(value);
+  if (!SUBSCRIPTION_STATUSES.has(status)) {
+    throw createHttpError({
+      statusCode: 400,
+      code: "INVALID_SUBSCRIPTION_STATUS",
+      message: `subscription_status must be one of: ${[...SUBSCRIPTION_STATUSES].join(", ")}`,
+    });
+  }
+  return status;
+};
 
 const limitStatus = (used, limit) => ({
   used,
@@ -67,6 +91,32 @@ class SaasService {
     return business;
   }
 
+  /**
+   * Lifecycle gate used by the auth guards and public QR ordering.
+   * Short-lived cache: a suspension reaches every request within ACCESS_CACHE_TTL_MS.
+   */
+  async getAccessMode(businessId) {
+    if (!businessId) return { status: null, mode: "full" };
+    const cached = accessCache.get(businessId);
+    if (cached && cached.expiresAt > Date.now()) return cached.value;
+    const config = await saasStore.getBusinessConfig(businessId);
+    const status = normalizeSubscriptionStatus(config?.subscription_status) || "trialing";
+    const value = { status, mode: accessModeForStatus(status) };
+    accessCache.set(businessId, { value, expiresAt: Date.now() + ACCESS_CACHE_TTL_MS });
+    return value;
+  }
+
+  /** Features the business's plan (or an AdminCore override) entitles it to. */
+  async getPlanFeatures(businessId) {
+    const config = await saasStore.getBusinessConfig(businessId);
+    const plan = getPlan(config?.plan);
+    return new Set(config?.enabled_features || plan.features);
+  }
+
+  invalidateAccess(businessId) {
+    accessCache.delete(businessId);
+  }
+
   async getConfigForBusiness(business) {
     return {
       ...buildDefaultConfig(business),
@@ -96,6 +146,7 @@ class SaasService {
         billing_customer_id: config.billing_customer_id,
         current_period_end: config.current_period_end,
         active: ACTIVE_SUBSCRIPTION_STATUSES.has(config.subscription_status),
+        access_mode: accessModeForStatus(config.subscription_status),
       },
       domains: {
         custom_domain: config.custom_domain,
@@ -122,6 +173,7 @@ class SaasService {
       throw createHttpError({ statusCode: 400, message: "Owner password must be at least 8 characters" });
     }
     const plan = getPlan(payload.plan);
+    const requestedStatus = requireValidStatus(payload.subscription_status);
     const business = await prisma.$transaction(async (tx) => {
       await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`provision:${tenantId}`}))`;
       const existing = await tx.business.findFirst({ where: { OR: [{ id: businessId }, { tenantId }] } });
@@ -139,8 +191,8 @@ class SaasService {
       ...current,
       admincore_client_id: payload.admincore_client_id || payload.client_id || current.admincore_client_id,
       plan: plan.key,
-      subscription_status: payload.subscription_status || current.subscription_status || "trialing",
-      billing_status: payload.billing_status || payload.subscription_status || current.billing_status || "trialing",
+      subscription_status: requestedStatus || current.subscription_status || "trialing",
+      billing_status: requireValidStatus(payload.billing_status) || requestedStatus || current.billing_status || "trialing",
       billing_customer_id: payload.billing_customer_id || current.billing_customer_id,
       current_period_end: payload.current_period_end || current.current_period_end,
       custom_domain: payload.custom_domain ?? current.custom_domain,
@@ -149,6 +201,7 @@ class SaasService {
       enabled_features: payload.enabled_features || payload.features || plan.features,
       onboarded_at: current.onboarded_at || new Date().toISOString(),
     });
+    this.invalidateAccess(updatedBusiness.id);
     await featureToggleService.setFeaturesForBusiness(updatedBusiness.id, nextConfig.enabled_features);
     if (payload.owner_email && payload.owner_password) {
       await this.ensureOwnerUser({
@@ -181,16 +234,22 @@ class SaasService {
     const business = await this.getBusinessOrThrow(normalizeId(businessId, env.defaultBusinessId));
     const current = await this.getConfigForBusiness(business);
     const plan = getPlan(payload.plan || current.plan);
+    const requestedStatus = requireValidStatus(payload.subscription_status);
+    // Moving to another plan (e.g. after it was paid for) brings that plan's features unless others are given.
+    const planChanged = Boolean(payload.plan) && plan.key !== current.plan;
+    const enabledFeatures = payload.enabled_features || payload.features || (planChanged ? plan.features : current.enabled_features) || plan.features;
     await saasStore.saveBusinessConfig(business.id, {
       ...current,
       plan: plan.key,
-      subscription_status: payload.subscription_status || current.subscription_status,
-      billing_status: payload.billing_status || payload.subscription_status || current.billing_status,
+      subscription_status: requestedStatus || current.subscription_status,
+      billing_status: requireValidStatus(payload.billing_status) || requestedStatus || current.billing_status,
       billing_customer_id: payload.billing_customer_id ?? current.billing_customer_id,
       current_period_end: payload.current_period_end ?? current.current_period_end,
       limits: payload.limits ? { ...plan.limits, ...payload.limits } : plan.limits,
-      enabled_features: payload.enabled_features || payload.features || current.enabled_features || plan.features,
+      enabled_features: enabledFeatures,
     });
+    this.invalidateAccess(business.id);
+    if (planChanged || payload.enabled_features || payload.features) await featureToggleService.setFeaturesForBusiness(business.id, enabledFeatures);
     return this.getTenantOverview({ businessId: business.id });
   }
 

@@ -13,6 +13,7 @@ import env from "../src/config/env.js";
 import { saasService } from "../src/core/saas/saas.service.js";
 import { authService } from "../src/core/auth/auth.service.js";
 import { kotService } from "../src/features/kitchen/kot/kot.service.js";
+import { inventoryOperationsService } from "../src/core/inventory/inventory-operations.service.js";
 
 const id = `viewport-${randomUUID()}`;
 const previousEnabled = env.admincore.enabled;
@@ -30,6 +31,7 @@ const pending = new Map();
 let sequence = 0;
 let session;
 const findings = [];
+let streamRequests = 0;
 try {
   await access(path.join(build, "index.html"));
   env.admincore.enabled = false;
@@ -42,9 +44,12 @@ try {
   const qr = await prisma.tableQrCode.create({ data: { businessId: id, tableId: table.id, token: randomUUID() } });
   const auth = await authService.login({ email: `${id}@example.invalid`, password });
   const restoreIngredient = await prisma.inventoryItem.create({ data: { businessId: id, name: "Unused fixture ingredient", stock: 0, unit: "kg" } });
+  const receipt = await inventoryOperationsService.receivePurchase({ tenantId: id, user: { id: auth.user.id, role: "Owner" },
+    payload: { outlet_id: outlet.id, vendor_name: "Viewport supplier", items: [{ inventory_id: restoreIngredient.id, quantity: 2, unit_cost: 20 }] } });
   await prisma.outletInventory.create({ data: { outletId: outlet.id, inventoryItemId: restoreIngredient.id, stock: 0 } });
   const restoreBill = await prisma.bill.create({ data: { businessId: id, customerName: "Reversal fixture", currency: "INR", total: 100, subtotal: 100, tax: 0, status: "refunded", metadata: { outlet_id: outlet.id, refunded_amount: 100, inventory_consumption: [{ inventory_id: restoreIngredient.id, outlet_id: outlet.id, quantity: 1, unit_cost: 20 }] }, items: { create: [{ name: "Unused meal", price: 100, quantity: 1 }] } } });
-  await prisma.product.create({ data: { businessId: id, name: "Viewport meal", category: "Meals", price: 100, costPrice: 30 } });
+  await prisma.product.create({ data: { businessId: id, name: "Viewport meal", category: "Meals", price: 100, costPrice: 30, stock: 1000 } });
+  await prisma.customer.create({ data: { businessId: id, phone: "9123456780", name: "Viewport Guest", marketingOptIn: true } });
   const order = await prisma.order.create({ data: { businessId: id, customerName: "Viewport guest", channel: "pos", status: "accepted", metadata: { outlet_id: outlet.id }, items: { create: [{ name: "Viewport meal", quantity: 1, price: 100 }] } } });
   const ticket = await kotService.ensureTicketForOrder({ businessId: id, orderId: order.id });
   assert.ok(auth?.sessionId, "Local fixture login must succeed before browser checks");
@@ -84,6 +89,13 @@ try {
             await send("Fetch.fulfillRequest", { requestId, responseCode: 503, responseHeaders: [{ name: "Access-Control-Allow-Origin", value: webUrl }, { name: "Access-Control-Allow-Credentials", value: "true" }, { name: "Content-Type", value: "application/json" }], body: Buffer.from(JSON.stringify({ message: "Simulated sleeping backend" })).toString("base64") }, session);
             return;
           }
+          if (url.pathname === "/api/events/stream") {
+            // This proxy buffers whole responses, which a never-ending event stream cannot be; screens fall back to
+            // their normal refresh, which is what this layout test checks.
+            streamRequests++;
+            await send("Fetch.failRequest", { requestId, errorReason: "Aborted" }, session);
+            return;
+          }
           if (url.pathname.startsWith("/api/") || url.pathname === "/health/ready") {
             if (url.pathname === "/health/ready") readinessProbes++;
             const response = await fetch(`${apiUrl}${url.pathname}${url.search}`, {
@@ -108,7 +120,7 @@ try {
   const results = [];
   for (const width of [390, 768]) {
     await send("Emulation.setDeviceMetricsOverride", { width, height: 844, deviceScaleFactor: 1, mobile: true }, session);
-    for (const route of ["/login", "/dashboard", "/billing", "/bills", "/chef", "/waiter", "/products", "/reports", "/qr-management", `/qr/${qr.token}`]) {
+    for (const route of ["/login", "/dashboard", "/billing", "/bills", "/chef", "/waiter", "/products", "/inventory", "/reports", "/qr-management", "/time-clock", "/attendance", "/tips", "/customers", "/gift-cards", "/payroll", "/marketing", `/qr/${qr.token}`]) {
       authenticated = route !== "/login" && !route.startsWith("/qr/");
       await send("Page.addScriptToEvaluateOnNewDocument", { source: `sessionStorage.setItem('cashflow-lite-tab-session-id',${JSON.stringify(auth.sessionId)});localStorage.setItem('cashflow-lite-active-outlet',${JSON.stringify(outlet.id)});` }, session);
       await send("Page.navigate", { url: `${webUrl}${route}` }, session);
@@ -117,12 +129,29 @@ try {
         await evaluate(`document.querySelector('[data-testid="bill-row-${restoreBill.id}"] button').click()`);
         await new Promise((resolve) => setTimeout(resolve, 400));
         assert.ok(await evaluate(`document.body.innerText.includes('Restore unused ingredients')`));
-        await evaluate(`document.querySelector('[role="dialog"] form input').focus()`);
+        await evaluate(`document.querySelector('[role="dialog"] form input[maxlength="500"]').focus()`);
         await send("Input.insertText", { text: "Unused ingredients confirmed by manager" }, session);
-        await evaluate(`document.querySelector('[role="dialog"] input[type="checkbox"]').click(); document.querySelector('[role="dialog"] form').requestSubmit()`);
+        await evaluate(`[...document.querySelectorAll('[role="dialog"] input[type="checkbox"]')].at(-1).click(); document.querySelector('[role="dialog"] form').requestSubmit()`);
         await new Promise((resolve) => setTimeout(resolve, 800));
         assert.ok(await evaluate(`document.body.innerText.includes('restored to their original stock location')`));
         assert.equal((await prisma.outletInventory.findUnique({ where: { outletId_inventoryItemId: { outletId: outlet.id, inventoryItemId: restoreIngredient.id } } })).stock, 1);
+      }
+      if (route === "/inventory") {
+        await evaluate(`[...document.querySelectorAll('button')].find(e=>e.textContent==='Load / refresh accounting').click()`);
+        await new Promise((resolve) => setTimeout(resolve, 800));
+        assert.ok(await evaluate(`document.body.innerText.includes('On-hand value:')`));
+        if (width === 390) {
+          await evaluate(`const select=document.querySelector('[data-testid="supplier-return-form"] select');select.value=${JSON.stringify(receipt.record.id)};select.dispatchEvent(new Event('change',{bubbles:true}));`);
+          await new Promise((resolve) => setTimeout(resolve, 300));
+          await evaluate(`document.querySelector('[data-testid="supplier-return-form"] input[type="number"]').focus()`);
+          await send("Input.insertText", { text: "1" }, session);
+          await evaluate(`document.querySelector('[data-testid="supplier-return-form"] input[maxlength="500"]').focus()`);
+          await send("Input.insertText", { text: "Supplier return browser test" }, session);
+          await evaluate(`document.querySelector('[data-testid="supplier-return-form"]').requestSubmit()`);
+          await new Promise((resolve) => setTimeout(resolve, 1000));
+          assert.ok(await evaluate(`document.body.innerText.includes('Return recorded. Purchase credit: 20.00')`));
+          assert.equal((await prisma.inventoryItem.findUnique({ where: { id: restoreIngredient.id } })).stock, 1);
+        }
       }
       if (route === "/chef") {
         assert.ok(await evaluate(`document.body.innerText.includes('Viewport meal')`), "Chef must render the fixture ticket");
@@ -131,6 +160,21 @@ try {
         const expectedHistory = await kotService.getHistory({ tenantId: id, ticketId: ticket.id });
         assert.ok(expectedHistory.audit.length > 0);
         assert.equal(await evaluate(`document.querySelectorAll('[aria-label="Kitchen ticket history"] li').length`), expectedHistory.audit.length, "Chef history must display actual audit records");
+      }
+      // The screens must show data they loaded, not only render without errors.
+      const loaded = {
+        "/time-clock": `document.querySelector('[aria-label="Your name"]').options.length > 1`,
+        "/attendance": `document.querySelector('[aria-label="Staff member"]').options.length > 1`,
+        "/tips": `document.querySelector('[data-testid="tip-pool-settings"] input').disabled === false`,
+        "/customers": `document.body.innerText.includes('Viewport Guest')`,
+        "/gift-cards": `document.querySelector('.cf-metric__value').textContent.trim() !== '-'`,
+        "/marketing": `document.querySelector('.cf-metric__value').textContent.trim() === '1'`,
+        "/payroll": `(() => { [...document.querySelectorAll('button')].find((e) => e.textContent === 'Staff pay').click(); return true; })()`,
+      }[route];
+      if (loaded) assert.ok(await evaluate(loaded), `${route} did not show its loaded data`);
+      if (route === "/payroll") {
+        await new Promise((resolve) => setTimeout(resolve, 300));
+        assert.ok(await evaluate(`document.body.innerText.includes('Set pay') || document.body.innerText.includes('Edit')`), "/payroll must list staff pay");
       }
       if (route.startsWith("/qr/")) assert.ok(await evaluate(`document.body.innerText.includes('Viewport meal')`), "Public menu must show the available product");
       if (route === "/billing" && width === 390) {
@@ -149,7 +193,7 @@ try {
       const result = await evaluate(`({route:location.pathname,width:innerWidth,overflow:document.documentElement.scrollWidth>innerWidth+2,apiErrors:[...document.querySelectorAll('.cf-api-error')].map(e=>e.innerText),body:document.body.innerText.slice(0,200),elements:[...document.querySelectorAll('body *')].filter(e=>{const r=e.getBoundingClientRect();return r.width>0&&r.right>innerWidth+2&&r.left>=0}).slice(0,6).map(e=>({tag:e.tagName,class:e.className}))})`);
       results.push({ requested: route, viewport: width, ...result });
       console.log(JSON.stringify(results.at(-1)));
-      if (width === 390 && ["/billing", "/chef"].includes(route)) {
+      if (width === 390 && ["/billing", "/chef", "/inventory"].includes(route)) {
         const capture = await send("Page.captureScreenshot", { format: "png" }, session);
         await writeFile(`backend/logs/mobile-${route.slice(1)}.png`, Buffer.from(capture.data, "base64"));
       }
@@ -162,6 +206,9 @@ try {
   assert.ok(results.every((result) => result.width === result.viewport && !result.body.includes("ENOENT")), "Application did not render at the requested viewport");
   assert.ok(results.every((result) => result.apiErrors.length === 0), "A screen rendered an API error fallback");
   assert.ok(results.every((result) => !result.overflow), "Viewport overflow detected");
+  // Screens share one live connection per tab and back off after failures instead of reconnecting in a loop.
+  assert.ok(streamRequests <= results.length * 2, `Live update reconnect storm: ${streamRequests} stream requests for ${results.length} screens`);
+  console.log(`Mobile viewport checks passed for ${results.length} screens (${streamRequests} live-stream attempts)`);
 } finally {
   await writeFile("backend/logs/mobile-browser-stderr.log", browserLog);
   chrome?.kill();

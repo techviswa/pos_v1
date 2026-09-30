@@ -1,5 +1,7 @@
 import prisma from "../../database/prisma/client.js";
-import { getAllocatedLineRevenue, getBillLineCost, isRevenueBill } from "../billing/bill-analytics.utils.js";
+import { createHash } from "node:crypto";
+import { moveStock } from "./stock-ledger.service.js";
+import { reportsService } from "../reports/reports.service.js";
 import {
   ensureBusiness,
   serializeAllocation,
@@ -83,40 +85,30 @@ class InventoryOperationsService {
   }
 
   async recordMovement({ tx = prisma, businessId, item, movementType, quantity, reason, expiryDate = null }) {
-    const signedQuantity = toNumber(quantity, 0);
-    const changed = await tx.inventoryItem.updateMany({
-      where: { id: item.id, businessId, ...(signedQuantity < 0 ? { stock: { gte: -signedQuantity } } : {}) },
-      data: {
-        stock: { increment: signedQuantity },
-        ...(expiryDate ? { expiryDate: new Date(expiryDate) } : {}),
-      },
-    });
-    if (!changed.count) throw createHttpError({ statusCode: 409, message: "Insufficient stock for this movement" });
-    const updated = await tx.inventoryItem.findUniqueOrThrow({ where: { id: item.id } });
-
-    const movement = await tx.inventoryMovement.create({
-      data: {
-        businessId,
-        inventoryItemId: item.id,
-        movementType,
-        quantity: signedQuantity,
-        reason: reason || "",
-        expiryDate: expiryDate ? new Date(expiryDate) : null,
-      },
-    });
-
-    return { item: updated, movement };
+    return moveStock({ tx, businessId, itemId: item.id, movementType, quantity: Number(quantity), reason, expiryDate });
   }
 
   async receivePurchase({ tenantId, payload, user }) {
     const business = await ensureBusiness({ tenantId });
     const lines = Array.isArray(payload.items) ? payload.items : [];
+    if (payload.stock_location && !["central", "outlet"].includes(payload.stock_location)) throw createHttpError({ statusCode: 400, message: "Stock location must be central or outlet" });
+    if (payload.request_id != null && (typeof payload.request_id !== "string" || !/^[\w-]{8,100}$/.test(payload.request_id))) throw createHttpError({ statusCode: 400, message: "Invalid purchase request ID" });
+    const requestKey = payload.request_id ? `inventory-receipt:${business.id}:${payload.request_id}` : null;
+    const fingerprint = createHash("sha256").update(JSON.stringify(payload)).digest("hex");
     if (!lines.length) {
       throw createHttpError({ statusCode: 400, message: "Purchase receiving requires at least one item" });
     }
 
     const result = await prisma.$transaction(async (tx) => {
       await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`inventory-reconciliation:${business.id}`}))`;
+      if (requestKey) {
+        const previous = await tx.stateDocument.findUnique({ where: { key: requestKey } });
+        if (previous) {
+          if (previous.data.fingerprint !== fingerprint) throw createHttpError({ statusCode: 409, message: "Purchase request ID was already used with different data" });
+          const purchaseOrder = await tx.purchaseOrder.findFirstOrThrow({ where: { id: previous.data.receipt_id, businessId: business.id } });
+          return { purchaseOrder, receivedItems: purchaseOrder.items };
+        }
+      }
       const outletId = await this.resolveOutletId({
         tx,
         businessId: business.id,
@@ -134,24 +126,19 @@ class InventoryOperationsService {
         const quantity = Number(rawQuantity);
         const unitCost = rawCost == null ? item.conversionCost : Number(rawCost);
 
-        const weightedCost =
-          quantity > 0
-            ? (toNumber(item.stock, 0) * toNumber(item.conversionCost, 0) + quantity * unitCost) /
-              (toNumber(item.stock, 0) + quantity)
-            : item.conversionCost;
-
         await tx.inventoryItem.update({
           where: { id: item.id },
           data: {
-            conversionCost: weightedCost,
             vendor: payload.vendor_name || line.vendor || item.vendor,
           },
         });
 
-        const movement = await this.recordMovement({
+        const movement = await moveStock({
           tx,
           businessId: business.id,
-          item,
+          itemId: item.id,
+          unitCost,
+          outletId: payload.stock_location === "outlet" ? outletId : null,
           movementType: "purchase_receiving",
           quantity,
           reason: `Purchase received${payload.vendor_bill_number ? ` against bill ${payload.vendor_bill_number}` : ""}`,
@@ -164,6 +151,7 @@ class InventoryOperationsService {
           unit: item.unit,
           unit_cost: unitCost,
           movement_id: movement.movement.id,
+          stock_outlet_id: payload.stock_location === "outlet" ? outletId : null,
         });
       }
 
@@ -198,6 +186,7 @@ class InventoryOperationsService {
           received_item_count: receivedItems.length,
         },
       }, { tx });
+      if (requestKey) await tx.stateDocument.create({ data: { key: requestKey, data: { fingerprint, receipt_id: purchaseOrder.id } } });
       return { purchaseOrder, receivedItems };
     });
 
@@ -272,10 +261,11 @@ class InventoryOperationsService {
     const result = await prisma.$transaction(async (tx) => {
       const item = await tx.inventoryItem.findFirst({ where: { id: itemId, businessId: business.id } });
       if (!item) throw createHttpError({ statusCode: 404, message: "Inventory item not found in this business" });
-      const movement = await this.recordMovement({
+      const movement = await moveStock({
         tx,
         businessId: business.id,
-        item,
+        itemId: item.id,
+        outletId: payload.outlet_id || payload.outletId || null,
         movementType: ["spoilage", "pilferage"].includes(type) ? type : "wastage",
         quantity: -quantity,
         reason: payload.reason || `Recorded by ${user?.name || "system"}`,
@@ -321,7 +311,8 @@ class InventoryOperationsService {
       await this.resolveOutletId({ businessId: business.id, outletId: sourceLocation });
       if (sourceLocation === destinationOutletId) throw createHttpError({ statusCode: 400, message: "Source and destination outlets must differ" });
     }
-    const allocation = await prisma.allocation.create({
+    return prisma.$transaction(async (tx) => {
+    const allocation = await tx.allocation.create({
       data: {
         businessId: business.id,
         outletId: destinationOutletId,
@@ -348,13 +339,14 @@ class InventoryOperationsService {
       metadata: {
         status: allocation.status,
       },
-    });
+    }, { tx });
 
     return {
       ...serializeAllocation(allocation, tenantId),
       requested_by: user?.name || null,
       approval_required: true,
     };
+    });
   }
 
   async approveTransfer({ tenantId, allocationId, user }) {
@@ -376,20 +368,10 @@ class InventoryOperationsService {
       for (const line of items) {
         const item = await this.findOrCreateInventoryItem({ tx, businessId: business.id, line });
         const quantity = this.transferQuantity(line.requested_quantity ?? line.quantity);
-        if (sourceOutlet) {
-          const changed = await tx.outletInventory.updateMany({ where: { outletId: sourceOutlet, inventoryItemId: item.id, stock: { gte: quantity } }, data: { stock: { decrement: quantity } } });
-          if (!changed.count) throw createHttpError({ statusCode: 409, message: "Insufficient stock at the source outlet" });
-          await tx.inventoryMovement.create({ data: { businessId: business.id, inventoryItemId: item.id, movementType: "stock_transfer_out", quantity: -quantity, reason: `Transfer ${allocationId} from outlet ${sourceOutlet} to ${allocation.outletId}` } });
-        } else {
-        await this.recordMovement({
-          tx,
-          businessId: business.id,
-          item,
-          movementType: "stock_transfer_out",
-          quantity: -this.transferQuantity(line.requested_quantity ?? line.quantity),
-          reason: `Transfer approved to outlet ${allocation.outletId} by ${user?.name || "system"}`,
-        });
-        }
+        const moved = await moveStock({ tx, businessId: business.id, itemId: item.id, outletId: sourceOutlet,
+          quantity: -quantity, movementType: "stock_transfer_out", referenceId: allocationId,
+          reason: `Transfer approved to outlet ${allocation.outletId} by ${user?.name || "system"}` });
+        line.unit_cost = moved.unitCost;
       }
 
       const updated = await tx.allocation.update({
@@ -427,35 +409,9 @@ class InventoryOperationsService {
         const item = await this.findOrCreateInventoryItem({ tx, businessId: business.id, line });
         const quantity = this.transferQuantity(line.approved_quantity);
 
-        await tx.outletInventory.upsert({
-          where: {
-            outletId_inventoryItemId: {
-              outletId: allocation.outletId,
-              inventoryItemId: item.id,
-            },
-          },
-          update: {
-            stock: { increment: quantity },
-            enabled: true,
-          },
-          create: {
-            outletId: allocation.outletId,
-            inventoryItemId: item.id,
-            stock: quantity,
-            reorderLevel: item.reorderLevel,
-            enabled: true,
-          },
-        });
-
-        await tx.inventoryMovement.create({
-          data: {
-            businessId: business.id,
-            inventoryItemId: item.id,
-            movementType: "stock_transfer_received",
-            quantity,
-            reason: `Transfer received at outlet ${allocation.outletId} by ${user?.name || "system"}`,
-          },
-        });
+        await moveStock({ tx, businessId: business.id, itemId: item.id, outletId: allocation.outletId,
+          quantity, unitCost: line.unit_cost ?? item.conversionCost, movementType: "stock_transfer_received",
+          referenceId: allocationId, reason: `Transfer received at outlet ${allocation.outletId}` });
       }
 
       const updated = await tx.allocation.update({
@@ -513,12 +469,16 @@ class InventoryOperationsService {
         });
         if (!item) throw createHttpError({ statusCode: 404, message: "Inventory item not found in this business" });
         const countedQuantity = Number(count.counted_quantity ?? count.quantity);
-        const variance = countedQuantity - toNumber(item.stock, 0);
+        const stockOutletId = payload.stock_location === "outlet" ? outletId : null;
+        const outletBalance = stockOutletId ? await tx.outletInventory.findUnique({ where: { outletId_inventoryItemId: { outletId, inventoryItemId: item.id } } }) : null;
+        const systemQuantity = stockOutletId ? (outletBalance?.stock || 0) : item.stock;
+        const variance = countedQuantity - systemQuantity;
         if (variance !== 0) {
-          await this.recordMovement({
+          await moveStock({
             tx,
             businessId: business.id,
-            item,
+            itemId: item.id,
+            outletId: stockOutletId,
             movementType: "stock_audit_adjustment",
             quantity: variance,
             reason: payload.reason || `Stock audit by ${user?.name || "system"}`,
@@ -527,7 +487,8 @@ class InventoryOperationsService {
         adjustments.push({
           inventory_id: item.id,
           inventory_name: item.name,
-          system_quantity: item.stock,
+          system_quantity: systemQuantity,
+          stock_outlet_id: stockOutletId,
           counted_quantity: countedQuantity,
           variance,
         });
@@ -569,61 +530,21 @@ class InventoryOperationsService {
     };
   }
 
-  async getCogsReport({ tenantId }) {
-    const business = await ensureBusiness({ tenantId });
-    const [products, bills, movements] = await Promise.all([
-      prisma.product.findMany({ where: { businessId: business.id } }),
-      prisma.bill.findMany({ where: { businessId: business.id }, include: { items: true } }),
-      prisma.inventoryMovement.findMany({ where: { businessId: business.id } }),
-    ]);
-    const productById = new Map(products.map((product) => [product.id, product]));
-    const rows = new Map();
-
-    for (const bill of bills) {
-      if (!isRevenueBill(bill)) continue;
-      for (const item of bill.items || []) {
-        const product = productById.get(item.productId);
-        const key = item.productId || item.name;
-        const quantity = toNumber(item.quantity, 0);
-        const revenue = getAllocatedLineRevenue(bill, item);
-        const cost = getBillLineCost(bill, item, product);
-        const current = rows.get(key) || {
-          product_id: item.productId,
-          name: item.name,
-          quantity_sold: 0,
-          revenue: 0,
-          cogs: 0,
-          estimated_cost: false,
-          gross_profit: 0,
-          margin_percent: 0,
-        };
-        current.quantity_sold += quantity;
-        current.revenue += revenue;
-        current.cogs += cost.amount;
-        current.estimated_cost ||= cost.estimated;
-        current.gross_profit = current.revenue - current.cogs;
-        current.margin_percent = current.revenue > 0 ? (current.gross_profit / current.revenue) * 100 : 0;
-        rows.set(key, current);
-      }
-    }
-
-    const wastageCost = movements
-      .filter((movement) => ["wastage", "spoilage", "pilferage"].includes(movement.movementType))
-      .reduce((sum, movement) => sum + Math.abs(toNumber(movement.quantity, 0)), 0);
-
-    return {
-      business_id: business.id,
-      rows: Array.from(rows.values()),
-      totals: Array.from(rows.values()).reduce(
-        (summary, row) => ({
-          revenue: summary.revenue + row.revenue,
-          cogs: summary.cogs + row.cogs,
-          gross_profit: summary.gross_profit + row.gross_profit,
-          wastage_quantity: wastageCost,
-        }),
-        { revenue: 0, cogs: 0, gross_profit: 0, wastage_quantity: 0 },
-      ),
-    };
+  async getCogsReport(input) {
+    const report = await reportsService.productProfitability(input);
+    const movements = await prisma.inventoryMovement.findMany({ where: { businessId: report.business_id,
+      movementType: { in: ["wastage", "spoilage", "pilferage"] },
+      ...(input.outletId ? { outletId: input.outletId } : {}),
+      ...((input.from || input.to) ? { createdAt: {
+        ...(input.from ? { gte: new Date(`${input.from}T00:00:00Z`) } : {}),
+        ...(input.to ? { lte: new Date(`${input.to}T23:59:59.999Z`) } : {}),
+      } } : {}),
+    } });
+    return { ...report, totals: { ...report.summary,
+      wastage_quantity: movements.reduce((sum, row) => sum + Math.abs(row.quantity), 0),
+      wastage_cost: movements.reduce((sum, row) => sum + Math.abs(row.quantity) * (row.unitCost ?? 0), 0),
+      unvalued_wastage_movements: movements.filter((row) => row.unitCost == null).length,
+    } };
   }
 
   async getLowStockSuggestions({ tenantId }) {

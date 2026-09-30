@@ -9,6 +9,8 @@
     "start": "node src/server.js",
     "check": "node --check src/server.js",
     "test:smoke": "node scripts/smoke-tests.mjs",
+    "test:security": "node scripts/security-hardening-tests.mjs",
+    "test:browser": "cd .. && node backend/scripts/mobile-viewport-tests.mjs && node backend/scripts/offline-till-tests.mjs",
     "deploy:check": "node scripts/deploy-check.mjs",
     "prisma:validate": "prisma validate",
     "prisma:generate": "prisma generate",
@@ -21,12 +23,14 @@
   },
   "dependencies": {
     "@prisma/client": "^6.19.3",
+    "@sentry/node": "^9.47.2",
     "cors": "^2.8.5",
     "dotenv": "^16.4.5",
     "express": "^4.19.2",
     "helmet": "^7.1.0",
     "morgan": "^1.10.0",
     "nodemailer": "^10.0.3",
+    "pg": "^8.13.0",
     "prisma": "^6.19.3"
   },
   "overrides": {

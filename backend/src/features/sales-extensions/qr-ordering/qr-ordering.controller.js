@@ -1,5 +1,12 @@
 import { apiResponse } from "../../../shared/utils/apiResponse.js";
 import { qrOrderingService } from "./qr-ordering.service.js";
+import { filterByOutletScope } from "../../../shared/middleware/outletScope.js";
+import { orderOutletGuard } from "../../../shared/middleware/recordOutletGuards.js";
+
+// These routes live under the public QR prefix, so outlet scope is checked here, after the role guard has run.
+const assertOrderOutlet = (req) => new Promise((resolve, reject) => {
+  orderOutletGuard(req, null, (error) => (error ? reject(error) : resolve()), req.params.orderId);
+});
 
 class QrOrderingController {
   async getSession(req, res) {
@@ -52,10 +59,12 @@ class QrOrderingController {
       businessId: req.context.businessId,
       status: req.query?.status || "pending",
     });
+    data.items = filterByOutletScope(req, data.items, (order) => order.outlet_id || order.metadata?.table_meta?.outlet_id);
     res.status(200).json(apiResponse({ message: "QR order inbox fetched successfully", data }));
   }
 
   async approve(req, res) {
+    await assertOrderOutlet(req);
     const data = await qrOrderingService.approveOrder({
       tenantId: req.context.tenantId,
       businessId: req.context.businessId,
@@ -66,6 +75,7 @@ class QrOrderingController {
   }
 
   async reject(req, res) {
+    await assertOrderOutlet(req);
     const data = await qrOrderingService.rejectOrder({
       businessId: req.context.businessId,
       orderId: req.params.orderId,

@@ -24,7 +24,12 @@ try {
   await inventoryService.getItemById({ tenantId, itemId: item.id });
   assert.deepEqual(events.map((event) => event.action), ["created"]);
   await inventoryService.updateItem({ tenantId, itemId: item.id, payload: { stock: 9 } });
-  await inventoryService.deleteItem({ tenantId, itemId: item.id });
+  // Stock/ledger history is accounting evidence: deletion must be refused, not silently allowed.
+  await assert.rejects(() => inventoryService.deleteItem({ tenantId, itemId: item.id }), (error) => error.statusCode === 409);
+  events.length = 0;
+  const empty = await inventoryService.createItem({ tenantId, payload: { name: "Empty stock", stock: 0, unit: "kg" } });
+  await inventoryService.updateItem({ tenantId, itemId: empty.id, payload: { name: "Empty stock renamed" } });
+  await inventoryService.deleteItem({ tenantId, itemId: empty.id });
   assert.deepEqual(events.map((event) => event.action), ["created", "updated", "deleted"]);
   assert.ok(events.every((event) => event.businessId === businessId && event.tenantId === tenantId));
   await prisma.product.createMany({ data: [1, 2, 3].map((i) => ({ businessId, name: `Paged ${i}`, category: "test", price: i })) });

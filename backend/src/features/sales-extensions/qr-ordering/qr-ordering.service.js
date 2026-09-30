@@ -3,7 +3,14 @@ import { serializeOrder, serializeProduct, toPrismaOrderItems } from "../../../d
 import { createHttpError, createNotFoundError } from "../../../shared/utils/http-error.js";
 import { DEFAULT_CUSTOMER_NAME } from "../../../shared/constants/domain.constants.js";
 import { orderFulfillmentService } from "../../../services/workflows/order-fulfillment.service.js";
-import { createHash, randomBytes } from "node:crypto";
+import { createHash, createHmac, randomBytes, randomInt, timingSafeEqual } from "node:crypto";
+import { saasService } from "../../../core/saas/saas.service.js";
+import { resolveTrustedItems } from "../../../core/orders/order-pricing.js";
+import { availability, effectiveBase, loadActiveRules, pricingInclude } from "../../../core/menu/menu-pricing.js";
+import { comboAvailableStock } from "../../../core/menu/menu-structure.service.js";
+import { smsService } from "../../../services/sms/sms.service.js";
+import { publishChange } from "../../../services/realtime/realtime.service.js";
+import { readState, writeState } from "../../../database/prisma/state-store.js";
 import env from "../../../config/env.js";
 
 const cloneJson = (value, fallback) => {
@@ -11,7 +18,6 @@ const cloneJson = (value, fallback) => {
   return JSON.parse(JSON.stringify(value));
 };
 
-const phoneVerificationStore = new Map();
 
 const isQrOrderingEnabled = (settings) =>
   Boolean(settings?.capabilities?.qrOrderingEnabled);
@@ -48,7 +54,25 @@ const normalizePhoneNumber = (value) => String(value || "").replace(/\D/g, "");
 
 const todaySessionKey = (tableId) => `qrs_${tableId}_${new Date().toISOString().slice(0, 10).replace(/-/g, "")}`;
 
-const createOtp = () => String(Math.floor(100000 + Math.random() * 900000));
+const createOtp = () => String(randomInt(100000, 1000000));
+
+const safeCodeMatch = (expected, supplied) => {
+  const a = Buffer.from(String(expected ?? ""));
+  const b = Buffer.from(String(supplied ?? ""));
+  return a.length === b.length && timingSafeEqual(a, b);
+};
+
+const MAX_VERIFICATION_ATTEMPTS = 5;
+const OTP_TTL_MS = 5 * 60 * 1000;
+const MAX_CODES_PER_PHONE = 3; // per OTP_TTL_MS window, per business
+const otpKey = (verificationToken) => `qr-otp:${verificationToken}`;
+const otpRateKey = (businessId, phone) => `qr-otp-rate:${businessId}:${phone}`;
+// Only an HMAC of the code is stored, keyed with a server secret, so someone who can read the database still
+// cannot recover or brute-force pending codes offline.
+const otpSecret = () =>
+  process.env.OTP_SECRET || (env.auth.jwtSecret !== "change-me" ? env.auth.jwtSecret : "") ||
+  createHash("sha256").update(`${env.database.url}|qr-otp`).digest("hex");
+const hashOtp = (verificationToken, otp) => createHmac("sha256", otpSecret()).update(`${verificationToken}:${String(otp ?? "")}`).digest("hex");
 
 const createVerificationToken = () => randomBytes(18).toString("base64url");
 
@@ -148,6 +172,12 @@ class QrOrderingService {
     if (!qrCode || !qrCode.active) {
       throw createNotFoundError("QR code", { token });
     }
+
+    const access = await saasService.getAccessMode(qrCode.businessId);
+    if (access.mode === "blocked") {
+      throw createHttpError({ statusCode: 403, code: "TENANT_SUSPENDED", message: "Ordering is unavailable for this business" });
+    }
+    qrCode.accessMode = access.mode;
 
     if (!qrCode.table || qrCode.table.active === false) {
       throw createHttpError({
@@ -265,20 +295,23 @@ class QrOrderingService {
       this.recordScan(qrCode, requestMeta),
       this.ensureTableSession({ qrCode }),
     ]);
-    const products = await prisma.product.findMany({
-      where: {
-        businessId: qrCode.businessId,
-        active: true,
-      },
-      include: {
-        business: true,
-        variations: true,
-        addons: true,
-        outletLinks: true,
-      },
-      orderBy: [{ category: "asc" }, { name: "asc" }],
-    });
     const outletId = qrCode.table.meta?.outlet_id || qrCode.table.meta?.outletId || null;
+    const [products, rules] = await Promise.all([
+      prisma.product.findMany({
+        where: {
+          businessId: qrCode.businessId,
+          active: true,
+        },
+        include: {
+          business: true,
+          ...pricingInclude(outletId),
+          comboComponents: { include: { component: { select: { id: true, name: true, stock: true } } } },
+        },
+        orderBy: [{ category: "asc" }, { name: "asc" }],
+      }),
+      loadActiveRules(prisma, qrCode.businessId),
+    ]);
+    const at = new Date();
 
     return {
       ...this.serializeContext({ ...qrCode, currentTableSession }),
@@ -288,12 +321,34 @@ class QrOrderingService {
       },
       items: products
         .filter((product) => isProductAvailableForQr({ product, outletId }))
-        .map(serializeProduct),
+        .filter((product) => availability(product, { outletLink: product.outletLinks?.[0] || null, channel: "Dine-In" }).available)
+        .map((product) => {
+          const priced = effectiveBase(product, { outletLink: product.outletLinks?.[0] || null, channel: "Dine-In", salesChannel: "QR", outletId, at, rules });
+          const comboStock = comboAvailableStock(product);
+          return {
+            ...serializeProduct(product),
+            ...(comboStock === null ? {} : { stock: comboStock }),
+            base_price: product.price,
+            list_price: priced.listPrice,
+            price: priced.price,
+            price_rule: priced.rule ? { id: priced.rule.id, name: priced.rule.name } : null,
+          };
+        }),
     };
   }
 
   async requestPhoneVerification({ token, phone }) {
-    await this.resolveContext(token);
+    const qrCode = await this.resolveContext(token);
+    // The code must reach the customer's phone. Without an SMS provider it is only ever shown in development;
+    // in production the request fails closed instead of pretending to verify anyone.
+    const canSend = smsService.configured();
+    if (!canSend && env.nodeEnv === "production") {
+      throw createHttpError({
+        statusCode: 501,
+        code: "QR_PHONE_VERIFICATION_UNAVAILABLE",
+        message: "Phone verification is not available. Ask the restaurant to disable it or take the order at the counter.",
+      });
+    }
     const normalizedPhone = normalizePhoneNumber(phone);
     if (!/^\d{10}$/.test(normalizedPhone)) {
       throw createHttpError({
@@ -303,37 +358,68 @@ class QrOrderingService {
       });
     }
 
+    // Limit codes per phone so the endpoint cannot be used to flood a number with SMS.
+    const now = Date.now();
+    // Expired codes and counters are removed as new ones are issued.
+    await prisma.stateDocument.deleteMany({
+      where: { updatedAt: { lt: new Date(now - 2 * OTP_TTL_MS) }, OR: [{ key: { startsWith: "qr-otp:" } }, { key: { startsWith: "qr-otp-rate:" } }] },
+    });
+    const rate = await readState(otpRateKey(qrCode.businessId, normalizedPhone));
+    const recent = (rate?.sent_at || []).filter((at) => now - at < OTP_TTL_MS);
+    if (recent.length >= MAX_CODES_PER_PHONE) {
+      throw createHttpError({ statusCode: 429, code: "QR_VERIFICATION_RATE_LIMITED", message: "Too many codes requested for this number. Try again in a few minutes." });
+    }
+
     const otp = createOtp();
     const verificationToken = createVerificationToken();
-    phoneVerificationStore.set(verificationToken, {
+    await writeState(otpKey(verificationToken), {
+      business_id: qrCode.businessId,
       phone: normalizedPhone,
-      otp,
+      otp_hash: hashOtp(verificationToken, otp),
+      attempts: 0,
       verified: false,
-      expiresAt: Date.now() + 5 * 60 * 1000,
+      expires_at: now + OTP_TTL_MS,
     });
+    await writeState(otpRateKey(qrCode.businessId, normalizedPhone), { sent_at: [...recent, now] });
+
+    if (canSend) {
+      const businessName = qrCode.business?.name || "your restaurant";
+      await smsService.send({ to: normalizedPhone, message: `${otp} is your ${businessName} order verification code. It expires in 5 minutes.` });
+    }
 
     return {
       accepted: true,
       verification_token: verificationToken,
-      expires_in_minutes: 5,
-      dev_otp: otp,
+      expires_in_minutes: OTP_TTL_MS / 60000,
+      delivery: canSend ? "sms" : "development",
+      // Development only, when nothing can be sent. Production never returns a code.
+      ...(!canSend && env.nodeEnv !== "production" ? { dev_otp: otp } : {}),
     };
   }
 
   async verifyPhone({ token, verificationToken, otp }) {
-    await this.resolveContext(token);
-    const record = phoneVerificationStore.get(String(verificationToken || ""));
-    if (!record || record.expiresAt < Date.now() || record.otp !== String(otp || "")) {
+    const qrCode = await this.resolveContext(token);
+    const key = otpKey(String(verificationToken || "").slice(0, 64));
+    // Row lock: concurrent guesses are counted one at a time, so the attempt limit cannot be raced.
+    const record = await prisma.$transaction(async (tx) => {
+      await tx.$queryRaw`SELECT key FROM "StateDocument" WHERE key = ${key} FOR UPDATE`;
+      const current = await readState(key, null, tx);
+      if (!current || current.business_id !== qrCode.businessId || current.expires_at < Date.now()
+        || current.attempts >= MAX_VERIFICATION_ATTEMPTS) return null;
+      const matches = safeCodeMatch(current.otp_hash, hashOtp(verificationToken, otp));
+      const next = matches
+        ? { ...current, attempts: current.attempts + 1, verified: true, verified_at: new Date().toISOString() }
+        : { ...current, attempts: current.attempts + 1 };
+      await writeState(key, next, tx);
+      return matches ? next : null;
+    });
+    if (!record) {
       throw createHttpError({
         statusCode: 400,
         code: "QR_PHONE_VERIFICATION_FAILED",
         message: "Invalid or expired phone verification code",
       });
     }
-
-    record.verified = true;
-    record.verifiedAt = new Date().toISOString();
-    phoneVerificationStore.set(verificationToken, record);
 
     return {
       verified: true,
@@ -342,10 +428,10 @@ class QrOrderingService {
     };
   }
 
-  assertPhoneVerified({ rules, customerPhone, verificationToken }) {
+  async assertPhoneVerified({ rules, customerPhone, verificationToken, businessId }) {
     if (!rules.requirePhoneVerification) return null;
-    const record = phoneVerificationStore.get(String(verificationToken || ""));
-    if (!record || !record.verified || record.expiresAt < Date.now() || record.phone !== customerPhone) {
+    const record = await readState(otpKey(String(verificationToken || "").slice(0, 64)));
+    if (!record || !record.verified || record.business_id !== businessId || record.expires_at < Date.now() || record.phone !== customerPhone) {
       throw createHttpError({
         statusCode: 403,
         code: "QR_PHONE_NOT_VERIFIED",
@@ -355,13 +441,17 @@ class QrOrderingService {
 
     return {
       phone_verified: true,
-      phone_verified_at: record.verifiedAt,
+      phone_verified_at: record.verified_at,
     };
   }
 
   async createOrder({ token, payload = {} }) {
     const qrCode = await this.resolveContext(token);
     const rules = getQrOrderingRules(qrCode.business.tableManagementSettings);
+
+    if (qrCode.accessMode === "read_only") {
+      throw createHttpError({ statusCode: 402, code: "SUBSCRIPTION_INACTIVE", message: "Ordering is unavailable for this business" });
+    }
 
     if (rules.orderingPaused) {
       throw createHttpError({
@@ -380,83 +470,67 @@ class QrOrderingService {
       });
     }
 
+    const outletId = qrCode.table.meta?.outlet_id || qrCode.table.meta?.outletId || null;
     const productIds = [...new Set(requestedItems.map((item) => item.productId || item.product_id).filter(Boolean))];
-    const products = await prisma.product.findMany({
-      where: {
-        businessId: qrCode.businessId,
-        active: true,
-        id: { in: productIds },
-      },
-      include: {
-        variations: true,
-        addons: true,
-        outletLinks: true,
-      },
+    // QR-specific availability (QR channel switch and schedule) is checked first, then the shared price engine
+    // validates variations, add-ons and modifier choices and prices every line as billing will.
+    const qrProducts = await prisma.product.findMany({
+      where: { businessId: qrCode.businessId, active: true, id: { in: productIds } },
+      include: { outletLinks: outletId ? { where: { outletId } } : true },
     });
-    const productById = new Map(products.map((product) => [product.id, product]));
-
-    const normalizedItems = requestedItems.map((item) => {
-      const productId = item.productId || item.product_id;
-      const product = productById.get(productId);
-      const outletId = qrCode.table.meta?.outlet_id || qrCode.table.meta?.outletId || null;
-      if (!product || !isProductAvailableForQr({ product, outletId })) {
+    const qrAvailable = new Set(qrProducts.filter((product) => isProductAvailableForQr({ product, outletId })).map((product) => product.id));
+    for (const item of requestedItems) {
+      if (!qrAvailable.has(item.productId || item.product_id)) {
         throw createHttpError({
           statusCode: 400,
           code: "QR_ORDER_PRODUCT_UNAVAILABLE",
           message: "One or more selected items are no longer available",
         });
       }
-
-      const quantity = Math.max(1, Number(item.quantity || 1));
-      const variationId = item.variationId || item.variation_id || null;
-      const variation = variationId ? product.variations.find((entry) => entry.id === variationId) : null;
-      if (variationId && !variation) {
-        throw createHttpError({
-          statusCode: 400,
-          code: "QR_ORDER_VARIATION_UNAVAILABLE",
-          message: "One or more selected item variations are no longer available",
-        });
+    }
+    let normalizedItems;
+    try {
+      normalizedItems = await resolveTrustedItems({
+        client: prisma,
+        businessId: qrCode.businessId,
+        outletId,
+        channel: "Dine-In",
+        salesChannel: "QR",
+        items: requestedItems.map((item) => ({
+          productId: item.productId || item.product_id,
+          quantity: item.quantity,
+          ...(item.variationId || item.variation_id ? { variation: { id: item.variationId || item.variation_id } } : {}),
+          addons: (Array.isArray(item.addonIds || item.addon_ids) ? item.addonIds || item.addon_ids : []).map((id) => ({ id })),
+          modifiers: Array.isArray(item.modifierOptionIds || item.modifier_option_ids) ? item.modifierOptionIds || item.modifier_option_ids : [],
+        })),
+      });
+    } catch (error) {
+      // Guests see a plain message; the code still says what was wrong.
+      if (error?.statusCode === 400) {
+        throw createHttpError({ statusCode: 400, code: error.code, message: error.message.includes("not available") ? "One or more selected items are no longer available" : error.message });
       }
-
-      const addonIds = [...new Set(Array.isArray(item.addonIds || item.addon_ids) ? item.addonIds || item.addon_ids : [])];
-      const availableAddonIds = new Set(product.addons.map((addon) => addon.id));
-      const invalidAddonIds = addonIds.filter((addonId) => !availableAddonIds.has(addonId));
-      if (invalidAddonIds.length) {
-        throw createHttpError({
-          statusCode: 400,
-          code: "QR_ORDER_ADDON_UNAVAILABLE",
-          message: "One or more selected add-ons are no longer available",
-        });
-      }
-
-      const addons = addonIds
-        .map((addonId) => product.addons.find((addon) => addon.id === addonId))
-        .map((addon) => ({
-          id: addon.id,
-          name: addon.name,
-          price: addon.price,
-        }));
-      const unitPrice = Number(product.price || 0) + Number(variation?.price || 0) + addons.reduce((sum, addon) => sum + Number(addon.price || 0), 0);
-
-      return {
-        productId: product.id,
-        name: product.name,
-        quantity,
-        price: unitPrice,
-        variation: variation?.name || null,
-        addons,
-      };
+      throw error;
+    }
+    normalizedItems = normalizedItems.map((item) => {
+      const product = qrProducts.find((entry) => entry.id === item.productId);
+      return { ...item, name: item.name || product?.name || "Item" };
     });
 
     const itemTotal = normalizedItems.reduce((sum, item) => sum + Number(item.price || 0) * Number(item.quantity || 1), 0);
     const serviceCharge =
-      Number(rules.serviceChargeFixed || 0) + Math.round(itemTotal * (Number(rules.serviceChargePercent || 0) / 100));
-    const tipAmount = rules.tipsEnabled ? Math.max(0, Number(payload.tip_amount || payload.tipAmount || 0)) : 0;
+      Number(rules.serviceChargeFixed || 0) + Math.round(itemTotal * (Number(rules.serviceChargePercent || 0)) ) / 100;
+    const requestedTip = Number(payload.tip_amount || payload.tipAmount || 0);
+    if (!Number.isFinite(requestedTip) || requestedTip < 0 || requestedTip > Math.max(10000, itemTotal)) {
+      throw createHttpError({ statusCode: 400, code: "QR_TIP_INVALID", message: "Tip amount is not valid" });
+    }
+    const tipAmount = rules.tipsEnabled ? Math.round(requestedTip * 100) / 100 : 0;
     const total = itemTotal + serviceCharge + tipAmount;
     const customerName = String(payload.customerName || payload.customer_name || DEFAULT_CUSTOMER_NAME).trim() || DEFAULT_CUSTOMER_NAME;
     const customerPhone = normalizePhoneNumber(payload.customerPhone || payload.customer_phone);
-    const notes = String(payload.notes || "").trim();
-    const verification = this.assertPhoneVerified({
+    const notes = String(payload.notes || "").trim().slice(0, 500);
+    const clientRequestId = String(payload.client_request_id || payload.clientRequestId || "").trim().slice(0, 80);
+    const verification = await this.assertPhoneVerified({
+      businessId: qrCode.businessId,
       rules,
       customerPhone,
       verificationToken: payload.phone_verification_token || payload.phoneVerificationToken,
@@ -495,6 +569,20 @@ class QrOrderingService {
     }
 
     const order = await prisma.$transaction(async (tx) => {
+      // A double tap or network retry carries the same key and must not create a second order (or a second kitchen ticket).
+      if (clientRequestId) {
+        await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`qr-order:${qrCode.businessId}:${clientRequestId}`}))`;
+        const earlier = await tx.order.findFirst({
+          where: {
+            businessId: qrCode.businessId,
+            channel: "qr",
+            createdAt: { gte: new Date(Date.now() - 10 * 60 * 1000) },
+            metadata: { path: ["client_request_id"], equals: clientRequestId },
+          },
+          include: getOrderInclude(),
+        });
+        if (earlier) return earlier;
+      }
       const trackingToken = await this.createUniqueTrackingToken(tx);
       const tableSession = await this.ensureTableSession({
         qrCode,
@@ -507,7 +595,7 @@ class QrOrderingService {
       const created = await tx.order.create({
         data: {
           businessId: qrCode.businessId,
-          outletId: payload.outlet_id || payload.outletId || qrCode.table.meta?.outlet_id || qrCode.table.meta?.outletId || null,
+          outletId: qrCode.table.meta?.outlet_id || qrCode.table.meta?.outletId || null,
           trackingToken,
           customerName,
           channel: "qr",
@@ -526,6 +614,7 @@ class QrOrderingService {
             qr_code_id: qrCode.id,
             tracking_token: trackingToken,
             customer_phone: customerPhone || null,
+            client_request_id: clientRequestId || null,
             ...verification,
             notes,
             submitted_at: new Date().toISOString(),
@@ -545,6 +634,8 @@ class QrOrderingService {
         },
         include: getOrderInclude(),
       });
+
+      await publishChange({ businessId: qrCode.businessId, resource: "qr_orders", action: "created", recordId: created.id, outletId: created.outletId }, { tx });
 
       if (!rules.requireRestaurantApproval) {
         await orderFulfillmentService.handleOrderCreated({
@@ -615,6 +706,7 @@ class QrOrderingService {
         orderId: order.id,
         tx,
       });
+      await publishChange({ businessId, resource: "qr_orders", action: "approved", recordId: order.id, outletId: order.outletId }, { tx });
 
       return next;
     });
@@ -629,7 +721,12 @@ class QrOrderingService {
     });
     if (!order) throw createNotFoundError("QR order", { orderId });
 
-    const updated = await prisma.order.update({
+    // Only a still-pending order can be rejected; an approved one is already in the kitchen.
+    const updated = await prisma.$transaction(async (tx) => {
+      const claimed = await tx.order.updateMany({ where: { id: order.id, businessId, status: "qr_pending_approval" }, data: { status: "qr_rejected" } });
+      if (!claimed.count) throw createHttpError({ statusCode: 409, message: "QR order has already been reviewed" });
+      await publishChange({ businessId, resource: "qr_orders", action: "rejected", recordId: order.id, outletId: order.outletId }, { tx });
+      return tx.order.update({
       where: { id: order.id },
       data: {
         status: "qr_rejected",
@@ -641,10 +738,11 @@ class QrOrderingService {
           rejected_at: new Date().toISOString(),
           rejected_by: actor?.id || null,
           rejected_by_name: actor?.name || null,
-          reject_reason: reason || "",
+          reject_reason: String(reason || "").slice(0, 500),
         },
       },
       include: getOrderInclude(),
+      });
     });
 
     return serializeOrder(updated);

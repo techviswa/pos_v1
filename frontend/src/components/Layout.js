@@ -8,6 +8,7 @@ import {
   SignOut,
 } from "@phosphor-icons/react";
 import { useAuth } from "../contexts/AuthContext";
+import { SubscriptionBanner } from "./SubscriptionBanner";
 import { useUi } from "../contexts/UiContext";
 import { getInitials } from "../lib/pos";
 import { useClientModules } from "../core/modules/store/useClientModules";
@@ -235,7 +236,7 @@ export const Layout = ({ title, children, billingMode = false }) => {
           </div>
         </aside>
 
-        <main className={`cf-main ${billingMode ? "cf-main--billing" : ""}`}>{children}</main>
+        <main className={`cf-main ${billingMode ? "cf-main--billing" : ""}`}><SubscriptionBanner />{children}</main>
       </div>
     </div>
   );

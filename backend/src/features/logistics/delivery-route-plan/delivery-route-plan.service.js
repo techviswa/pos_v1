@@ -4,6 +4,8 @@ import {
   serializeRoutePlan,
 } from "../../../database/prisma/helpers.js";
 import { logisticsWorkflowService } from "../../../services/workflows/logistics-workflow.service.js";
+import { assertOwnedIds } from "../../../database/prisma/scope.js";
+import { createNotFoundError } from "../../../shared/utils/http-error.js";
 
 class DeliveryRoutePlanService {
   async listRoutePlans({ tenantId }) {
@@ -38,6 +40,7 @@ class DeliveryRoutePlanService {
 
   async createRoutePlan({ tenantId, payload }) {
     const business = await ensureBusiness({ tenantId });
+    await assertOwnedIds({ kind: "outlet", ids: (payload.stops || []).map((stop) => stop.outletId || stop.outlet_id), businessId: business.id });
     const routePlan = await prisma.routePlan.create({
       data: {
         businessId: business.id,
@@ -88,6 +91,7 @@ class DeliveryRoutePlanService {
     });
 
     if (payload.stops !== undefined) {
+      await assertOwnedIds({ kind: "outlet", ids: (payload.stops || []).map((stop) => stop.outletId || stop.outlet_id), businessId: business.id });
       await prisma.routeStop.deleteMany({
         where: { routePlanId },
       });
@@ -115,10 +119,11 @@ class DeliveryRoutePlanService {
   async startRoutePlan({ tenantId, routePlanId }) {
     const business = await ensureBusiness({ tenantId });
     const routePlan = await prisma.$transaction(async (tx) => {
-      await tx.routePlan.update({
-        where: { id: routePlanId },
+      const claimed = await tx.routePlan.updateMany({
+        where: { id: routePlanId, businessId: business.id },
         data: { status: "in-transit" },
       });
+      if (!claimed.count) throw createNotFoundError("Route plan", { routePlanId });
 
       await logisticsWorkflowService.handleRouteStarted({
         businessId: business.id,
@@ -138,10 +143,11 @@ class DeliveryRoutePlanService {
   async completeRoutePlan({ tenantId, routePlanId }) {
     const business = await ensureBusiness({ tenantId });
     const routePlan = await prisma.$transaction(async (tx) => {
-      await tx.routePlan.update({
-        where: { id: routePlanId },
+      const claimed = await tx.routePlan.updateMany({
+        where: { id: routePlanId, businessId: business.id },
         data: { status: "completed" },
       });
+      if (!claimed.count) throw createNotFoundError("Route plan", { routePlanId });
 
       await logisticsWorkflowService.handleRouteCompleted({
         businessId: business.id,

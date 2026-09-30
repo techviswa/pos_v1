@@ -2,6 +2,7 @@ import React, { createContext, useCallback, useContext, useEffect, useMemo, useS
 import axios from "axios";
 
 import { useAuth } from "../../../contexts/AuthContext";
+import { isUnreachable, loadOfflineData, saveOfflineData, setOfflineScope } from "../../../lib/offlineCache";
 
 const API_URL = (() => {
   const configured = String(process.env.REACT_APP_BACKEND_URL || "").replace(/\/+$/, "");
@@ -107,11 +108,17 @@ export const ActiveOutletProvider = ({ children }) => {
           withCredentials: true,
         });
         if (!cancelled) {
-          setOutlets(toArrayPayload(response.data));
+          const list = toArrayPayload(response.data);
+          setOutlets(list);
+          setOfflineScope(user);
+          saveOfflineData("outlets", list);
         }
-      } catch {
+      } catch (error) {
         if (!cancelled) {
-          setOutlets([]);
+          // Offline: keep selling at the outlets this user had, instead of losing the outlet selection.
+          setOfflineScope(user);
+          const snapshot = isUnreachable(error) ? loadOfflineData("outlets") : null;
+          setOutlets(Array.isArray(snapshot?.data) ? snapshot.data : []);
         }
       } finally {
         if (!cancelled) {

@@ -1,8 +1,8 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import axios from "axios";
 import { useParams } from "react-router-dom";
 import { ApiErrorPanel } from "../components/ApiErrorPanel";
-import { formatCurrency } from "../lib/pos";
+import { formatCurrency, newClientKey } from "../lib/pos";
 
 const API_URL = (() => {
   const configured = String(process.env.REACT_APP_BACKEND_URL || "").replace(/\/+$/, "");
@@ -39,13 +39,32 @@ const getSelectedAddons = (item, selection = {}) => {
   return (item.addon_options || []).filter((addon) => selectedIds.has(addon.id));
 };
 
+const getSelectedModifiers = (item, selection = {}) => {
+  const selectedIds = new Set(selection.modifierIds || []);
+  return (item.modifier_groups || []).flatMap((group) => group.options || []).filter((option) => selectedIds.has(option.id));
+};
+
+/** Why the current choices cannot be added yet (the server checks the same rules), or "". */
+const getChoiceProblem = (item, selection = {}) => {
+  const selectedIds = new Set(selection.modifierIds || []);
+  for (const group of item.modifier_groups || []) {
+    const count = (group.options || []).filter((option) => selectedIds.has(option.id)).length;
+    const min = Number(group.min_select || 0);
+    const max = Number(group.max_select || 0);
+    if (count < min) return `Choose ${min === 1 ? "one" : `at least ${min}`}: ${group.name}`;
+    if (max > 0 && count > max) return `Choose at most ${max}: ${group.name}`;
+  }
+  return "";
+};
+
 const getConfiguredPrice = (item, selection = {}) =>
   Number(item.price || 0) +
   Number(getSelectedVariation(item, selection)?.price || 0) +
-  getSelectedAddons(item, selection).reduce((sum, addon) => sum + Number(addon.price || 0), 0);
+  getSelectedAddons(item, selection).reduce((sum, addon) => sum + Number(addon.price || 0), 0) +
+  getSelectedModifiers(item, selection).reduce((sum, option) => sum + Number(option.price || 0), 0);
 
 const getCartKey = (productId, selection = {}) =>
-  [productId, selection.variationId || "", [...(selection.addonIds || [])].sort().join(",")].join("|");
+  [productId, selection.variationId || "", [...(selection.addonIds || [])].sort().join(","), [...(selection.modifierIds || [])].sort().join(",")].join("|");
 
 const normalizePhone = (value) => String(value || "").replace(/\D/g, "").slice(0, 10);
 const isValidPhone = (value) => /^\d{10}$/.test(String(value || ""));
@@ -62,6 +81,7 @@ export const QrOrdering = () => {
   const { token } = useParams();
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
+  const orderKeyRef = useRef({ signature: "", key: "" });
   const [error, setError] = useState("");
   const [context, setContext] = useState(null);
   const [menuItems, setMenuItems] = useState([]);
@@ -75,6 +95,7 @@ export const QrOrdering = () => {
   const [notes, setNotes] = useState("");
   const [submittedOrder, setSubmittedOrder] = useState(null);
   const [verificationToken, setVerificationToken] = useState("");
+  const [codeSentNotice, setCodeSentNotice] = useState("");
   const [otp, setOtp] = useState("");
   const [phoneVerified, setPhoneVerified] = useState(false);
   const [verificationBusy, setVerificationBusy] = useState(false);
@@ -175,11 +196,35 @@ export const QrOrdering = () => {
     });
   };
 
+  const toggleModifier = (item, group, optionId) => {
+    setSelections((current) => {
+      const selection = current[item.id] || {};
+      const chosen = new Set(selection.modifierIds || []);
+      const single = Number(group.max_select) === 1;
+      if (chosen.has(optionId)) {
+        if (!(single && Number(group.min_select) >= 1)) chosen.delete(optionId);
+      } else {
+        if (single) (group.options || []).forEach((option) => chosen.delete(option.id));
+        chosen.add(optionId);
+      }
+      return { ...current, [item.id]: { ...selection, modifierIds: [...chosen] } };
+    });
+  };
+
   const updateQuantity = (item, delta) => {
     const selection = selections[item.id] || {};
+    if (delta > 0) {
+      const problem = getChoiceProblem(item, selection);
+      if (problem) {
+        setError(problem);
+        return;
+      }
+      setError("");
+    }
     const cartKey = getCartKey(item.id, selection);
     const variation = getSelectedVariation(item, selection);
     const addons = getSelectedAddons(item, selection);
+    const modifiers = getSelectedModifiers(item, selection);
 
     setCart((current) => {
       const nextQuantity = Math.max(0, Number(current[cartKey]?.quantity || 0) + delta);
@@ -195,6 +240,8 @@ export const QrOrdering = () => {
           variation: variation?.name || null,
           addon_ids: addons.map((addon) => addon.id),
           addons,
+          modifier_option_ids: modifiers.map((option) => option.id),
+          modifiers,
         };
       } else {
         delete next[cartKey];
@@ -217,6 +264,7 @@ export const QrOrdering = () => {
       });
       const data = unwrap(response);
       setVerificationToken(data.verification_token || "");
+      setCodeSentNotice(data.delivery === "sms" ? `Code sent by SMS to ${customerPhone}.` : "");
       if (data.dev_otp && process.env.NODE_ENV !== "production") {
         setOtp(data.dev_otp);
       }
@@ -260,10 +308,15 @@ export const QrOrdering = () => {
       return;
     }
 
+    // Same cart => same key, so a retry after a timeout cannot place the order twice. A changed cart gets a new key.
+    const signature = JSON.stringify([cartItems, normalizedTipAmount, notes]);
+    if (orderKeyRef.current.signature !== signature) orderKeyRef.current = { signature, key: newClientKey() };
+
     setSubmitting(true);
     setError("");
     try {
       const response = await axios.post(`${API_URL}/api/public/qr/${token}/orders`, {
+        client_request_id: orderKeyRef.current.key,
         customer_name: customerName,
         customer_phone: customerPhone,
         notes,
@@ -271,12 +324,14 @@ export const QrOrdering = () => {
           product_id: item.product_id,
           variation_id: item.variation_id,
           addon_ids: item.addon_ids,
+          modifier_option_ids: item.modifier_option_ids || [],
           quantity: item.quantity,
         })),
         tip_amount: normalizedTipAmount,
         phone_verification_token: verificationToken || undefined,
       });
       setSubmittedOrder(unwrap(response));
+      orderKeyRef.current = { signature: "", key: "" };
       setCart({});
     } catch (requestError) {
       setError(requestError.response?.data?.error?.message || "Unable to place the order right now.");
@@ -408,6 +463,33 @@ export const QrOrdering = () => {
                             ))}
                           </select>
                         ) : null}
+                        {(item.modifier_groups || []).map((group) => {
+                          const single = Number(group.max_select) === 1;
+                          const chosen = selection.modifierIds || [];
+                          const inGroup = (group.options || []).filter((option) => chosen.includes(option.id)).length;
+                          const max = Number(group.max_select || 0);
+                          return (
+                            <div className="cf-qr-options" key={group.id}>
+                              <b style={{ width: "100%" }}>
+                                {group.name}
+                                {Number(group.min_select) ? " (required)" : " (optional)"}
+                                {!single && max ? ` · up to ${max}` : ""}
+                              </b>
+                              {(group.options || []).filter((option) => option.active !== false).map((option) => (
+                                <label key={option.id}>
+                                  <input
+                                    checked={chosen.includes(option.id)}
+                                    disabled={!single && !chosen.includes(option.id) && max > 0 && inGroup >= max}
+                                    onChange={() => toggleModifier(item, group, option.id)}
+                                    name={`qr-${item.id}-${group.id}`}
+                                    type={single ? "radio" : "checkbox"}
+                                  />
+                                  {option.name} {Number(option.price || 0) ? `+ ${formatCurrency(option.price)}` : ""}
+                                </label>
+                              ))}
+                            </div>
+                          );
+                        })}
                         {item.addon_options?.length ? (
                           <div className="cf-qr-options">
                             {item.addon_options.map((addon) => (
@@ -424,7 +506,13 @@ export const QrOrdering = () => {
                         ) : null}
                       </div>
                       <div className="cf-qr-menu-item__actions">
-                        <span>{formatCurrency(displayPrice)}</span>
+                        <span>
+                          {item.price_rule && Number(item.list_price) > Number(item.price) ? (
+                            <s style={{ opacity: 0.6, marginRight: 4 }}>{formatCurrency(Number(displayPrice) + Number(item.list_price) - Number(item.price))}</s>
+                          ) : null}
+                          {formatCurrency(displayPrice)}
+                          {item.price_rule ? <em style={{ display: "block", fontSize: 11 }}>{item.price_rule.name}</em> : null}
+                        </span>
                         {quantity ? (
                           <div className="cf-qr-qty-control">
                             <button type="button" onClick={() => updateQuantity(item, -1)} disabled={!quantity}>
@@ -526,6 +614,7 @@ export const QrOrdering = () => {
                 <button className="cf-btn cf-btn--secondary" disabled={verificationBusy || !verificationToken || phoneVerified} onClick={verifyPhone} type="button">
                   {phoneVerified ? "Verified" : "Verify"}
                 </button>
+                {codeSentNotice && !phoneVerified ? <div className="cf-card__meta" role="status">{codeSentNotice}</div> : null}
               </div>
             ) : null}
             <textarea className="cf-textarea" placeholder="Table notes optional" value={notes} onChange={(event) => setNotes(event.target.value)} />

@@ -3,6 +3,7 @@ import { jobQueue } from "../../services/jobs/job-queue.js";
 import { DurableJobQueue } from "../../services/jobs/durable-job-queue.js";
 import { recordAdminCoreSyncLog } from "../sync/admincore-sync-log.repository.js";
 import { recordAdmincoreSyncStatus } from "./admincore.service.js";
+import { publishChange } from "../../services/realtime/realtime.service.js";
 
 const JOB_TYPE = "admincore.notify-change";
 const NOTIFY_TIMEOUT_MS = 5000;
@@ -87,6 +88,9 @@ class AdmincoreChangeSyncService {
         }),
         metadata: payload.metadata || {},
       };
+
+      // Every recorded business change also tells open staff screens to refresh (delivered only on commit).
+      await publishChange({ businessId: event.business_id, resource, action: event.action, recordId: event.record_id, outletId: event.outlet_id }, { tx });
 
       await recordAdminCoreSyncLog({
         tenant_id: event.tenant_id,

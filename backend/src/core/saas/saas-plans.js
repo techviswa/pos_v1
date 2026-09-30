@@ -37,6 +37,22 @@ export const SAAS_PLANS = {
 
 export const DEFAULT_SAAS_PLAN = "starter";
 export const ACTIVE_SUBSCRIPTION_STATUSES = new Set(["trialing", "active", "past_due"]);
+export const SUBSCRIPTION_STATUSES = new Set(["trialing", "active", "past_due", "suspended", "expired", "cancelled"]);
+
+// What a tenant may do in each lifecycle state. Data is never deleted or hidden from its owner:
+//  full      - normal operation (trialing, active, past_due grace)
+//  read_only - expired/cancelled: history stays viewable/exportable, new activity is refused
+//  blocked   - suspended by Taskoora: no access until reactivated
+export const accessModeForStatus = (status) => {
+  if (status === "suspended") return "blocked";
+  if (status === "expired" || status === "cancelled") return "read_only";
+  return "full";
+};
+
+export const normalizeSubscriptionStatus = (status) => {
+  const value = String(status ?? "").trim().toLowerCase();
+  return value === "trial" ? "trialing" : value;
+};
 
 export const getPlan = (planKey) => SAAS_PLANS[planKey] || SAAS_PLANS[DEFAULT_SAAS_PLAN];
 

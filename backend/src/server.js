@@ -1,9 +1,10 @@
 import app from "./app.js";
-import env from "./config/env.js";
+import env, { getProductionConfigIssues } from "./config/env.js";
 import { connectDatabase } from "./config/db.js";
 import prisma from "./database/prisma/client.js";
 import { jobQueue } from "./services/jobs/job-queue.js";
-import { errorMonitor } from "./shared/utils/error-monitor.js";
+import { startMarketingWorker, stopMarketingWorker } from "./core/marketing/dispatcher.js";
+import { errorMonitor, flushErrorReporting, initErrorReporting } from "./shared/utils/error-monitor.js";
 import { logger } from "./shared/utils/logger.js";
 
 let server = null;
@@ -35,6 +36,7 @@ const shutdown = async (signal) => {
   shuttingDown = true;
   clearTimeout(dbRetryTimer);
   jobQueue.stop();
+  stopMarketingWorker();
   logger.info(`${signal} received. Shutting down gracefully.`);
 
   try {
@@ -53,12 +55,17 @@ const shutdown = async (signal) => {
     errorMonitor.captureException(error, { lifecycle: "shutdown", signal });
     logger.error(`Shutdown error: ${error instanceof Error ? error.message : String(error)}`);
   } finally {
+    // Crash reports are sent in the background; give them a moment before the process ends.
+    await flushErrorReporting();
     process.exit(0);
   }
 };
 
 const startServer = () => {
+  if (initErrorReporting()) logger.info("Error reporting to Sentry is on");
+  getProductionConfigIssues().forEach((issue) => logger.error(`Insecure production configuration: ${issue}`));
   jobQueue.start();
+  startMarketingWorker();
   server = app.listen(env.port, () => {
     logger.info(`${env.appName} listening on port ${env.port}`);
     void connectDatabaseInBackground();

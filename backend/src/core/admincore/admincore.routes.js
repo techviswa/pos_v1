@@ -19,6 +19,7 @@ import {
   putSaasDomains,
   putSaasSubscription,
 } from "./admincore.controller.js";
+import { safeEqual } from "../../shared/middleware/authGuard.middleware.js";
 import env from "../../config/env.js";
 import { createHttpError } from "../../shared/utils/http-error.js";
 import { asyncHandler } from "../../shared/utils/asyncHandler.js";
@@ -38,7 +39,7 @@ const requireAdmincoreBridgeKey = (req, _res, next) => {
     return next(createHttpError({ statusCode: 503, code: "ADMINCORE_BRIDGE_NOT_CONFIGURED", message: "AdminCore bridge is not configured" }));
   }
 
-  if (candidate !== bridgeKey) {
+  if (!safeEqual(candidate, bridgeKey)) {
     return next(createHttpError({ statusCode: 401, code: "ADMINCORE_BRIDGE_UNAUTHORIZED", message: "Invalid AdminCore bridge key" }));
   }
 

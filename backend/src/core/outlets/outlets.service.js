@@ -1,4 +1,7 @@
 import prisma from "../../database/prisma/client.js";
+import { moveStock } from "../inventory/stock-ledger.service.js";
+import { assertOwnedIds } from "../../database/prisma/scope.js";
+import { createHttpError } from "../../shared/utils/http-error.js";
 import {
   ensureBusiness,
   serializeOutlet,
@@ -420,7 +423,7 @@ class OutletsService {
       },
     });
 
-    await syncOutletAssignments(createdOutlet.id, payload.assigned_user_ids || []);
+    await syncOutletAssignments(createdOutlet.id, await assertOwnedIds({ kind: "user", ids: payload.assigned_user_ids, businessId: business.id }));
 
     const [products, inventoryItems] = await Promise.all([
       prisma.product.findMany({ where: { businessId: business.id } }),
@@ -498,7 +501,7 @@ class OutletsService {
     });
 
     if (payload.assigned_user_ids !== undefined) {
-      await syncOutletAssignments(outletId, payload.assigned_user_ids || []);
+      await syncOutletAssignments(outletId, await assertOwnedIds({ kind: "user", ids: payload.assigned_user_ids, businessId: business.id }));
     }
 
     const outletResult = await this.getOutletById({ tenantId, outletId });
@@ -657,63 +660,29 @@ class OutletsService {
 
   async updateOutletInventory({ tenantId, outletId, items = [] }) {
     const { business } = await this.getOutletRecord({ tenantId, outletId });
-
-    for (const item of items || []) {
-      const inventoryItemId = item.inventory_id || item.inventoryItemId;
-      if (!inventoryItemId) {
-        continue;
+    await prisma.$transaction(async (tx) => {
+      for (const item of [...items].sort((a, b) => String(a.inventory_id || a.inventoryItemId).localeCompare(String(b.inventory_id || b.inventoryItemId)))) {
+        const inventoryItemId = item.inventory_id || item.inventoryItemId;
+        if (typeof inventoryItemId !== "string" || !inventoryItemId) throw createHttpError({ statusCode: 400, message: "An inventory item ID is required" });
+        await tx.$queryRaw`SELECT id FROM "InventoryItem" WHERE id = ${inventoryItemId} AND "businessId" = ${business.id} FOR UPDATE`;
+        const ingredient = await tx.inventoryItem.findFirst({ where: { id: inventoryItemId, businessId: business.id } });
+        if (!ingredient) throw createHttpError({ statusCode: 404, message: "Inventory item not found in this business" });
+        for (const field of ["stock", "reorder_level"]) {
+          if (item[field] != null && (String(item[field]).trim() === "" || !Number.isFinite(Number(item[field])) || Number(item[field]) < 0)) throw createHttpError({ statusCode: 400, message: "Stock and reorder level must be non-negative numbers" });
+        }
+        const balance = await tx.outletInventory.findUnique({ where: { outletId_inventoryItemId: { outletId, inventoryItemId } } });
+        if (item.stock != null && Number(item.stock) !== (balance?.stock || 0)) {
+          await moveStock({ tx, businessId: business.id, itemId: inventoryItemId, outletId,
+            quantity: Number(item.stock) - (balance?.stock || 0), movementType: "stock_audit_adjustment", reason: "Outlet inventory count" });
+        }
+        await tx.outletInventory.upsert({ where: { outletId_inventoryItemId: { outletId, inventoryItemId } },
+          update: { reorderLevel: item.reorder_level != null ? Number(item.reorder_level) : undefined, enabled: item.enabled ?? true },
+          create: { outletId, inventoryItemId, stock: 0, reorderLevel: Number(item.reorder_level ?? ingredient.reorderLevel), enabled: item.enabled ?? true } });
       }
-
-      const existingInventoryItem = await prisma.inventoryItem.findFirst({
-        where: {
-          id: inventoryItemId,
-          businessId: business.id,
-        },
-      });
-
-      if (!existingInventoryItem) {
-        continue;
-      }
-
-      await prisma.outletInventory.upsert({
-        where: {
-          outletId_inventoryItemId: {
-            outletId,
-            inventoryItemId,
-          },
-        },
-        update: {
-          stock: item.stock !== undefined ? Number(item.stock) : undefined,
-          reorderLevel: item.reorder_level !== undefined ? Number(item.reorder_level) : undefined,
-          enabled: item.enabled ?? true,
-        },
-        create: {
-          outletId,
-          inventoryItemId,
-          stock: Number(item.stock || 0),
-          reorderLevel:
-            item.reorder_level !== undefined
-              ? Number(item.reorder_level)
-              : Number(existingInventoryItem.reorderLevel || 0),
-          enabled: item.enabled ?? true,
-        },
-      });
-    }
-
-    const inventory = await this.listOutletInventory({ tenantId, outletId });
-    await admincoreChangeSyncService.notifyChange({
-      resource: "outlets",
-      action: "inventory_updated",
-      recordId: outletId,
-      tenantId,
-      businessId: business.id,
-      outletId,
-      metadata: {
-        inventory_line_count: inventory.length,
-      },
+      await admincoreChangeSyncService.notifyChange({ resource: "outlets", action: "inventory_updated",
+        recordId: outletId, tenantId, businessId: business.id, outletId, metadata: { inventory_line_count: items.length } }, { tx });
     });
-
-    return inventory;
+    return this.listOutletInventory({ tenantId, outletId });
   }
 
   async listOutletInventory({ tenantId, outletId }) {

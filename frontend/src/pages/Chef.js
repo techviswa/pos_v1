@@ -64,7 +64,7 @@ export const Chef = () => {
     }
   };
 
-  useAutoRefresh(fetchTickets);
+  useAutoRefresh(fetchTickets, { liveResources: ["kot"], refreshOnFocus: true });
 
   const kitchenTickets = useMemo(
     () => tickets.filter((ticket) => !["served", "completed", "rejected"].includes(ticket.kitchen_status || ticket.status)

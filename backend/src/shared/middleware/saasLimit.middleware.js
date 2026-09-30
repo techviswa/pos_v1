@@ -1,5 +1,6 @@
 import { saasService } from "../../core/saas/saas.service.js";
 import env from "../../config/env.js";
+import { safeEqual } from "./authGuard.middleware.js";
 
 const getBearerToken = (authorization = "") => {
   const [scheme, token] = String(authorization || "").split(" ");
@@ -12,7 +13,7 @@ const isTrustedAdminCoreBridgeRequest = (req) => {
 
   const apiKey = req.get("x-api-key");
   const bearerToken = getBearerToken(req.get("authorization"));
-  return apiKey === bridgeKey || bearerToken === bridgeKey;
+  return safeEqual(apiKey, bridgeKey) || safeEqual(bearerToken, bridgeKey);
 };
 
 export const requireSaasLimit = (resource, getIncrement = () => 1) => async (req, _res, next) => {

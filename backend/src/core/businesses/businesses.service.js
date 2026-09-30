@@ -49,6 +49,23 @@ class BusinessesService {
 
     return serializedBusiness;
   }
+  async renameBusiness({ businessId, name }) {
+    const trimmed = String(name || "").trim();
+    if (!trimmed) throw createHttpError({ statusCode: 400, code: "BUSINESS_NAME_REQUIRED", message: "name is required" });
+    if (trimmed.length > 120) throw createHttpError({ statusCode: 400, code: "BUSINESS_NAME_TOO_LONG", message: "name must be at most 120 characters" });
+    const business = await prisma.business.update({ where: { id: String(businessId) }, data: { name: trimmed }, include: getBusinessInclude() });
+    const serialized = serializeBusiness(business);
+    await admincoreChangeSyncService.notifyChange({
+      resource: "businesses",
+      action: "updated",
+      recordId: serialized.id,
+      tenantId: serialized.tenant_id,
+      businessId: serialized.id,
+      metadata: { name: serialized.name, status: serialized.status, plan: serialized.plan },
+    });
+    return serialized;
+  }
+
   async listBusinesses({ businessId } = {}) {
     const businesses = await prisma.business.findMany({
       where: businessId ? { id: String(businessId) } : {},

@@ -3,7 +3,7 @@ import { Eye, EyeOff } from "lucide-react";
 import { Link, useNavigate } from "react-router-dom";
 import { useAuth } from "../contexts/AuthContext";
 import { getApiErrorMessage } from "../lib/apiErrors";
-import { hasPermission } from "../lib/pos";
+import { getDefaultRouteForUser } from "../core/navigation/utils/defaultRoute";
 
 const getLoginErrorMessage = (error) => {
   if (!error?.response) {
@@ -23,6 +23,9 @@ export const Login = () => {
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
+  // Set when the same email has accounts in several businesses; the user picks which one to open.
+  const [businessChoices, setBusinessChoices] = useState([]);
+  const [businessId, setBusinessId] = useState("");
   const { login } = useAuth();
   const navigate = useNavigate();
 
@@ -32,17 +35,17 @@ export const Login = () => {
     setError("");
 
     try {
-      const user = await login(email, password);
-      if (user.profile_required) navigate("/complete-profile");
-      else if (user.role === "Manager") navigate("/manager");
-      else if (user.role === "Waiter") navigate("/waiter");
-      else if (user.role === "Chef") navigate("/chef");
-      else if (hasPermission(user, "dashboard")) navigate("/dashboard");
-      else if (hasPermission(user, "billing")) navigate("/billing");
-      else if (hasPermission(user, "bills")) navigate("/bills");
-      else navigate("/login");
+      const user = await login(email, password, businessId || null);
+      navigate(getDefaultRouteForUser(user));
     } catch (err) {
-      setError(getLoginErrorMessage(err));
+      const apiError = err?.response?.data?.error;
+      if (apiError?.code === "LOGIN_BUSINESS_REQUIRED") {
+        setBusinessChoices(apiError.details?.businesses || []);
+        setBusinessId("");
+        setError("This email is used in more than one business. Choose one and sign in again.");
+      } else {
+        setError(getLoginErrorMessage(err));
+      }
     } finally {
       setLoading(false);
     }
@@ -75,7 +78,7 @@ export const Login = () => {
                 data-testid="login-email-input"
                 type="email"
                 value={email}
-                onChange={(event) => setEmail(event.target.value)}
+                onChange={(event) => { setEmail(event.target.value); setBusinessChoices([]); setBusinessId(""); }}
                 placeholder="Enter your email"
                 required
               />
@@ -105,6 +108,25 @@ export const Login = () => {
                 </button>
               </div>
             </div>
+
+            {businessChoices.length > 0 && (
+              <div className="cf-field">
+                <label htmlFor="li-business">Business</label>
+                <select
+                  id="li-business"
+                  className="cf-input"
+                  data-testid="login-business-select"
+                  value={businessId}
+                  onChange={(event) => setBusinessId(event.target.value)}
+                  required
+                >
+                  <option value="">Select a business</option>
+                  {businessChoices.map((business) => (
+                    <option key={business.id} value={business.id}>{business.name}</option>
+                  ))}
+                </select>
+              </div>
+            )}
 
             <button
               className="cf-btn cf-btn--primary cf-btn--full cf-btn--large"

@@ -40,7 +40,7 @@ export const FeedbackForm = () => {
         setFeedbackInfo(response.data);
         setSubmitted(Boolean(response.data.feedback_received));
       } catch (fetchError) {
-        setError(fetchError.response?.data?.detail || "Unable to open feedback form");
+        setError(fetchError.response?.data?.error?.message || fetchError.response?.data?.detail || "Unable to open feedback form");
       } finally {
         setLoading(false);
       }
@@ -54,7 +54,7 @@ export const FeedbackForm = () => {
       await axios.post(`${API_URL}/api/feedback/form/${token}`, form);
       setSubmitted(true);
     } catch (submitError) {
-      setError(submitError.response?.data?.detail || "Unable to submit feedback");
+      setError(submitError.response?.data?.error?.message || submitError.response?.data?.detail || "Unable to submit feedback");
     }
   };
 

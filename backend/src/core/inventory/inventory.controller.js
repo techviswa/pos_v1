@@ -120,6 +120,7 @@ class InventoryController {
   async cogsReport(req, res) {
     const data = await inventoryOperationsService.getCogsReport({
       tenantId: req.context.tenantId,
+      from: req.query.from, to: req.query.to, outletId: req.query.outlet_id || req.query.outletId,
     });
     res.status(200).json(apiResponse({ message: "COGS report fetched successfully", data }));
   }

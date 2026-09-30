@@ -435,7 +435,36 @@ export const serializeProduct = (product) => ({
     })) || [],
   recipe_lines: cloneJson(product.recipeLines, []),
   channel_settings: cloneJson(product.channelSettings, {}),
-  outlet_overrides: cloneJson(product.outletOverrides, []),
+  // Outlet menus live in OutletProduct; the old JSON copy is only a fallback when links were not loaded.
+  outlet_overrides: Array.isArray(product.outletLinks)
+    ? product.outletLinks.map((link) => ({
+        outlet_id: link.outletId,
+        price: link.priceOverride ?? null,
+        status: link.enabled === false ? "inactive" : "active",
+      }))
+    : cloneJson(product.outletOverrides, []),
+  is_combo: Boolean(product.isCombo),
+  modifier_groups:
+    product.modifierGroups?.map((group) => ({
+      id: group.id,
+      name: group.name,
+      min_select: group.minSelect,
+      max_select: group.maxSelect,
+      options: (group.options || []).map((option) => ({
+        id: option.id,
+        name: option.name,
+        price: option.price,
+        linked_product_id: option.linkedProductId || null,
+        recipe_lines: cloneJson(option.recipeLines, []),
+        active: option.active,
+      })),
+    })) || [],
+  combo_components:
+    product.comboComponents?.map((component) => ({
+      product_id: component.componentProductId,
+      name: component.component?.name || null,
+      quantity: component.quantity,
+    })) || [],
   removal_options: cloneJson(product.removalOptions, []),
   created_at: toIso(product.createdAt),
   updated_at: toIso(product.updatedAt),
@@ -461,6 +490,7 @@ export const serializeOrder = (order) => ({
       price: item.price,
       variation: item.variation,
       addons: cloneJson(item.addons, []),
+      modifiers: cloneJson(item.modifiers, null),
     })) || [],
   created_at: toIso(order.createdAt),
   updated_at: toIso(order.updatedAt),
@@ -489,6 +519,7 @@ export const serializeBill = (bill) => ({
       price: item.price,
       variation: item.variation,
       addons: cloneJson(item.addons, []),
+      modifiers: cloneJson(item.modifiers, null),
     })) || [],
   ...Object.fromEntries(Object.entries(normalizeBillingMetadata(bill.metadata || {})).filter(([key]) => key !== "item_costs")),
 });
@@ -593,6 +624,8 @@ export const toPrismaOrderItems = (items = []) =>
     price: toNumber(item.price, 0),
     variation: item.variation || null,
     addons: cloneJson(item.addons, []),
+    // Json columns take `undefined` (not null) for "nothing chosen".
+    ...(item.modifiers ? { modifiers: cloneJson(item.modifiers, null) } : {}),
   }));
 
 export const toPrismaBillItems = (items = []) =>
@@ -603,6 +636,8 @@ export const toPrismaBillItems = (items = []) =>
     price: toNumber(item.price, 0),
     variation: item.variation || null,
     addons: cloneJson(item.addons, []),
+    // Json columns take `undefined` (not null) for "nothing chosen".
+    ...(item.modifiers ? { modifiers: cloneJson(item.modifiers, null) } : {}),
   }));
 
 export const toPrismaInventoryPayload = (payload = {}) => ({

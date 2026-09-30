@@ -1,6 +1,7 @@
 import { apiResponse } from "../../../shared/utils/apiResponse.js";
 import { isAdminCoreSyncRequest, createSyncEnvelope } from "../../../core/sync/sync-contract.js";
 import { kotService } from "./kot.service.js";
+import { filterByOutletScope } from "../../../shared/middleware/outletScope.js";
 
 class KotController {
   async list(req, res) {
@@ -10,6 +11,10 @@ class KotController {
       status: req.query?.status,
       stationId: req.query?.station_id || req.query?.stationId,
     });
+    if (req.context?.outletScope) {
+      data.items = filterByOutletScope(req, data.items, (ticket) => ticket.outlet_id);
+      data.summary = kotService.buildQueueSummary(data.items);
+    }
     if (isAdminCoreSyncRequest(req)) {
       return res.status(200).json(
         createSyncEnvelope({

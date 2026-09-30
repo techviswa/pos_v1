@@ -1,13 +1,14 @@
 import { apiResponse, sendRawResponse } from "../../shared/utils/apiResponse.js";
 import { sendSyncOrRaw } from "../sync/sync-contract.js";
 import { outletsService } from "./outlets.service.js";
+import { filterByOutletScope } from "../../shared/middleware/outletScope.js";
 
 class OutletsController {
   async list(req, res) {
-    const data = await outletsService.listOutlets({
+    const data = filterByOutletScope(req, await outletsService.listOutlets({
       tenantId: req.context.tenantId,
       businessId: req.context.businessId,
-    });
+    }), (outlet) => outlet.id);
     sendSyncOrRaw(req, res, {
       resource: "outlets",
       data,

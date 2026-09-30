@@ -1,4 +1,5 @@
 import prisma from "../../database/prisma/client.js";
+import { moveStock } from "../../core/inventory/stock-ledger.service.js";
 import { createHttpError } from "../../shared/utils/http-error.js";
 import { admincoreChangeSyncService } from "../../core/admincore/admincore-change-sync.service.js";
 import { convertRecipeQuantity } from "../../core/inventory/recipe-units.js";
@@ -159,16 +160,61 @@ class OrderFulfillmentService {
 
     for (const item of items || []) {
       const product = await this.findProductForWorkflowItem({ businessId, item, tx });
-      const quantity = Number(item?.quantity ?? 1);
+      // Whole, positive units only: a negative quantity must never add stock back.
+      const quantity = Math.max(0, Math.floor(Number(item?.quantity ?? 1)) || 0);
 
-      if (product) {
-        const currentProductAdjustment = productAdjustments.get(product.id) || {
-          nextStock: Number(product.stock || 0),
+      if (product && quantity > 0) {
+        const addStock = (productId, units) => {
+          const current = productAdjustments.get(productId) || { quantity: 0 };
+          current.quantity += units;
+          productAdjustments.set(productId, current);
         };
-        currentProductAdjustment.nextStock = Math.max(0, currentProductAdjustment.nextStock - quantity);
-        productAdjustments.set(product.id, currentProductAdjustment);
+        const loadProduct = async (productId, label) => {
+          const found = await tx.product.findFirst({ where: { id: productId, businessId }, include: { variations: true, addons: true } });
+          if (!found) throw createHttpError({ statusCode: 409, code: "MENU_ITEM_MISSING", message: `${label} is no longer on the menu` });
+          return found;
+        };
+        // The sale-time snapshot (set by the price engine) says what was sold: combo components, chosen options.
+        const detail = item?.modifiers && typeof item.modifiers === "object" ? item.modifiers : {};
+        const comboComponents = Array.isArray(detail.combo_components) ? detail.combo_components : [];
+        const chosenOptions = Array.isArray(detail.options) ? detail.options : [];
+        const removals = item?.removed_ingredients || item?.removedIngredients || [];
+        const recipeDemand = [];
 
-        const recipeDemand = this.buildInventoryDemandForItem({ product, item });
+        if (comboComponents.length) {
+          // A combo sells its components: their stock and recipes are consumed, not the combo's own.
+          for (const component of comboComponents) {
+            const units = quantity * Math.max(1, Math.floor(Number(component.quantity) || 1));
+            const componentProduct = await loadProduct(component.product_id, component.name || "A combo item");
+            addStock(componentProduct.id, units);
+            recipeDemand.push(...this.buildInventoryDemandForItem({ product: componentProduct, item: { quantity: units, removed_ingredients: removals } }));
+          }
+        } else {
+          addStock(product.id, quantity);
+          recipeDemand.push(...this.buildInventoryDemandForItem({ product, item }));
+        }
+
+        if (chosenOptions.length) {
+          const optionRows = await tx.modifierOption.findMany({
+            where: { id: { in: chosenOptions.map((option) => option.option_id).filter(Boolean) }, group: { product: { businessId } } },
+          });
+          for (const option of chosenOptions) {
+            if (option.linked_product_id) {
+              // e.g. the drink chosen in a meal deal is sold (and consumed) too.
+              const linked = await loadProduct(option.linked_product_id, option.name || "A chosen item");
+              addStock(linked.id, quantity);
+              recipeDemand.push(...this.buildInventoryDemandForItem({ product: linked, item: { quantity, removed_ingredients: removals } }));
+            }
+            const row = optionRows.find((entry) => entry.id === option.option_id);
+            if (Array.isArray(row?.recipeLines) && row.recipeLines.length) {
+              recipeDemand.push(...this.buildInventoryDemandForItem({
+                product: { recipeLines: row.recipeLines, variations: [], addons: [] },
+                item: { quantity, removed_ingredients: removals },
+              }));
+            }
+          }
+        }
+
         for (const line of recipeDemand) {
           const ingredient = await tx.inventoryItem.findFirst({ where: { id: line.inventoryItemId, businessId }, select: { unit: true } });
           if (!ingredient) throw createHttpError({ statusCode: 409, message: "Recipe ingredient does not belong to this business" });
@@ -184,11 +230,20 @@ class OrderFulfillmentService {
       }
     }
 
+    // One atomic, conditional statement per product: a concurrent sale or stock edit can neither be overwritten by
+    // a stale read nor push stock below zero. Selling more than is on hand is refused (the POS screen enforces the
+    // same rule), instead of silently clamping stock to zero and losing the shortfall.
     for (const [productId, adjustment] of productAdjustments.entries()) {
-      await tx.product.update({
-        where: { id: productId },
-        data: { stock: adjustment.nextStock },
-      });
+      const updated = await tx.$executeRaw`UPDATE "Product" SET "stock" = "stock" - ${adjustment.quantity}::int WHERE "id" = ${productId} AND "businessId" = ${businessId} AND "stock" >= ${adjustment.quantity}::int`;
+      if (!updated) {
+        const product = await tx.product.findFirst({ where: { id: productId, businessId }, select: { name: true, stock: true } });
+        throw createHttpError({
+          statusCode: 409,
+          code: "INSUFFICIENT_STOCK",
+          message: `Only ${Math.max(0, Number(product?.stock || 0))} x ${product?.name || "item"} left in stock`,
+          details: { product_id: productId, available: Number(product?.stock || 0), requested: adjustment.quantity },
+        });
+      }
     }
 
     for (const demand of inventoryDemand.values()) {
@@ -205,21 +260,9 @@ class OrderFulfillmentService {
       }
 
       const quantity = Number(demand.quantity);
-      const changed = outletId
-        ? await tx.outletInventory.updateMany({ where: { outletId, inventoryItemId: inventoryItem.id, stock: { gte: quantity } }, data: { stock: { decrement: quantity } } })
-        : await tx.inventoryItem.updateMany({ where: { id: inventoryItem.id, businessId, stock: { gte: quantity } }, data: { stock: { decrement: quantity } } });
-      if (!changed.count) throw createHttpError({ statusCode: 409, message: `Insufficient recipe stock for ${inventoryItem.name}${outletId ? " at this outlet" : ""}` });
-      consumption.push({ inventory_id: inventoryItem.id, outlet_id: outletId, quantity, unit_cost: Number(inventoryItem.conversionCost || 0) });
-
-      await tx.inventoryMovement.create({
-        data: {
-          businessId,
-          inventoryItemId: inventoryItem.id,
-          movementType: "bill_deduction",
-          quantity: -Number(demand.quantity || 0),
-          reason: `Inventory deducted for bill ${billId}${outletId ? ` at outlet ${outletId}` : " from central-store"}`,
-        },
-      });
+      const moved = await moveStock({ tx, businessId, itemId: inventoryItem.id, outletId, quantity: -quantity,
+        movementType: "bill_deduction", referenceId: billId, reason: `Inventory deducted for bill ${billId}` });
+      consumption.push({ inventory_id: inventoryItem.id, outlet_id: outletId, quantity, unit_cost: moved.unitCost });
     }
 
     const recipeCosts = new Map();
@@ -246,7 +289,10 @@ class OrderFulfillmentService {
         tx,
       });
     }
-    return { consumption, recipeCosts };
+    const consumptionByProduct = recipeItems.map((item) => ({ product_id: item.productId, quantity: item.quantity,
+      ingredients: item.demand.map((line) => ({ inventory_id: line.inventoryItemId, outlet_id: outletId,
+        quantity: line.quantity, unit_cost: consumption.find((entry) => entry.inventory_id === line.inventoryItemId).unit_cost })) }));
+    return { consumption, recipeCosts, consumptionByProduct };
   }
 }
 

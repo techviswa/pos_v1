@@ -17,6 +17,15 @@ export const sessions = {
     const record = await prisma.authSession.findUnique({ where: { tokenHash: hash(token) } });
     return record ? { ...record, expiresAt: record.expiresAt.getTime() } : null;
   },
+  /** End every session of a user except the one making the request. */
+  async deleteOthers(userId, keepToken) {
+    for (const [token, record] of memory) {
+      if (record.userId === userId && token !== keepToken) memory.delete(token);
+    }
+    if (!useMemory()) {
+      await prisma.authSession.deleteMany({ where: { userId, tokenHash: { not: hash(keepToken) } } });
+    }
+  },
   async delete(token) {
     memory.delete(token);
     if (!useMemory()) await prisma.authSession.deleteMany({ where: { tokenHash: hash(token) } });

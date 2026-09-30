@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useState } from "react";
+import { useAutoRefresh } from "../hooks/useAutoRefresh";
 import axios from "axios";
 import { Layout } from "../components/Layout";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "../components/ui/dialog";
@@ -9,6 +10,7 @@ import { getTrackingLine } from "../core/billing/utils/orderTracking";
 import { OutletOverviewPanel } from "../core/outlets/components/OutletOverviewPanel";
 import { useActiveOutlet } from "../core/outlets/store/ActiveOutletContext";
 import { StockReversal } from "../core/billing/components/StockReversal";
+import { BillPayments } from "../core/billing/components/BillPayments";
 
 const API_URL = (() => {
   const configured = String(process.env.REACT_APP_BACKEND_URL || "").replace(/\/+$/, "");
@@ -72,6 +74,9 @@ export const Bills = () => {
     setBills(response.data);
     setLoading(false);
   };
+
+  // New bills, payments and refunds from other terminals appear without a manual refresh.
+  useAutoRefresh(fetchBills, { liveResources: ["bills"], enabled: Boolean(selectedOutletId) });
 
   useEffect(() => {
     setLoading(true);
@@ -250,6 +255,27 @@ export const Bills = () => {
                     </div>
                   </div>
                 ) : null}
+                {Number(selectedBill.loyalty_discount || 0) > 0 || Number(selectedBill.loyalty_points_earned || 0) > 0 ? (
+                  <div>
+                    <div className="cf-page__overline" style={{ marginBottom: 6 }}>Loyalty</div>
+                    <div>
+                      {Number(selectedBill.loyalty_discount || 0) > 0 ? `${selectedBill.loyalty_redeem_points} points used (-${formatCurrency(selectedBill.loyalty_discount, settings.currency)}). ` : ""}
+                      {Number(selectedBill.loyalty_points_earned || 0) > 0 ? `${selectedBill.loyalty_points_earned} points earned.` : ""}
+                    </div>
+                  </div>
+                ) : null}
+                {(selectedBill.payments || []).some((payment) => payment.method === "Gift Card") ? (
+                  <div>
+                    <div className="cf-page__overline" style={{ marginBottom: 6 }}>Gift card</div>
+                    <div>{(selectedBill.payments || []).filter((payment) => payment.method === "Gift Card").map((payment) => `${payment.reference || "Card"} ${formatCurrency(payment.amount, settings.currency)}`).join(", ")}</div>
+                  </div>
+                ) : null}
+                {Number(selectedBill.tip_amount || 0) > 0 ? (
+                  <div>
+                    <div className="cf-page__overline" style={{ marginBottom: 6 }}>Tip (not taxed)</div>
+                    <div>{formatCurrency(selectedBill.tip_amount, settings.currency)} {selectedBill.tip_staff_name ? `for ${selectedBill.tip_staff_name}` : "to the shared pool"}</div>
+                  </div>
+                ) : null}
                 <div>
                   <div className="cf-page__overline" style={{ marginBottom: 6 }}>Feedback</div>
                   <div style={{ color: "var(--cf-text-2)", fontSize: 13 }}>
@@ -296,6 +322,19 @@ export const Bills = () => {
                   </table>
                 </div>
               </div>
+            ) : null}
+            {selectedBill ? (
+              <BillPayments
+                apiUrl={API_URL}
+                bill={selectedBill}
+                canRefund={["Owner", "Manager"].includes(user?.role)}
+                currency={settings.currency}
+                key={`payments-${selectedBill.id}`}
+                onChanged={(updated) => {
+                  if (updated?.id) setSelectedBill(updated);
+                  void fetchBills();
+                }}
+              />
             ) : null}
             {selectedBill && ["Owner", "Manager"].includes(user?.role) && <StockReversal key={selectedBill.id} bill={selectedBill} apiUrl={API_URL} />}
           </DialogContent>

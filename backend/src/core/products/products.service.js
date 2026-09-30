@@ -11,38 +11,46 @@ import {
 } from "../../shared/constants/domain.constants.js";
 import { getPagination } from "../../shared/utils/pagination.js";
 import { admincoreChangeSyncService } from "../admincore/admincore-change-sync.service.js";
+import { createHttpError } from "../../shared/utils/http-error.js";
+import { availability, effectiveBase, loadActiveRules, MENU_CHANNELS } from "../menu/menu-pricing.js";
+import { comboAvailableStock, saveMenuStructure } from "../menu/menu-structure.service.js";
 
+// With an outlet, only that outlet's menu settings are loaded; without one, all of them (for the Products screen).
 const getProductInclude = (outletId = null) => ({
   business: true,
   variations: true,
   addons: true,
-  ...(outletId
-    ? {
-        outletLinks: {
-          where: { outletId },
-        },
-      }
-    : {}),
+  modifierGroups: { include: { options: { orderBy: { sortOrder: "asc" } } }, orderBy: { sortOrder: "asc" } },
+  comboComponents: { include: { component: { select: { id: true, name: true, stock: true } } } },
+  outletLinks: outletId ? { where: { outletId } } : true,
 });
 
 class ProductsService {
-  applyOutletContext(product, outletId) {
+  /**
+   * The menu as it sells right now at this outlet on this channel, priced by the shared engine so the screen shows
+   * exactly what billing will charge. `base_price` is always the product's own price (what the Products screen edits).
+   */
+  applyMenuContext(product, { outletId, channel, rules, at }) {
     const serialized = serializeProduct(product);
-    if (!outletId) {
-      return serialized;
+    const comboStock = comboAvailableStock(product);
+    const stockFields = comboStock === null ? {} : { stock: comboStock };
+    if (!outletId && !channel) {
+      return { ...serialized, ...stockFields, base_price: serialized.price };
     }
-
-    const outletLink = product.outletLinks?.[0] || null;
-    if (outletLink?.enabled === false) {
+    const outletLink = outletId ? product.outletLinks?.[0] || null : null;
+    if (!availability(product, { outletLink, channel }).available && product.active !== false) {
       return null;
     }
-
+    const priced = effectiveBase(product, { outletLink, channel, salesChannel: channel, outletId, at, rules });
     return {
       ...serialized,
-      price:
-        outletLink?.priceOverride !== undefined && outletLink?.priceOverride !== null
-          ? Number(outletLink.priceOverride)
-          : serialized.price,
+      ...stockFields,
+      base_price: serialized.price,
+      list_price: priced.listPrice,
+      price: priced.price,
+      price_rule: priced.rule
+        ? { id: priced.rule.id, name: priced.rule.name, discount_type: priced.rule.discountType, value: priced.rule.value }
+        : null,
       outlet_product_enabled: outletLink?.enabled ?? true,
     };
   }
@@ -50,17 +58,22 @@ class ProductsService {
   async listProducts({ tenantId, query = {} }) {
     const business = await ensureBusiness({ tenantId });
     const outletId = query.outlet_id || query.outletId || null;
+    const channel = MENU_CHANNELS.includes(query.channel) ? query.channel : null;
     const pagination = getPagination(query);
-    const products = await prisma.product.findMany({
-      where: { businessId: business.id },
-      include: getProductInclude(outletId),
-      orderBy: { createdAt: "asc" },
-      take: pagination.take,
-      skip: pagination.skip,
-    });
+    const [products, rules] = await Promise.all([
+      prisma.product.findMany({
+        where: { businessId: business.id },
+        include: getProductInclude(outletId),
+        orderBy: { createdAt: "asc" },
+        take: pagination.take,
+        skip: pagination.skip,
+      }),
+      loadActiveRules(prisma, business.id),
+    ]);
+    const at = new Date();
 
     return products
-      .map((product) => this.applyOutletContext(product, outletId))
+      .map((product) => this.applyMenuContext(product, { outletId, channel, rules, at }))
       .filter(Boolean);
   }
 
@@ -79,7 +92,8 @@ class ProductsService {
 
   async createProduct({ tenantId, payload }) {
     const business = await ensureBusiness({ tenantId });
-    const createdProduct = await prisma.product.create({
+    const createdProduct = await prisma.$transaction(async (tx) => {
+      const created = await tx.product.create({
       data: {
         businessId: business.id,
         name: payload.name || "New Product",
@@ -91,10 +105,12 @@ class ProductsService {
         dietaryType: payload.dietary_type || DEFAULT_PRODUCT_DIETARY_TYPE,
         recipeLines: payload.recipe_lines || [],
         channelSettings: payload.channel_settings || {},
-        outletOverrides: payload.outlet_overrides || [],
+        outletOverrides: [],
         removalOptions: payload.removal_options || [],
       },
-      include: getProductInclude(),
+    });
+      await saveMenuStructure({ tx, businessId: business.id, productId: created.id, payload });
+      return created;
     });
 
     await syncProductVariations(createdProduct.id, payload.variation_options || []);
@@ -145,10 +161,10 @@ class ProductsService {
         dietaryType: payload.dietary_type ?? currentProduct.dietaryType,
         recipeLines: payload.recipe_lines ?? currentProduct.recipeLines,
         channelSettings: payload.channel_settings ?? currentProduct.channelSettings,
-        outletOverrides: payload.outlet_overrides ?? currentProduct.outletOverrides,
         removalOptions: payload.removal_options ?? currentProduct.removalOptions,
       },
     });
+    await prisma.$transaction((tx) => saveMenuStructure({ tx, businessId: business.id, productId, payload }));
 
     if (payload.variation_options !== undefined) {
       await syncProductVariations(productId, payload.variation_options || []);
@@ -189,6 +205,18 @@ class ProductsService {
       },
       include: getProductInclude(),
     });
+
+    const combos = await prisma.comboComponent.findMany({
+      where: { componentProductId: productId },
+      include: { combo: { select: { name: true } } },
+    });
+    if (combos.length) {
+      throw createHttpError({
+        statusCode: 409,
+        code: "PRODUCT_IN_COMBO",
+        message: `Remove this item from ${combos.map((entry) => `"${entry.combo.name}"`).join(", ")} before deleting it`,
+      });
+    }
 
     await prisma.product.delete({
       where: { id: productId },

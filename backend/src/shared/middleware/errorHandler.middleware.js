@@ -9,17 +9,28 @@ export const errorHandlerMiddleware = (error, req, res, _next) => {
     String(req.query?.admincore || "").toLowerCase() === "true" ||
     String(req.get("x-admincore-sync") || "").toLowerCase() === "true" ||
     req.originalUrl?.startsWith("/api/sync/export/");
+  // Server faults can carry database/driver text; customers only ever see a generic message in production.
+  const publicMessage = statusCode >= 500 && process.env.NODE_ENV === "production"
+    ? "Internal server error"
+    : error.message || "Internal server error";
   const resource = req.params?.resource || req.originalUrl?.split("?")[0]?.split("/")?.filter(Boolean)?.at(-1) || "unknown";
 
   errorMonitor.captureRequestException(error, req);
 
-  logger.error({
+  const logEntry = {
     requestId: req.context?.requestId,
+    tenantId: req.context?.tenantId,
+    businessId: req.context?.businessId,
+    userId: req.user?.id,
+    method: req.method,
+    path: req.originalUrl?.split("?")[0],
     code,
     statusCode,
     message: error.message,
-    stack: error.stack,
-  });
+  };
+  // Expected client errors (401/403/404/409/429...) are warnings without stacks; only real faults page someone.
+  if (statusCode >= 500) logger.error({ ...logEntry, stack: error.stack });
+  else logger.warn(logEntry);
 
   res.status(statusCode).json({
     success: false,
@@ -42,9 +53,9 @@ export const errorHandlerMiddleware = (error, req, res, _next) => {
         }
       : {}),
     error: {
-      message: error.message || "Internal server error",
+      message: publicMessage,
       code,
-      details: error.details,
+      details: statusCode >= 500 && process.env.NODE_ENV === "production" ? undefined : error.details,
       requestId: req.context?.requestId,
     },
   });

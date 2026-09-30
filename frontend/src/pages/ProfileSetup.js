@@ -3,7 +3,8 @@ import axios from "axios";
 import { useNavigate } from "react-router-dom";
 import { Layout } from "../components/Layout";
 import { useAuth } from "../contexts/AuthContext";
-import { hasPermission, normalizeStaffBio } from "../lib/pos";
+import { normalizeStaffBio } from "../lib/pos";
+import { getDefaultRouteForUser } from "../core/navigation/utils/defaultRoute";
 
 const API_URL = (() => {
   const configured = String(process.env.REACT_APP_BACKEND_URL || "").replace(/\/+$/, "");
@@ -90,12 +91,7 @@ export const ProfileSetup = () => {
       await axios.put(`${API_URL}/api/staff/me/profile`, form, { withCredentials: true });
       const updatedUser = await checkAuth();
       const nextUser = updatedUser || user;
-      if (nextUser?.role === "Manager") navigate("/manager", { replace: true });
-      else if (nextUser?.role === "Waiter") navigate("/waiter", { replace: true });
-      else if (nextUser?.role === "Chef") navigate("/chef", { replace: true });
-      else if (hasPermission(nextUser, "dashboard")) navigate("/dashboard", { replace: true });
-      else if (hasPermission(nextUser, "billing")) navigate("/billing", { replace: true });
-      else if (hasPermission(nextUser, "bills")) navigate("/bills", { replace: true });
+      navigate(getDefaultRouteForUser({ ...nextUser, profile_required: false }), { replace: true });
     } catch (err) {
       setError(err.response?.data?.detail || "Unable to save your profile");
     } finally {

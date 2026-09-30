@@ -1,4 +1,5 @@
 import { apiResponse } from "../../shared/utils/apiResponse.js";
+import { createHttpError } from "../../shared/utils/http-error.js";
 import { sendSyncOrRaw } from "../sync/sync-contract.js";
 import { businessesService } from "./businesses.service.js";
 
@@ -9,7 +10,11 @@ class BusinessesController {
   }
 
   async update(req, res) {
-    const data = await businessesService.upsertBusiness({ payload: { ...req.body, id: req.params.businessId } });
+    // Only the caller's own business, addressed by its id; a tenant_id in the body is never trusted.
+    if (String(req.params.businessId) !== String(req.context.businessId)) {
+      throw createHttpError({ statusCode: 403, message: "Forbidden: business access denied" });
+    }
+    const data = await businessesService.renameBusiness({ businessId: req.context.businessId, name: req.body?.name || req.body?.business_name });
     res.status(200).json(apiResponse({ message: "Business updated successfully", data }));
   }
   async list(req, res) {

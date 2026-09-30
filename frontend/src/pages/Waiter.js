@@ -9,6 +9,7 @@ import { getApiErrorMessage } from "../lib/apiErrors";
 import { useUi } from "../contexts/UiContext";
 import { useAuth } from "../contexts/AuthContext";
 import { useAutoRefresh } from "../hooks/useAutoRefresh";
+import { QrInbox } from "../components/QrInbox";
 import { fulfillmentService } from "../features/billing/fulfillment/services/fulfillment.service";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "../components/ui/dialog";
 
@@ -96,7 +97,8 @@ export const Waiter = () => {
         fulfillmentService.fetchTableManagement({ includeHistory: true }),
       ];
       if (user?.permissions?.includes("shift_swaps")) {
-        requests.push(axios.get(`${API_URL}/api/staff`, { withCredentials: true }));
+        // The team list is readable by every staff member (the full staff API is for the Staff screen).
+        requests.push(axios.get(`${API_URL}/api/attendance/team`, { withCredentials: true }));
         requests.push(axios.get(`${API_URL}/api/shift-swaps`, { withCredentials: true }));
       }
       const responses = await Promise.all(requests);
@@ -117,7 +119,7 @@ export const Waiter = () => {
     }
   };
 
-  useAutoRefresh(fetchData);
+  useAutoRefresh(fetchData, { liveResources: ["bills", "tables", "reservations"], refreshOnFocus: true });
   const fetchKitchen = async () => {
     try {
       const response = await axios.get(`${API_URL}/api/kot`, { withCredentials: true, params: { status: "ready", limit: 100 } });
@@ -125,7 +127,7 @@ export const Waiter = () => {
       setKitchenError(null);
     } catch (error) { setKitchenError(error); }
   };
-  useAutoRefresh(fetchKitchen);
+  useAutoRefresh(fetchKitchen, { liveResources: ["kot"], refreshOnFocus: true });
   const serveTicket = async (ticketId) => {
     setServing((current) => ({ ...current, [ticketId]: true }));
     try {
@@ -235,6 +237,8 @@ export const Waiter = () => {
             <button className="cf-btn cf-btn--primary" onClick={() => navigate("/billing")} type="button">Open Billing</button>
           </div>
         </div>
+
+        <QrInbox currency={settings.currency} />
 
         <section className="cf-card cf-card--padded" aria-label="Kitchen pickup queue">
           <h2>Kitchen orders ready for pickup</h2>

@@ -13,6 +13,7 @@ export const DEFAULT_UI_SETTINGS = {
   paymentMethods: ["Cash", "UPI", "Card"],
 };
 
+// Mirrors backend/src/shared/constants/access.constants.js: one key per screen.
 export const STAFF_PERMISSION_KEYS = [
   "dashboard",
   "billing",
@@ -24,16 +25,31 @@ export const STAFF_PERMISSION_KEYS = [
   "staff",
   "settings",
   "central_kitchen",
+  "reservations",
+  "qr_management",
+  "manager_view",
+  "waiter_view",
+  "kitchen_view",
+  "price_rules",
+  "attendance",
+  "tips",
+  "customers",
+  "gift_cards",
+  "payroll",
+  "marketing",
 ];
 
 export const STAFF_ROLE_OPTIONS = ["Owner", "Manager", "Waiter", "Chef", "Cashier"];
 
 export const ROLE_DEFAULT_PERMISSIONS = {
   Owner: STAFF_PERMISSION_KEYS,
-  Manager: ["dashboard", "billing", "reports", "inventory", "products", "shift_swaps", "bills"],
-  Waiter: ["billing", "bills"],
-  Chef: [],
-  Cashier: ["billing", "bills"],
+  Manager: [
+    "dashboard", "billing", "reports", "inventory", "products", "shift_swaps", "bills", "staff",
+    "reservations", "qr_management", "manager_view", "price_rules", "attendance", "tips", "customers", "gift_cards",
+  ],
+  Waiter: ["billing", "bills", "waiter_view"],
+  Chef: ["kitchen_view"],
+  Cashier: ["billing", "bills", "gift_cards"],
 };
 
 export const PERMISSION_LABELS = {
@@ -47,6 +63,18 @@ export const PERMISSION_LABELS = {
   staff: "Staff",
   settings: "Settings",
   central_kitchen: "Central Kitchen",
+  reservations: "Reservations",
+  qr_management: "QR & Tables",
+  manager_view: "Manager Screen",
+  waiter_view: "Waiter Screen",
+  kitchen_view: "Kitchen Screen",
+  price_rules: "Happy Hours",
+  attendance: "Team Attendance",
+  tips: "Tips",
+  customers: "Customers & Loyalty",
+  gift_cards: "Gift Cards",
+  payroll: "Payroll",
+  marketing: "Marketing",
 };
 
 export const STAFF_BIO_DEFAULTS = {
@@ -214,3 +242,8 @@ export function isDateInPeriod(dateInput, period) {
   if (period === "month") return date >= startMonth;
   return true;
 }
+
+// A fresh id for one checkout attempt. Re-sending the same id (double tap, retry after a timeout) makes the
+// server return the original bill/order instead of creating a duplicate.
+export const newClientKey = () =>
+  (typeof crypto !== "undefined" && crypto.randomUUID ? crypto.randomUUID() : `k${Date.now().toString(36)}${Math.random().toString(36).slice(2, 12)}`);

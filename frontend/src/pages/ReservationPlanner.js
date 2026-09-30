@@ -75,7 +75,7 @@ export const ReservationPlanner = () => {
     }
   };
 
-  useAutoRefresh(fetchPlanner);
+  useAutoRefresh(fetchPlanner, { liveResources: ["tables", "reservations"], refreshOnFocus: true });
 
   const selectedReservations = useMemo(
     () => reservations.filter((reservation) => getReservationDateKey(reservation) === selectedDate),

@@ -46,8 +46,9 @@ class SyncController {
   async recordAdminCoreLog(req, res) {
     const data = await syncService.recordAdminCoreLog({
       ...req.body,
-      tenant_id: req.body?.tenant_id || req.context.tenantId,
-      business_id: req.body?.business_id || req.context.businessId,
+      // The log stream is the caller's own: a body must never redirect an entry into another tenant's log.
+      tenant_id: req.context.tenantId,
+      business_id: req.context.businessId,
     });
     res.status(202).json(apiResponse({ message: "AdminCore sync log recorded successfully", data }));
   }

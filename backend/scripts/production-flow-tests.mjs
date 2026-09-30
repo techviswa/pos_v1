@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { testInventoryAccounting } from "./inventory-accounting-tests.mjs";
 import { randomUUID } from "node:crypto";
 import http from "node:http";
 import app from "../src/app.js";
@@ -43,8 +44,11 @@ try {
   await authService.logout({ sessionId: login.sessionId });
   assert.equal(await authService.getCurrentUser({ sessionId: login.sessionId }), null);
 
-  const payload = { items: [{ name: "Test meal", quantity: 1, price: 100 }], gst_rate: 0, payment_type: "Due", invoice_number: "FORGED", invoice_sequence: 999 };
-  const pendingInvoice = await billingService.createInvoice({ tenantId, payload: { ...payload,
+  // Bills are priced from the catalogue, so the fixture needs a real product; GST overrides need a manager/owner actor.
+  const mealProduct = await prisma.product.create({ data: { businessId: id, name: "Test meal", category: "Test", price: 100, stock: 100000 } });
+  const ownerActor = { id: login.user.id, name: "Fixture owner", role: "Owner" };
+  const payload = { items: [{ productId: mealProduct.id, name: "Test meal", quantity: 1, price: 100 }], gst_rate: 0, payment_type: "Due", invoice_number: "FORGED", invoice_sequence: 999 };
+  const pendingInvoice = await billingService.createInvoice({ tenantId, user: ownerActor, payload: { ...payload,
     payments: [{ amount: 100, method: " upi ", status: "confirmed" }] } });
   assert.equal(pendingInvoice.paid_amount, 0);
   assert.equal(pendingInvoice.due_amount, 100);
@@ -64,17 +68,17 @@ try {
     } } });
     await assert.rejects(billingService.confirmPayment(confirmation), /cannot be confirmed/);
   }
-  await assert.rejects(billingService.createInvoice({ tenantId, payload: { ...payload,
+  await assert.rejects(billingService.createInvoice({ tenantId, user: ownerActor, payload: { ...payload,
     payments: [{ amount: 101, method: "Cash" }] } }), /cannot exceed/);
-  const bills = await Promise.all(Array.from({ length: 4 }, () => billingService.createInvoice({ tenantId, payload })));
+  const bills = await Promise.all(Array.from({ length: 4 }, () => billingService.createInvoice({ tenantId, user: ownerActor, payload })));
   assert.equal(new Set(bills.map((bill) => bill.invoice_number)).size, 4);
   assert.ok(bills.every((bill) => bill.invoice_number !== "FORGED" && bill.due_amount === 100));
   const bill = bills[0];
   const user = { id: login.user.id, role: "Owner" };
-  const costProduct = await prisma.product.create({ data: { businessId: id, name: "Cost snapshot fixture", category: "Test", price: 100, costPrice: 30 } });
-  await assert.rejects(billingService.createInvoice({ tenantId, payload: { ...payload, order_id: `${id}-missing-order` } }), /Order not found/);
-  await assert.rejects(billingService.createInvoice({ tenantId, payload: { ...payload, items: [{ productId: `${id}-missing-product`, name: "Forged item", price: 1, quantity: 1 }] } }), /Product not found/);
-  const costBill = await billingService.createInvoice({ tenantId, payload: { items: [{ productId: costProduct.id, name: costProduct.name, price: 100, quantity: 1 }], gst_rate: 18, discount_type: "percent", discount_value: 10, payment_type: "Cash" } });
+  const costProduct = await prisma.product.create({ data: { businessId: id, name: "Cost snapshot fixture", category: "Test", price: 100, costPrice: 30, stock: 100000 } });
+  await assert.rejects(billingService.createInvoice({ tenantId, user: ownerActor, payload: { ...payload, order_id: `${id}-missing-order` } }), /Order not found/);
+  await assert.rejects(billingService.createInvoice({ tenantId, user: ownerActor, payload: { ...payload, items: [{ productId: `${id}-missing-product`, name: "Forged item", price: 1, quantity: 1 }] } }), /not products of this business/);
+  const costBill = await billingService.createInvoice({ tenantId, user: ownerActor, payload: { items: [{ productId: costProduct.id, name: costProduct.name, price: 100, quantity: 1 }], gst_rate: 18, discount_type: "percent", discount_value: 10, payment_type: "Cash" } });
   await prisma.product.update({ where: { id: costProduct.id }, data: { costPrice: 90 } });
   assert.equal(Object.hasOwn(costBill, "item_costs"), false, "Cost snapshots must not leak through ordinary bill responses");
   const profitability = (await reportsService.productProfitability({ tenantId })).rows.find((row) => row.product_id === costProduct.id);
@@ -101,8 +105,8 @@ try {
   assert.equal(await billingService.getShift(settlementScope), null);
   await assert.rejects(billingService.openShift({ ...settlementScope, openingCash: -1 }), /non-negative/);
   const opening = await billingService.openShift({ ...settlementScope, openingCash: 50 });
-  const paidInvoice = await billingService.createInvoice({ tenantId, payload: { ...payload, outlet_id: settlementOutlet.id, payment_type: "Cash" } });
-  const dueInvoice = await billingService.createInvoice({ tenantId, payload: { ...payload, outlet_id: settlementOutlet.id } });
+  const paidInvoice = await billingService.createInvoice({ tenantId, user: ownerActor, payload: { ...payload, outlet_id: settlementOutlet.id, payment_type: "Cash" } });
+  const dueInvoice = await billingService.createInvoice({ tenantId, user: ownerActor, payload: { ...payload, outlet_id: settlementOutlet.id } });
   assert.equal((await billingService.getCashDrawerReport(settlementScope)).expected_cash, 150);
   const closing = await billingService.closeShift({ ...settlementScope, shiftId: opening.id, closingCash: 145 });
   assert.equal(closing.variance, -5);
@@ -176,7 +180,7 @@ try {
     assert.equal(response.status, 403, `${method} ${route}: ${await response.text()}`);
   }
   await assert.rejects(billingService.updateInvoice({ tenantId: `${tenantId}-other`, invoiceId: editCandidate.id, payload: { notes: "Wrong tenant" } }));
-  const voidCandidate = await billingService.createInvoice({ tenantId, payload });
+  const voidCandidate = await billingService.createInvoice({ tenantId, user: ownerActor, payload });
   const voidRequest = { tenantId, invoiceId: voidCandidate.id, user };
   await assert.rejects(billingService.approveVoid(voidRequest), /No pending/);
   await billingService.requestVoid({ ...voidRequest, reason: "Duplicate order" });
@@ -324,7 +328,7 @@ try {
   assert.equal(convertRecipeQuantity(250, "ml", "litres"), 0.25);
   assert.equal(convertRecipeQuantity(2, "pcs", "unit"), 2);
   assert.throws(() => convertRecipeQuantity(1, "kg", "l"), /Cannot convert/);
-  const recipeProduct = await prisma.product.create({ data: { businessId: id, name: "Recipe fixture", category: "Test", price: 100, recipeLines: [{ inventory_id: ingredient.id, quantity: 250, unit: "g" }, { inventory_id: ingredient.id, quantity: 0.25, unit: "kg" }] } });
+  const recipeProduct = await prisma.product.create({ data: { businessId: id, name: "Recipe fixture", category: "Test", price: 100, stock: 100000, recipeLines: [{ inventory_id: ingredient.id, quantity: 250, unit: "g" }, { inventory_id: ingredient.id, quantity: 0.25, unit: "kg" }] } });
   const recipePayload = { outlet_id: destination.id, items: [{ productId: recipeProduct.id, name: recipeProduct.name, price: 100, quantity: 1 }], gst_rate: 0, payment_type: "Cash" };
   const recipeBill = await billingService.createInvoice({ tenantId, user, payload: recipePayload });
   const recipeRecord = await prisma.bill.findUnique({ where: { id: recipeBill.id } });
@@ -358,6 +362,7 @@ try {
   assert.equal(await outletStock(destination.id), 1);
   assert.equal(await prisma.inventoryMovement.count({ where: { businessId: id, movementType: "bill_reversal" } }), 1);
 
+  await testInventoryAccounting({ tenantId, businessId: id, user, apiUrl, sessionId: apiLogin.sessionId, restrictedSessionId: restrictedLogin.sessionId });
   const print = await printerService.queuePrintJob({ businessId: id, payload: { test: true } });
   const claims = await Promise.all(["one", "two"].map((agentId) => printerService.claimNextPrintJob({ businessId: id, agentId })));
   assert.equal(claims.filter(Boolean).length, 1);

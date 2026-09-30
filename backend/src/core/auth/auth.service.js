@@ -194,13 +194,23 @@ class AuthService {
     return true;
   }
 
-  async findUserByEmail(email) {
+  /**
+   * An email is unique per business, not globally: AdminCore may give one person accounts in several businesses.
+   * Every lookup therefore returns all matching accounts and callers must resolve which one is meant.
+   */
+  async findUsersByEmail(email) {
     const normalizedEmail = String(email || "").trim().toLowerCase();
+    if (!normalizedEmail) return [];
     const matchingUsers = await prisma.user.findMany({
-      where: { email: normalizedEmail },
+      where: { email: { equals: normalizedEmail, mode: "insensitive" } },
       include: getUserInclude(),
+      orderBy: { createdAt: "asc" },
     });
-    return matchingUsers.find((entry) => entry.email.toLowerCase() === normalizedEmail) || null;
+    return matchingUsers.filter((entry) => entry.email.toLowerCase() === normalizedEmail);
+  }
+
+  async findUserByEmail(email) {
+    return (await this.findUsersByEmail(email))[0] || null;
   }
 
   async verifyAndUpgradePassword(user, password) {
@@ -218,7 +228,7 @@ class AuthService {
     return true;
   }
 
-  async login({ email, password }) {
+  async login({ email, password, businessId = null }) {
     if (!isDatabaseAvailable() && env.nodeEnv !== "production") {
       const normalizedEmail = String(email || "").trim().toLowerCase();
       const user = this.getFallbackUsers().find(
@@ -237,12 +247,24 @@ class AuthService {
 
     try {
       const normalizedEmail = String(email || "").trim().toLowerCase();
-      let user = await this.findUserByEmail(normalizedEmail);
-      const passwordValid = await this.verifyAndUpgradePassword(user, password);
-
-      if (!user || !passwordValid || user.email.toLowerCase() !== normalizedEmail || user.active === false) {
-        return null;
+      const candidates = (await this.findUsersByEmail(normalizedEmail))
+        .filter((entry) => !businessId || entry.businessId === String(businessId));
+      // Only accounts whose own password matches count; another business's account with the same email
+      // can never be reached with a different password.
+      const matches = [];
+      for (const candidate of candidates) {
+        if (candidate.active !== false && await this.verifyAndUpgradePassword(candidate, password)) matches.push(candidate);
       }
+      if (!matches.length) return null;
+      if (matches.length > 1) {
+        throw createHttpError({
+          statusCode: 409,
+          code: "LOGIN_BUSINESS_REQUIRED",
+          message: "This email has accounts in more than one business. Choose the business to sign in to.",
+          details: { businesses: matches.map((entry) => ({ id: entry.businessId, name: entry.business?.name || entry.businessId })) },
+        });
+      }
+      let [user] = matches;
 
       if (env.nodeEnv !== "production" && normalizedEmail === String(env.auth.adminEmail || "").trim().toLowerCase()) {
         const ownerRole = await ensureRole("Owner");
@@ -348,11 +370,23 @@ class AuthService {
       return { accepted: true };
     }
 
-    const user = await this.findUserByEmail(normalizedEmail);
-    if (!user) {
+    const users = (await this.findUsersByEmail(normalizedEmail)).filter((entry) => entry.active !== false);
+    if (!users.length) {
       return { accepted: true };
     }
 
+    // One reset link per account: with the same email in two businesses, each account is reset separately.
+    const response = {
+      accepted: true,
+      expires_in_minutes: PASSWORD_RESET_TTL_MS / 60000,
+    };
+    for (const user of users) {
+      await this.issuePasswordReset(user, response);
+    }
+    return env.nodeEnv === "production" ? { accepted: true } : response;
+  }
+
+  async issuePasswordReset(user, response) {
     const token = await createAuthToken({
       type: "password_reset",
       userId: user.id,
@@ -363,15 +397,30 @@ class AuthService {
       },
     });
 
-    const response = {
-      accepted: true,
-      expires_in_minutes: PASSWORD_RESET_TTL_MS / 60000,
-    };
     if (authMailer.configured()) await authMailer.send({ email: user.email, token, type: "password_reset" });
-    if (env.nodeEnv !== "production") {
+    if (env.nodeEnv !== "production" && !response.reset_token) {
       response.reset_token = token;
     }
-    return env.nodeEnv === "production" ? { accepted: true } : response;
+  }
+
+  /** A signed-in user changing their own password must prove they know the current one. */
+  async changePassword({ sessionId, currentPassword, newPassword }) {
+    const userId = await this.resolveSessionUserId(sessionId);
+    if (!userId) throw createHttpError({ statusCode: 401, message: "Authentication required" });
+    if (String(newPassword || "").length < 8) {
+      throw createHttpError({ statusCode: 400, code: "PASSWORD_TOO_SHORT", message: "New password must be at least 8 characters" });
+    }
+    const user = await prisma.user.findUnique({ where: { id: userId } });
+    if (!user || !verifyPassword(String(currentPassword || ""), user.passwordHash)) {
+      throw createHttpError({ statusCode: 400, code: "CURRENT_PASSWORD_INCORRECT", message: "Current password is incorrect" });
+    }
+    if (verifyPassword(String(newPassword), user.passwordHash)) {
+      throw createHttpError({ statusCode: 400, code: "PASSWORD_UNCHANGED", message: "Choose a password different from the current one" });
+    }
+    await prisma.user.update({ where: { id: userId }, data: { passwordHash: hashPassword(newPassword) } });
+    // Other devices signed in with the old password are signed out; this session stays.
+    await sessionRecords.deleteOthers(userId, String(sessionId));
+    return { changed: true };
   }
 
   async resetPassword({ token, password }) {
@@ -398,7 +447,9 @@ class AuthService {
   }
 
   async createInvite({ businessId, email, role = "Cashier", invitedBy, actorRole }) {
-    if (!Object.hasOwn(ROLE_DEFAULT_PERMISSIONS, role) || (role === "Owner" && actorRole !== "Owner")) {
+    // Staff admins who are not Owner/Manager may only bring in floor roles; nobody but an Owner invites an Owner.
+    const floorOnly = !["Owner", "Manager"].includes(actorRole);
+    if (!Object.hasOwn(ROLE_DEFAULT_PERMISSIONS, role) || (role === "Owner" && actorRole !== "Owner") || (floorOnly && ["Owner", "Manager"].includes(role))) {
       throw createHttpError({ statusCode: 403, message: "You cannot invite this role" });
     }
     const normalizedEmail = String(email || "").trim().toLowerCase();

@@ -6,6 +6,7 @@ import { toast } from "sonner";
 import { formatCurrency } from "../lib/pos";
 import { useUi } from "../contexts/UiContext";
 import { useAutoRefresh } from "../hooks/useAutoRefresh";
+import { QrInbox } from "../components/QrInbox";
 
 const API_URL = (() => {
   const configured = String(process.env.REACT_APP_BACKEND_URL || "").replace(/\/+$/, "");
@@ -56,7 +57,7 @@ export const Manager = () => {
     }
   };
 
-  useAutoRefresh(fetchData);
+  useAutoRefresh(fetchData, { liveResources: ["bills", "orders", "inventory", "products"], refreshOnFocus: true });
 
   if (loading) {
     return (
@@ -101,6 +102,8 @@ export const Manager = () => {
             </button>
           </div>
         </div>
+
+        <QrInbox currency={settings.currency} />
 
         <div className="cf-metrics">
           <button className="cf-metric cf-metric--button" onClick={() => navigate("/manager/sales")} type="button">

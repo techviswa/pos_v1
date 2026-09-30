@@ -1,6 +1,7 @@
 import { createHttpError } from "../../shared/utils/http-error.js";
 import { apiResponse } from "../../shared/utils/apiResponse.js";
 import { authService } from "./auth.service.js";
+import { saasService } from "../saas/saas.service.js";
 import {
   getSessionIdFromRequest,
   SESSION_COOKIE_NAME,
@@ -12,10 +13,18 @@ class AuthController {
     const data = await authService.login({
       email: req.body?.email,
       password: req.body?.password,
+      businessId: req.body?.business_id || req.body?.businessId || null,
     });
 
     if (!data) {
       throw createHttpError({ statusCode: 401, message: "Invalid email or password" });
+    }
+
+    // A suspended business cannot start a session; do not leave one behind.
+    const access = await saasService.getAccessMode(data.user?.business_id);
+    if (access.mode === "blocked") {
+      await authService.logout({ sessionId: data.sessionId });
+      throw createHttpError({ statusCode: 403, code: "TENANT_SUSPENDED", message: "This business account is suspended. Contact Taskoora support." });
     }
 
     res.cookie(SESSION_COOKIE_NAME, data.sessionId, getSessionCookieOptions());
@@ -68,6 +77,15 @@ class AuthController {
       maxAge: undefined,
     });
     res.status(200).json(apiResponse({ message: "Logout successful", data }));
+  }
+
+  async changePassword(req, res) {
+    const data = await authService.changePassword({
+      sessionId: getSessionIdFromRequest(req),
+      currentPassword: req.body?.current_password,
+      newPassword: req.body?.new_password,
+    });
+    res.status(200).json(apiResponse({ message: "Password changed", data }));
   }
 
   async forgotPassword(req, res) {

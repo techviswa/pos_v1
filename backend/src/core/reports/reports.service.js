@@ -3,6 +3,7 @@ import path from "path";
 import { fileURLToPath } from "url";
 
 import prisma from "../../database/prisma/client.js";
+import { createHttpError } from "../../shared/utils/http-error.js";
 import { ensureBusiness } from "../../database/prisma/helpers.js";
 import { normalizeBillingMetadata } from "../billing/billing-metadata.utils.js";
 import {
@@ -28,8 +29,8 @@ const toIso = (value) => (value ? new Date(value).toISOString() : null);
 const inRange = (date, { from, to } = {}) => {
   const time = new Date(date).getTime();
   if (Number.isNaN(time)) return false;
-  if (from && time < new Date(`${from}T00:00:00`).getTime()) return false;
-  if (to && time > new Date(`${to}T23:59:59.999`).getTime()) return false;
+  if (from && time < new Date(`${from}T00:00:00Z`).getTime()) return false;
+  if (to && time > new Date(`${to}T23:59:59.999Z`).getTime()) return false;
   return true;
 };
 
@@ -49,6 +50,7 @@ const toCsv = (rows = []) => {
 
 const normalizeBill = (bill) => ({
   ...normalizeBillingMetadata(bill.metadata || {}),
+  metadata: bill.metadata || {},
   id: bill.id,
   customer_name: bill.customerName,
   subtotal: bill.subtotal,
@@ -63,6 +65,10 @@ const normalizeBill = (bill) => ({
 
 class ReportsService {
   async getReportContext({ tenantId, from, to, outletId = null }) {
+    for (const date of [from, to]) {
+      if (date != null && (typeof date !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(date) || !Number.isFinite(Date.parse(date)) || new Date(date).toISOString().slice(0, 10) !== date)) throw createHttpError({ statusCode: 400, message: "Report dates must be valid YYYY-MM-DD dates" });
+    }
+    if (from && to && from > to) throw createHttpError({ statusCode: 400, message: "Report start date must not follow end date" });
     const business = await ensureBusiness({ tenantId });
     const [bills, products, outlets, users, feedback] = await Promise.all([
       prisma.bill.findMany({
@@ -134,7 +140,7 @@ class ReportsService {
     const productById = new Map(products.map((product) => [product.id, product]));
     const rowsByKey = new Map();
 
-    bills.filter(isRevenueBill).forEach((bill) => {
+    bills.forEach((bill) => {
       (bill.items || []).forEach((item) => {
         const product = productById.get(item.productId);
         const key = item.productId || item.name;
@@ -151,7 +157,7 @@ class ReportsService {
         };
         const quantity = toAnalyticsNumber(item.quantity, 0);
         row.quantity_sold += quantity;
-        row.revenue += getAllocatedLineRevenue(bill, item);
+        row.revenue += isRevenueBill(bill) ? getAllocatedLineRevenue(bill, item) : 0;
         const cost = getBillLineCost(bill, item, product);
         row.cogs += cost.amount;
         row.estimated_cost ||= cost.estimated;

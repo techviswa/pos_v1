@@ -1,4 +1,6 @@
 import prisma from "../../database/prisma/client.js";
+import { moveStock } from "./stock-ledger.service.js";
+import { createHttpError } from "../../shared/utils/http-error.js";
 import {
   ensureBusiness,
   serializeInventoryItem,
@@ -41,14 +43,24 @@ class InventoryService {
 
   async createItem({ tenantId, payload }) {
     const business = await ensureBusiness({ tenantId });
-    const item = await prisma.inventoryItem.create({
+    const data = toPrismaInventoryPayload({ ...payload, stock: payload.current_stock ?? payload.stock, reorderLevel: payload.reorder_level ?? payload.reorderLevel });
+    for (const value of [payload.current_stock ?? payload.stock ?? 0, payload.conversion_cost ?? payload.conversionCost ?? 0]) {
+      if (!Number.isFinite(Number(value)) || Number(value) < 0) throw createHttpError({ statusCode: 400, message: "Stock and cost must be non-negative numbers" });
+    }
+    return prisma.$transaction(async (tx) => {
+    const item = await tx.inventoryItem.create({
       data: {
         businessId: business.id,
-        ...toPrismaInventoryPayload(payload),
+        ...data, stock: 0,
       },
       include: getInventoryInclude(),
     });
 
+    if (data.stock > 0) {
+      await moveStock({ tx, businessId: business.id, itemId: item.id, quantity: data.stock, unitCost: data.conversionCost,
+        movementType: "opening_stock", reason: "Opening inventory balance" });
+      item.stock = data.stock;
+    }
     const serializedItem = serializeInventoryItem(item);
     await admincoreChangeSyncService.notifyChange({
       resource: "inventory",
@@ -61,14 +73,17 @@ class InventoryService {
         stock: serializedItem.stock,
         unit: serializedItem.unit,
       },
-    });
+    }, { tx });
 
     return serializedItem;
+    });
   }
 
   async updateItem({ tenantId, itemId, payload }) {
     const business = await ensureBusiness({ tenantId });
-    const currentItem = await prisma.inventoryItem.findFirstOrThrow({
+    return prisma.$transaction(async (tx) => {
+    await tx.$queryRaw`SELECT id FROM "InventoryItem" WHERE id = ${itemId} AND "businessId" = ${business.id} FOR UPDATE`;
+    const currentItem = await tx.inventoryItem.findFirstOrThrow({
       where: {
         id: itemId,
         businessId: business.id,
@@ -78,17 +93,26 @@ class InventoryService {
 
     const nextData = toPrismaInventoryPayload({
       name: payload.name ?? currentItem.name,
-      stock: payload.stock ?? currentItem.stock,
+      stock: payload.current_stock ?? payload.stock ?? currentItem.stock,
       unit: payload.unit ?? currentItem.unit,
-      reorderLevel: payload.reorderLevel ?? currentItem.reorderLevel,
+      reorderLevel: payload.reorder_level ?? payload.reorderLevel ?? currentItem.reorderLevel,
       vendor: payload.vendor ?? currentItem.vendor,
       storage_location: payload.storage_location ?? currentItem.storageLocation,
       notes: payload.notes ?? currentItem.notes,
       expiry_date: payload.expiry_date ?? currentItem.expiryDate,
-      conversion_cost: payload.conversion_cost ?? currentItem.conversionCost,
+      conversion_cost: payload.conversion_cost ?? payload.conversionCost ?? currentItem.conversionCost,
     });
-
-    const item = await prisma.inventoryItem.update({
+    for (const field of ["current_stock", "stock", "conversion_cost", "conversionCost"]) {
+      if (payload[field] != null && (String(payload[field]).trim() === "" || !Number.isFinite(Number(payload[field])) || Number(payload[field]) < 0)) throw createHttpError({ statusCode: 400, message: "Stock and cost must be non-negative numbers" });
+    }
+    if (nextData.unit !== currentItem.unit && (currentItem.stock !== 0 || await tx.inventoryMovement.count({ where: { inventoryItemId: itemId } }) || await tx.outletInventory.count({ where: { inventoryItemId: itemId, stock: { not: 0 } } }))) throw createHttpError({ statusCode: 409, message: "Cannot change the unit of an ingredient with stock or movement history" });
+    if (nextData.stock !== currentItem.stock) await moveStock({ tx, businessId: business.id, itemId,
+      quantity: nextData.stock - currentItem.stock, movementType: "stock_edit_adjustment", reason: "Recorded stock count from inventory edit" });
+    if (nextData.conversionCost !== currentItem.conversionCost) await moveStock({ tx, businessId: business.id, itemId,
+      quantity: 0, unitCost: nextData.conversionCost, movementType: "cost_revaluation", reason: "Recorded inventory cost revaluation" });
+    delete nextData.stock;
+    delete nextData.conversionCost;
+    const item = await tx.inventoryItem.update({
       where: { id: itemId },
       data: nextData,
       include: getInventoryInclude(),
@@ -97,14 +121,17 @@ class InventoryService {
     await admincoreChangeSyncService.notifyChange({
       resource: "inventory", action: "updated", recordId: itemId,
       tenantId, businessId: business.id,
-    });
+    }, { tx });
 
     return serializeInventoryItem(item);
+    });
   }
 
   async deleteItem({ tenantId, itemId }) {
     const business = await ensureBusiness({ tenantId });
-    const item = await prisma.inventoryItem.findFirstOrThrow({
+    return prisma.$transaction(async (tx) => {
+    await tx.$queryRaw`SELECT id FROM "InventoryItem" WHERE id = ${itemId} AND "businessId" = ${business.id} FOR UPDATE`;
+    const item = await tx.inventoryItem.findFirstOrThrow({
       where: {
         id: itemId,
         businessId: business.id,
@@ -112,7 +139,8 @@ class InventoryService {
       include: getInventoryInclude(),
     });
 
-    await prisma.inventoryItem.delete({
+    if (item.stock !== 0 || await tx.inventoryMovement.count({ where: { inventoryItemId: itemId } }) || await tx.outletInventory.count({ where: { inventoryItemId: itemId, stock: { not: 0 } } })) throw createHttpError({ statusCode: 409, message: "Inventory with stock or accounting history cannot be deleted" });
+    await tx.inventoryItem.delete({
       where: { id: itemId },
     });
 
@@ -128,9 +156,10 @@ class InventoryService {
         stock: serializedItem.stock,
         unit: serializedItem.unit,
       },
-    });
+    }, { tx });
 
     return serializedItem;
+    });
   }
 }
 

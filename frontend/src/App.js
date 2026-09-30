@@ -36,6 +36,16 @@ const CentralKitchen = lazyPage(() => import('./pages/CentralKitchen'), 'Central
 const CentralKitchenMetricDetail = lazyPage(() => import('./pages/CentralKitchenMetricDetail'), 'CentralKitchenMetricDetail');
 const Reports = lazyPage(() => import('./pages/Reports'), 'Reports');
 const Products = lazyPage(() => import('./pages/Products'), 'Products');
+const PriceRules = lazyPage(() => import('./pages/PriceRules'), 'PriceRules');
+const TimeClock = lazyPage(() => import('./pages/TimeClock'), 'TimeClock');
+const Attendance = lazyPage(() => import('./pages/Attendance'), 'Attendance');
+const Tips = lazyPage(() => import('./pages/Tips'), 'Tips');
+const Customers = lazyPage(() => import('./pages/Customers'), 'Customers');
+const GiftCards = lazyPage(() => import('./pages/GiftCards'), 'GiftCards');
+const Payroll = lazyPage(() => import('./pages/Payroll'), 'Payroll');
+const PayslipView = lazyPage(() => import('./pages/PayslipView'), 'PayslipView');
+const Marketing = lazyPage(() => import('./pages/Marketing'), 'Marketing');
+const PlanBilling = lazyPage(() => import('./pages/PlanBilling'), 'PlanBilling');
 const QrManagement = lazyPage(() => import('./pages/QrManagement'), 'QrManagement');
 const ReservationPlanner = lazyPage(() => import('./pages/ReservationPlanner'), 'ReservationPlanner');
 const RestaurantBillsPage = lazyPage(() => import('./modules/restaurant/pages/RestaurantBillsPage'), 'RestaurantBillsPage');
@@ -160,7 +170,7 @@ const AppRoutes = () => {
         <Route
           path="/manager"
           element={
-            <ProtectedRoute requireRoles={["Owner", "Manager"]}>
+            <ProtectedRoute requirePermission="manager_view">
               <RestaurantFeatureRoute featureKey="reports">
                 <Manager />
               </RestaurantFeatureRoute>
@@ -170,7 +180,7 @@ const AppRoutes = () => {
         <Route
           path="/manager/:metric"
           element={
-            <ProtectedRoute requireRoles={["Owner", "Manager"]}>
+            <ProtectedRoute requirePermission="manager_view">
               <RestaurantFeatureRoute featureKey="reports">
                 <RoleMetricDetail />
               </RestaurantFeatureRoute>
@@ -180,7 +190,7 @@ const AppRoutes = () => {
         <Route
           path="/waiter"
           element={
-            <ProtectedRoute requireRoles={["Owner", "Waiter"]}>
+            <ProtectedRoute requirePermission="waiter_view">
               <RestaurantFeatureRoute featureKey="tables">
                 <Waiter />
               </RestaurantFeatureRoute>
@@ -190,7 +200,7 @@ const AppRoutes = () => {
         <Route
           path="/waiter/:metric"
           element={
-            <ProtectedRoute requireRoles={["Owner", "Waiter"]}>
+            <ProtectedRoute requirePermission="waiter_view">
               <RestaurantFeatureRoute featureKey="tables">
                 <RoleMetricDetail />
               </RestaurantFeatureRoute>
@@ -200,7 +210,7 @@ const AppRoutes = () => {
         <Route
           path="/chef"
           element={
-            <ProtectedRoute requireRoles={["Owner", "Chef"]}>
+            <ProtectedRoute requirePermission="kitchen_view">
               <RestaurantFeatureRoute featureKey="kot">
                 <Chef />
               </RestaurantFeatureRoute>
@@ -210,7 +220,7 @@ const AppRoutes = () => {
         <Route
           path="/chef/:metric"
           element={
-            <ProtectedRoute requireRoles={["Owner", "Chef"]}>
+            <ProtectedRoute requirePermission="kitchen_view">
               <RestaurantFeatureRoute featureKey="kot">
                 <RoleMetricDetail />
               </RestaurantFeatureRoute>
@@ -228,7 +238,7 @@ const AppRoutes = () => {
         <Route
           path="/qr-management"
           element={
-            <ProtectedRoute requireRoles={["Owner", "Manager"]}>
+            <ProtectedRoute requirePermission="qr_management">
               <RestaurantFeatureRoute featureKey="tables">
                 <QrManagement />
               </RestaurantFeatureRoute>
@@ -238,7 +248,7 @@ const AppRoutes = () => {
         <Route
           path="/reservations"
           element={
-            <ProtectedRoute requireRoles={["Owner", "Manager"]}>
+            <ProtectedRoute requirePermission="reservations">
               <RestaurantFeatureRoute featureKey="tables">
                 <ReservationPlanner />
               </RestaurantFeatureRoute>
@@ -306,6 +316,16 @@ const AppRoutes = () => {
           }
         />
         <Route
+          path="/price-rules"
+          element={
+            <ProtectedRoute requirePermission="price_rules">
+              <RestaurantFeatureRoute featureKey="products">
+                <PriceRules />
+              </RestaurantFeatureRoute>
+            </ProtectedRoute>
+          }
+        />
+        <Route
           path="/bills"
           element={
             <ProtectedRoute requirePermission="bills">
@@ -348,6 +368,78 @@ const AppRoutes = () => {
               <RestaurantFeatureRoute featureKey="staff">
                 <StaffDetailPage />
               </RestaurantFeatureRoute>
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/time-clock"
+          element={
+            <ProtectedRoute>
+              <TimeClock />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/attendance"
+          element={
+            <ProtectedRoute requirePermission="attendance">
+              <Attendance />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/tips"
+          element={
+            <ProtectedRoute requirePermission="tips">
+              <Tips />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/customers"
+          element={
+            <ProtectedRoute requirePermission="customers">
+              <Customers />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/gift-cards"
+          element={
+            <ProtectedRoute requirePermission="gift_cards">
+              <GiftCards />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/payroll"
+          element={
+            <ProtectedRoute requirePermission="payroll">
+              <Payroll />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/plan"
+          element={
+            <ProtectedRoute requireOwner>
+              <PlanBilling />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/marketing"
+          element={
+            <ProtectedRoute requirePermission="marketing">
+              <Marketing />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/payslips/:payslipId"
+          element={
+            <ProtectedRoute>
+              <PayslipView />
             </ProtectedRoute>
           }
         />

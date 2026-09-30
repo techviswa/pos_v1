@@ -2,8 +2,8 @@ import { apiResponse } from "../../shared/utils/apiResponse.js";
 import { feedbackService } from "./feedback.service.js";
 
 class FeedbackController {
-  async list(_req, res) {
-    const data = await feedbackService.listFeedback();
+  async list(req, res) {
+    const data = await feedbackService.listFeedback({ businessId: req.context.businessId });
     res.status(200).json(apiResponse({ message: "Feedback fetched successfully", data }));
   }
 

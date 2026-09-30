@@ -1,6 +1,9 @@
 import React, { useEffect, useMemo, useState } from "react";
+import axios from "axios";
 import { Layout } from "../components/Layout";
 import { useUi } from "../contexts/UiContext";
+import { API_URL, useAuth } from "../contexts/AuthContext";
+import { PaymentGatewaySettings } from "../core/payments/PaymentGatewaySettings";
 import { toast } from "sonner";
 import { DEFAULT_UI_SETTINGS } from "../lib/pos";
 import { getPaymentMethodFlags, setPaymentMethodEnabled } from "../core/payments/utils/paymentMethods";
@@ -45,7 +48,35 @@ const DEFAULT_TABLE_SETTINGS = {
 
 export const Settings = () => {
   const { settings, updateSettings, resetSettings } = useUi();
+  const { user } = useAuth();
   const [form, setForm] = useState(settings);
+  const [passwordForm, setPasswordForm] = useState({ current: "", next: "", confirm: "" });
+  const [changingPassword, setChangingPassword] = useState(false);
+
+  const changePassword = async () => {
+    if (passwordForm.next.length < 8) {
+      toast.error("New password must be at least 8 characters");
+      return;
+    }
+    if (passwordForm.next !== passwordForm.confirm) {
+      toast.error("The new passwords do not match");
+      return;
+    }
+    setChangingPassword(true);
+    try {
+      await axios.post(
+        `${API_URL}/api/auth/change-password`,
+        { current_password: passwordForm.current, new_password: passwordForm.next },
+        { withCredentials: true },
+      );
+      setPasswordForm({ current: "", next: "", confirm: "" });
+      toast.success("Password changed. Other devices have been signed out.");
+    } catch (error) {
+      toast.error(error?.response?.data?.error?.message || "Could not change the password");
+    } finally {
+      setChangingPassword(false);
+    }
+  };
   const [tableSettings, setTableSettings] = useState(DEFAULT_TABLE_SETTINGS);
   const [tableSettingsLoaded, setTableSettingsLoaded] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -193,6 +224,7 @@ export const Settings = () => {
         </div>
 
         <div className="cf-settings-grid">
+          {["Owner", "Manager"].includes(user?.role) ? <PaymentGatewaySettings apiUrl={API_URL} isOwner={user?.role === "Owner"} /> : null}
           <div className="cf-settings-card">
             <div className="cf-settings-card__title">Shop Information</div>
             <div className="cf-field">
@@ -275,9 +307,20 @@ export const Settings = () => {
               <input className="cf-input" type="email" value={form.ownerEmail} onChange={(event) => setForm({ ...form, ownerEmail: event.target.value })} />
             </div>
             <div className="cf-field">
-              <label>New Password</label>
-              <input className="cf-input" placeholder="Leave blank to keep current" type="password" />
+              <label htmlFor="pw-current">Current Password</label>
+              <input id="pw-current" className="cf-input" type="password" autoComplete="current-password" value={passwordForm.current} onChange={(event) => setPasswordForm({ ...passwordForm, current: event.target.value })} />
             </div>
+            <div className="cf-field">
+              <label htmlFor="pw-next">New Password</label>
+              <input id="pw-next" className="cf-input" type="password" autoComplete="new-password" value={passwordForm.next} onChange={(event) => setPasswordForm({ ...passwordForm, next: event.target.value })} />
+            </div>
+            <div className="cf-field">
+              <label htmlFor="pw-confirm">Confirm New Password</label>
+              <input id="pw-confirm" className="cf-input" type="password" autoComplete="new-password" value={passwordForm.confirm} onChange={(event) => setPasswordForm({ ...passwordForm, confirm: event.target.value })} />
+            </div>
+            <button className="cf-btn cf-btn--primary" type="button" disabled={changingPassword || !passwordForm.current || !passwordForm.next} onClick={changePassword}>
+              {changingPassword ? "Changing..." : "Change Password"}
+            </button>
           </div>
 
           <div className="cf-settings-card">

@@ -29,15 +29,33 @@ export const ensureOpenShift = async (tx, businessId, outletId = null, user = nu
 };
 
 const summarize = async (tx, businessId, shift) => {
-  const bills = await tx.bill.findMany({ where: { businessId }, select: { id: true, metadata: true } });
-  let cash = 0, nonCash = 0, refunds = 0, cashRefunds = 0, pending = 0;
+  const bills = await tx.bill.findMany({ where: { businessId }, select: { id: true, status: true, metadata: true } });
+  let cash = 0, nonCash = 0, refunds = 0, cashRefunds = 0, pending = 0, tips = 0, giftRedeemed = 0;
+  // Gift cards sold (money in) and voided with a payout (money out) during this shift.
+  let giftSoldCash = 0, giftSoldOther = 0, giftPendingSales = 0, giftRefundCash = 0;
+  const giftRows = await tx.giftCardTransaction.findMany({
+    where: { businessId, settlementShiftId: shift.id, type: { in: ["issue", "void"] } },
+    select: { type: true, amount: true, paymentMethod: true, giftCard: { select: { status: true } } },
+  });
+  for (const row of giftRows) {
+    const isCash = String(row.paymentMethod || "").trim().toLowerCase() === "cash";
+    const amount = Number(row.amount || 0);
+    if (row.type === "issue") {
+      if (isCash) giftSoldCash += amount;
+      else if (row.giftCard?.status === "pending_payment") giftPendingSales += amount;
+      else giftSoldOther += amount;
+    } else if (isCash) giftRefundCash += -amount;
+  }
   const included = new Set();
   for (const bill of bills) {
     const metadata = bill.metadata || {};
+    // Tips are collected with the bill (so they are inside the sales figures) but belong to staff.
+    if (metadata.shift_id === shift.id && bill.status !== "void") tips += Number(metadata.tip_amount || 0);
     for (const payment of metadata.payments || []) {
       if ((payment.settlement_shift_id || metadata.shift_id) !== shift.id) continue;
       included.add(bill.id);
-      if (payment.status === "confirmed") {
+      if (payment.status === "confirmed" && payment.gift_card_id) giftRedeemed += Number(payment.amount || 0);
+      else if (payment.status === "confirmed") {
         if (String(payment.method).trim().toLowerCase() === "cash") cash += Number(payment.amount || 0);
         else nonCash += Number(payment.amount || 0);
       } else if (!["failed", "cancelled"].includes(payment.status)) pending += Number(payment.amount || 0);
@@ -52,7 +70,13 @@ const summarize = async (tx, businessId, shift) => {
   return { business_id: businessId, outlet_id: shift.outlet_id, shift_id: shift.id,
     opening_cash: shift.opening_cash || 0, cash_sales: roundMoney(cash), non_cash_sales: roundMoney(nonCash),
     refunds: roundMoney(refunds), cash_refunds: roundMoney(cashRefunds), pending_payment_amount: roundMoney(pending),
-    expected_cash: roundMoney(Number(shift.opening_cash || 0) + cash - cashRefunds), bill_count: included.size,
+    tips_collected: roundMoney(tips),
+    gift_card_redeemed: roundMoney(giftRedeemed),
+    gift_card_sales_cash: roundMoney(giftSoldCash),
+    gift_card_sales_other: roundMoney(giftSoldOther),
+    gift_card_sales_pending: roundMoney(giftPendingSales),
+    gift_card_refunds_cash: roundMoney(giftRefundCash),
+    expected_cash: roundMoney(Number(shift.opening_cash || 0) + cash - cashRefunds + giftSoldCash - giftRefundCash), bill_count: included.size,
     generated_at: new Date().toISOString() };
 };
 

@@ -68,6 +68,9 @@ export const env = {
     posBaseUrl: process.env.POS_BASE_URL || `http://localhost:${backendPort}`,
     syncWebhookUrl: process.env.ADMINCORE_SYNC_WEBHOOK_URL || "",
   },
+  marketing: {
+    encryptionKey: process.env.SECRETS_ENCRYPTION_KEY || process.env.MARKETING_ENCRYPTION_KEY || "",
+  },
   qrOrdering: {
     publicBaseUrl:
       process.env.QR_PUBLIC_BASE_URL ||
@@ -76,6 +79,19 @@ export const env = {
       process.env.POS_BASE_URL ||
       `http://localhost:${backendPort}`,
   },
+};
+
+export const getProductionConfigIssues = (config = env) => {
+  if (config.nodeEnv !== "production") return [];
+  const issues = [];
+  if (config.auth.adminPassword === "admin123") issues.push("ADMIN_PASSWORD is the public default; the bootstrap owner would have a known password");
+  if (config.auth.adminEmail === "owner@pos.com") issues.push("ADMIN_EMAIL is the public default owner address");
+  if (config.corsOrigins === "*") issues.push("CORS_ORIGINS is unset or '*'; restrict it to the real frontend origin(s)");
+  if (config.admincore.enabled && config.admincore.apiKey.length < 32) issues.push("ADMINCORE_API_KEY must be at least 32 characters when AdminCore is enabled");
+  if (config.admincore.enabled && /localhost|127\.0\.0\.1/.test(config.admincore.posBaseUrl)) issues.push("POS_BASE_URL points at localhost in production");
+  if (/postgres:postgres@/.test(config.database.url)) issues.push("DATABASE_URL uses the default postgres credentials");
+  if (config.marketing && String(config.marketing.encryptionKey || "").length < 32) issues.push("SECRETS_ENCRYPTION_KEY is missing or shorter than 32 characters; payment gateway and WhatsApp/SMS accounts cannot be connected");
+  return issues;
 };
 
 export default env;

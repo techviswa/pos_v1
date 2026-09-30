@@ -49,18 +49,36 @@ const BILL_METADATA_DEFAULTS = {
   updated_at: null,
   feedback_token: null,
   feedback_link: null,
+  service_charge: 0,
+  tip_amount: 0,
+  tip_staff_id: null,
+  tip_staff_name: null,
+  customer_id: null,
+  loyalty_redeem_points: 0,
+  loyalty_discount: 0,
+  loyalty_points_earned: 0,
+  loyalty_balance_after: null,
+  customer_stats: null,
+  gateway_refund_failed: null,
+  client_request_id: null,
+  offline_created_at: null,
 };
 
 const NUMBER_KEYS = new Set([
   "discount_value",
   "discount_amount",
+  "service_charge",
+  "tip_amount",
+  "loyalty_redeem_points",
+  "loyalty_discount",
+  "loyalty_points_earned",
   "invoice_sequence",
   "paid_amount",
   "pending_payment_amount",
   "due_amount",
   "refunded_amount",
 ]);
-const JSON_KEYS = new Set(["gst_breakup", "item_costs", "payments", "refunds", "receipt_printer"]);
+const JSON_KEYS = new Set(["gst_breakup", "item_costs", "payments", "refunds", "receipt_printer", "customer_stats", "loyalty_balance_after", "gateway_refund_failed"]);
 const TEXT_KEYS = new Set(["notes"]);
 
 const hasOwn = (payload, key) => Object.prototype.hasOwnProperty.call(payload || {}, key);
@@ -175,6 +193,15 @@ export const extractBillingMetadataFromRequest = (payload = {}, { base = {} } = 
       ...(hasOwn(payload, "updated_at") ? { updated_at: payload.updated_at } : {}),
       ...(hasOwn(payload, "feedback_token") ? { feedback_token: payload.feedback_token } : {}),
       ...(hasOwn(payload, "feedback_link") ? { feedback_link: payload.feedback_link } : {}),
+      ...(hasOwn(payload, "service_charge") ? { service_charge: payload.service_charge } : {}),
+      ...(hasOwn(payload, "tip_amount") ? { tip_amount: payload.tip_amount } : {}),
+      ...(hasOwn(payload, "tip_staff_id") ? { tip_staff_id: payload.tip_staff_id } : {}),
+      ...(hasOwn(payload, "customer_id") ? { customer_id: payload.customer_id } : {}),
+      ...(hasOwn(payload, "loyalty_redeem_points") ? { loyalty_redeem_points: payload.loyalty_redeem_points } : {}),
+      ...(hasOwn(payload, "loyalty_discount") ? { loyalty_discount: payload.loyalty_discount } : {}),
+      ...(hasOwn(payload, "tip_staff_name") ? { tip_staff_name: payload.tip_staff_name } : {}),
+      ...(hasOwn(payload, "client_request_id") ? { client_request_id: payload.client_request_id } : {}),
+      ...(hasOwn(payload, "offline_created_at") ? { offline_created_at: payload.offline_created_at } : {}),
     },
     { base },
   );

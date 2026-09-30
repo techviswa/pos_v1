@@ -6,6 +6,7 @@ import { formatCurrency } from "../lib/pos";
 import { useUi } from "../contexts/UiContext";
 import { useActiveOutlet } from "../core/outlets/store/ActiveOutletContext";
 import { toast } from "sonner";
+import { QrInbox } from "../components/QrInbox";
 
 const API_URL = (() => {
   const configured = String(process.env.REACT_APP_BACKEND_URL || "").replace(/\/+$/, "");
@@ -175,6 +176,8 @@ export const Dashboard = () => {
             <span className="cf-badge cf-badge--amber">{inventorySummary.expiry_alert_count || 0} expiry alerts</span>
           </div>
         </div>
+
+        <QrInbox currency={settings.currency} />
 
         <div className="cf-metrics">
           {metrics.map((metric) => (

@@ -4,8 +4,10 @@ import { asyncHandler } from "../../shared/utils/asyncHandler.js";
 import { requireAnyPermission, requireAuth, requireRole } from "../../shared/middleware/authGuard.middleware.js";
 import { requireSaasLimit } from "../../shared/middleware/saasLimit.middleware.js";
 import { outletsController } from "./outlets.controller.js";
+import { outletParamGuard } from "../../shared/middleware/outletScope.js";
 
 const router = Router();
+router.param("outletId", outletParamGuard);
 
 router.get("/", requireAuth, asyncHandler(outletsController.list));
 router.get("/:outletId", requireAuth, asyncHandler(outletsController.getById));

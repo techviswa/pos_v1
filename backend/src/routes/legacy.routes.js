@@ -2,8 +2,12 @@ import { randomUUID } from "crypto";
 import { Router } from "express";
 
 import prisma from "../database/prisma/client.js";
+import { readState, writeState } from "../database/prisma/state-store.js";
 import { billingService } from "../core/billing/billing.service.js";
 import { inventoryOperationsService } from "../core/inventory/inventory-operations.service.js";
+import { inventoryService } from "../core/inventory/inventory.service.js";
+import { moveStock } from "../core/inventory/stock-ledger.service.js";
+import { admincoreChangeSyncService } from "../core/admincore/admincore-change-sync.service.js";
 import { normalizeLegacyBillRecord, toLegacyBillRecord } from "../core/billing/billing-legacy.serializer.js";
 import {
   getBillChannel,
@@ -12,6 +16,10 @@ import {
   isRevenueBill,
 } from "../core/billing/bill-analytics.utils.js";
 import { authService } from "../core/auth/auth.service.js";
+import { signFeedbackToken } from "../core/feedback/feedback-token.js";
+import { assertOwnedIds } from "../database/prisma/scope.js";
+import { filterByOutletScope } from "../shared/middleware/outletScope.js";
+import { applyDefaultOutlet, invoiceOutletGuard, scopeOutletQuery } from "../shared/middleware/recordOutletGuards.js";
 import { getSessionIdFromRequest } from "../core/auth/auth-session.js";
 import { outletsService } from "../core/outlets/outlets.service.js";
 import { tableManagementService } from "../features/sales-extensions/table-management/table-management.service.js";
@@ -27,10 +35,13 @@ import {
   outletPurchaseOrderItems,
 } from "../shared/data/feature-mock-data.js";
 import { createHttpError } from "../shared/utils/http-error.js";
-import { requireAuth, requirePermission, requireRole } from "../shared/middleware/authGuard.middleware.js";
+import { requireAuth, requireAnyPermission, requirePermission, requireRole } from "../shared/middleware/authGuard.middleware.js";
 import { createSyncEnvelope, isAdminCoreSyncRequest } from "../core/sync/sync-contract.js";
 
 const router = Router();
+router.param("invoiceId", invoiceOutletGuard);
+router.use("/inventory", (req, res, next) => req.method === "GET"
+  ? requireAnyPermission("inventory", "reports")(req, res, next) : requirePermission("inventory")(req, res, next));
 
 const nowIso = () => new Date().toISOString();
 const todayDate = () => new Date().toISOString().slice(0, 10);
@@ -247,7 +258,18 @@ let legacyPurchaseOrders = [...seedPurchaseOrders];
 let legacyRoutePlans = [...seedRoutePlans];
 let legacyOutletInventory = [];
 let legacyRestockLogs = [];
-let legacyShiftSwaps = [];
+// Shift swaps are per business. (This used to be one process-wide array shared by every tenant.)
+// Shift swap requests are kept in the database (they used to live in server memory and vanished on restart).
+const shiftSwapKey = (businessId) => `shift-swaps:${businessId}`;
+const shiftSwapsFor = async (businessId, client = prisma) => (await readState(shiftSwapKey(businessId), [], client)) || [];
+const saveShiftSwaps = async (businessId, change) => prisma.$transaction(async (tx) => {
+  await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${shiftSwapKey(businessId)}))`;
+  const next = await change(await shiftSwapsFor(businessId, tx));
+  await writeState(shiftSwapKey(businessId), next.slice(0, 500), tx);
+  return next;
+});
+const isManagerRole = (user) => ["owner", "manager"].includes(String(user?.role || "").trim().toLowerCase());
+const SHIFT_SWAP_STATUSES = new Set(["pending", "approved", "rejected", "cancelled"]);
 
 const getInventoryItems = async (tenantId) => {
   try {
@@ -317,11 +339,13 @@ const getOutlets = async (tenantId) => {
   }
 };
 
-const tenantScopedLegacyRows = (rows, outletIds) =>
-  rows.filter((row) => !row.outlet_id || outletIds.has(row.outlet_id));
+// Rows are visible only to the business that created them; untagged demo seed rows are never shown to a tenant.
+const tenantScopedLegacyRows = (rows, outletIds, businessId) =>
+  rows.filter((row) => row.business_id === businessId && (!row.outlet_id || outletIds.has(row.outlet_id)));
 
-const tenantScopedRoutePlans = (rows, outletIds) =>
+const tenantScopedRoutePlans = (rows, outletIds, businessId) =>
   rows
+    .filter((row) => row.business_id === businessId)
     .map((row) => ({
       ...row,
       stops: (row.stops || []).filter((stop) => !stop.outlet_id || outletIds.has(stop.outlet_id)),
@@ -460,10 +484,11 @@ const getCentralKitchenSnapshot = async (tenantId) => {
   const inventorySummary = await getInventorySummary(tenantId);
   const outlets = await getOutlets(tenantId);
   const outletIds = new Set(outlets.map((outlet) => outlet.id));
-  const purchaseOrders = tenantScopedLegacyRows(legacyPurchaseOrders, outletIds);
-  const routePlans = tenantScopedRoutePlans(legacyRoutePlans, outletIds);
-  const outletInventory = tenantScopedLegacyRows(legacyOutletInventory, outletIds);
-  const restockLogs = tenantScopedLegacyRows(legacyRestockLogs, outletIds);
+  const { id: businessId } = await ensureBusiness({ tenantId });
+  const purchaseOrders = tenantScopedLegacyRows(legacyPurchaseOrders, outletIds, businessId);
+  const routePlans = tenantScopedRoutePlans(legacyRoutePlans, outletIds, businessId);
+  const outletInventory = tenantScopedLegacyRows(legacyOutletInventory, outletIds, businessId);
+  const restockLogs = tenantScopedLegacyRows(legacyRestockLogs, outletIds, businessId);
 
   return {
     overview: {
@@ -486,7 +511,7 @@ const getCentralKitchenSnapshot = async (tenantId) => {
   };
 };
 
-router.get("/dashboard/stats", requirePermission("dashboard"), async (req, res, next) => {
+router.get("/dashboard/stats", requirePermission("dashboard"), scopeOutletQuery, async (req, res, next) => {
   try {
     res
       .status(200)
@@ -496,17 +521,17 @@ router.get("/dashboard/stats", requirePermission("dashboard"), async (req, res, 
   }
 });
 
-router.get("/bills", async (req, res, next) => {
+router.get("/bills", requireAnyPermission("billing", "bills", "reports"), async (req, res, next) => {
   try {
     res
       .status(200)
-      .json(await getBills(req.context.tenantId, req.query?.limit, req.query?.outlet_id || null));
+      .json(filterByOutletScope(req, await getBills(req.context.tenantId, req.query?.limit, req.query?.outlet_id || null), (bill) => getBillOutletId(bill)));
   } catch (error) {
     next(error);
   }
 });
 
-router.get("/table-reservations", async (req, res, next) => {
+router.get("/table-reservations", requireAnyPermission("billing", "bills"), async (req, res, next) => {
   try {
     res.status(200).json(
       await tableManagementService.listLegacyReservations({
@@ -520,7 +545,7 @@ router.get("/table-reservations", async (req, res, next) => {
   }
 });
 
-router.post("/table-reservations", async (req, res, next) => {
+router.post("/table-reservations", requireAnyPermission("billing", "bills"), async (req, res, next) => {
   try {
     const reservation = await tableManagementService.createReservation({
       tenantId: req.context.tenantId,
@@ -533,7 +558,7 @@ router.post("/table-reservations", async (req, res, next) => {
   }
 });
 
-router.post("/table-reservations/:reservationId/confirm", async (req, res, next) => {
+router.post("/table-reservations/:reservationId/confirm", requireAnyPermission("billing", "bills"), async (req, res, next) => {
   try {
     const reservation = await tableManagementService.confirmReservation({
       tenantId: req.context.tenantId,
@@ -546,7 +571,7 @@ router.post("/table-reservations/:reservationId/confirm", async (req, res, next)
   }
 });
 
-router.post("/table-reservations/:reservationId/undo", async (req, res, next) => {
+router.post("/table-reservations/:reservationId/undo", requireAnyPermission("billing", "bills"), async (req, res, next) => {
   try {
     const reservation = await tableManagementService.undoReservation({
       tenantId: req.context.tenantId,
@@ -559,7 +584,7 @@ router.post("/table-reservations/:reservationId/undo", async (req, res, next) =>
   }
 });
 
-router.delete("/table-reservations/:reservationId", async (req, res, next) => {
+router.delete("/table-reservations/:reservationId", requireAnyPermission("reservations", "manager_view"), async (req, res, next) => {
   try {
     const reservation = await tableManagementService.deleteReservation({
       tenantId: req.context.tenantId,
@@ -572,7 +597,7 @@ router.delete("/table-reservations/:reservationId", async (req, res, next) => {
   }
 });
 
-router.post("/bills", requirePermission("billing"), async (req, res, next) => {
+router.post("/bills", requirePermission("billing"), applyDefaultOutlet, async (req, res, next) => {
   try {
     const currentUser = await authService.getCurrentUser({
       sessionId: getSessionIdFromRequest(req),
@@ -599,8 +624,8 @@ router.post("/bills", requirePermission("billing"), async (req, res, next) => {
       invoiceId: created.id,
       initializeFeedback: true,
       payload: {
-        feedback_token: `feedback-${created.id}`,
-        feedback_link: `${req.protocol}://${req.get("host")}/feedback/feedback-${created.id}`,
+        feedback_token: signFeedbackToken(created.id),
+        feedback_link: `${req.protocol}://${req.get("host")}/feedback/${signFeedbackToken(created.id)}`,
         updated_at: timestamp,
       },
     });
@@ -610,7 +635,7 @@ router.post("/bills", requirePermission("billing"), async (req, res, next) => {
   }
 });
 
-router.get("/bills/:invoiceId", async (req, res, next) => {
+router.get("/bills/:invoiceId", requireAnyPermission("billing", "bills", "reports"), async (req, res, next) => {
   try {
     const data = await billingService.getInvoiceById({
       tenantId: req.context.tenantId,
@@ -638,13 +663,24 @@ router.put("/bills/:invoiceId", requirePermission("billing"), async (req, res, n
   }
 });
 
-router.put("/bills/:invoiceId/kitchen-status", requireRole("Owner", "Manager", "Chef", "Waiter"), async (req, res, next) => {
+router.put("/bills/:invoiceId/kitchen-status", requireAnyPermission("kitchen_view", "waiter_view", "manager_view"), async (req, res, next) => {
   try {
+    // Kitchen and floor staff may only move the kitchen status; customer and billing details are not theirs to edit.
+    const kitchenStatus = req.body?.kitchen_status ?? req.body?.kitchenStatus;
+    const otherFields = Object.keys(req.body || {}).filter((key) => !["kitchen_status", "kitchenStatus"].includes(key));
+    if (otherFields.length) {
+      res.status(409).json({ detail: `Only the kitchen status can be changed here (not: ${otherFields.join(", ")})` });
+      return;
+    }
+    if (kitchenStatus === undefined) {
+      res.status(400).json({ detail: "kitchen_status is required" });
+      return;
+    }
     const data = await billingService.updateInvoice({
       tenantId: req.context.tenantId,
       invoiceId: req.params.invoiceId,
       payload: {
-        ...req.body,
+        kitchen_status: kitchenStatus,
         updated_at: nowIso(),
       },
     });
@@ -709,6 +745,7 @@ router.get("/inventory/reports/cogs", async (req, res, next) => {
     res.status(200).json(
       await inventoryOperationsService.getCogsReport({
         tenantId: req.context.tenantId,
+        from: req.query.from, to: req.query.to, outletId: req.query.outlet_id || req.query.outletId,
       }),
     );
   } catch (error) {
@@ -827,97 +864,23 @@ router.get("/inventory/:itemId", async (req, res, next) => {
 
 router.post("/inventory", async (req, res, next) => {
   try {
-    const business = await ensureBusiness({ tenantId: req.context.tenantId });
-    const created = await prisma.inventoryItem.create({
-      data: {
-        businessId: business.id,
-        ...toPrismaInventoryPayload({
-          ...req.body,
-          stock: req.body.current_stock ?? req.body.stock,
-          reorderLevel: req.body.reorder_level ?? req.body.reorderLevel,
-        }),
-      },
-    });
-    const item = normalizeInventoryItem({
-      id: created.id,
-      name: created.name,
-      unit: created.unit,
-      current_stock: created.stock,
-      reorder_level: created.reorderLevel,
-      vendor: created.vendor,
-      storage_location: created.storageLocation,
-      notes: created.notes,
-      expiry_date: created.expiryDate ? created.expiryDate.toISOString() : null,
-      conversion_cost: created.conversionCost,
-    });
-    res.status(201).json(item);
-  } catch (error) {
-    next(error);
-  }
+    const item = await inventoryService.createItem({ tenantId: req.context.tenantId, payload: req.body });
+    res.status(201).json(normalizeInventoryItem(item));
+  } catch (error) { next(error); }
 });
 
 router.put("/inventory/:itemId", async (req, res, next) => {
   try {
-    const business = await ensureBusiness({ tenantId: req.context.tenantId });
-    const existing = await prisma.inventoryItem.findFirst({
-      where: { id: req.params.itemId, businessId: business.id },
-    });
-    if (!existing) {
-      res.status(404).json({ detail: "Inventory item not found" });
-      return;
-    }
-
-    const updated = await prisma.inventoryItem.update({
-      where: { id: req.params.itemId },
-      data: toPrismaInventoryPayload({
-        name: req.body.name ?? existing.name,
-        stock: req.body.current_stock ?? req.body.stock ?? existing.stock,
-        unit: req.body.unit ?? existing.unit,
-        reorderLevel: req.body.reorder_level ?? req.body.reorderLevel ?? existing.reorderLevel,
-        vendor: req.body.vendor ?? existing.vendor,
-        storage_location: req.body.storage_location ?? req.body.storageLocation ?? existing.storageLocation,
-        notes: req.body.notes ?? existing.notes,
-        expiry_date: req.body.expiry_date ?? req.body.expiryDate ?? existing.expiryDate,
-        conversion_cost: req.body.conversion_cost ?? req.body.conversionCost ?? existing.conversionCost,
-      }),
-    });
-
-    res.status(200).json(
-      normalizeInventoryItem({
-        id: updated.id,
-        name: updated.name,
-        unit: updated.unit,
-        current_stock: updated.stock,
-        reorder_level: updated.reorderLevel,
-        vendor: updated.vendor,
-        storage_location: updated.storageLocation,
-        notes: updated.notes,
-        expiry_date: updated.expiryDate ? updated.expiryDate.toISOString() : null,
-        conversion_cost: updated.conversionCost,
-      }),
-    );
-  } catch (error) {
-    next(error);
-  }
+    const updated = await inventoryService.updateItem({ tenantId: req.context.tenantId, itemId: req.params.itemId, payload: req.body });
+    res.status(200).json(normalizeInventoryItem(updated));
+  } catch (error) { next(error); }
 });
 
 router.delete("/inventory/:itemId", async (req, res, next) => {
   try {
-    const business = await ensureBusiness({ tenantId: req.context.tenantId });
-    const existing = await prisma.inventoryItem.findFirst({
-      where: { id: req.params.itemId, businessId: business.id },
-    });
-    if (!existing) {
-      res.status(404).json({ detail: "Inventory item not found" });
-      return;
-    }
-
-    await prisma.inventoryItem.delete({ where: { id: req.params.itemId } });
-    legacyInventoryMovements.delete(req.params.itemId);
-    res.status(200).json({ id: existing.id, name: existing.name });
-  } catch (error) {
-    next(error);
-  }
+    const item = await inventoryService.deleteItem({ tenantId: req.context.tenantId, itemId: req.params.itemId });
+    res.status(200).json({ id: item.id, name: item.name });
+  } catch (error) { next(error); }
 });
 
 router.get("/inventory/:itemId/movements", async (req, res, next) => {
@@ -964,28 +927,20 @@ router.post("/inventory/:itemId/movements", async (req, res, next) => {
       return;
     }
 
-    const quantity = toNumber(req.body.quantity, 0);
+    const quantity = Number(req.body.quantity);
     const movementType = req.body.movement_type || "adjustment";
-    const signedQuantity =
-      movementType === "purchase" || movementType === "adjustment" ? quantity : quantity * -1;
-
-    const movement = await prisma.inventoryMovement.create({
-      data: {
-        businessId: business.id,
-        inventoryItemId: item.id,
-        movementType,
-        quantity: signedQuantity,
-        reason: req.body.reason || "",
-        expiryDate: req.body.expiry_date ? new Date(req.body.expiry_date) : null,
-      },
-    });
-
-    await prisma.inventoryItem.update({
-      where: { id: item.id },
-      data: {
-        stock: Math.max(0, toNumber(item.stock, 0) + signedQuantity),
-        expiryDate: req.body.expiry_date ? new Date(req.body.expiry_date) : item.expiryDate,
-      },
+    if (!["purchase", "adjustment", "consumption", "wastage", "spoilage", "pilferage"].includes(movementType) ||
+      !Number.isFinite(quantity) || quantity === 0 || (movementType !== "adjustment" && quantity < 0)) {
+      throw createHttpError({ statusCode: 400, message: "Provide a valid movement type and quantity" });
+    }
+    const signedQuantity = ["purchase", "adjustment"].includes(movementType) ? quantity : -quantity;
+    const movement = await prisma.$transaction(async (tx) => {
+      const result = await moveStock({ tx, businessId: business.id, itemId: item.id, quantity: signedQuantity,
+        movementType, reason: req.body.reason || "Manual inventory movement",
+        expiryDate: req.body.expiry_date || null });
+      await admincoreChangeSyncService.notifyChange({ resource: "inventory", action: "movement_recorded",
+        tenantId: req.context.tenantId, businessId: business.id, recordId: item.id }, { tx });
+      return result.movement;
     });
 
     res.status(201).json({
@@ -1003,40 +958,77 @@ router.post("/inventory/:itemId/movements", async (req, res, next) => {
   }
 });
 
-router.get("/shift-swaps", (_req, res) => {
-  res.status(200).json(legacyShiftSwaps);
+router.get("/shift-swaps", requireAuth, async (req, res, next) => {
+  try {
+    const requests = await shiftSwapsFor(req.context.businessId);
+    // Managers see every request in their business; everyone else sees only their own.
+    res.status(200).json(isManagerRole(req.user) ? requests : requests.filter((item) => item.requester_id === req.user.id));
+  } catch (error) {
+    next(error);
+  }
 });
 
-router.post("/shift-swaps", (req, res) => {
-  const swap = {
-    id: randomUUID(),
-    requester_name: "Current User",
-    target_staff_name: "Requested Staff",
-    target_staff_id: req.body.target_staff_id || null,
-    requested_for: req.body.requested_for || nowIso(),
-    note: req.body.note || "",
-    status: "pending",
-  };
-  legacyShiftSwaps = [swap, ...legacyShiftSwaps];
-  res.status(201).json(swap);
+router.post("/shift-swaps", requireAuth, async (req, res, next) => {
+  try {
+    let target = null;
+    if (req.body?.target_staff_id) {
+      target = await prisma.user.findFirst({
+        where: { id: String(req.body.target_staff_id), businessId: req.context.businessId },
+        select: { id: true, name: true },
+      });
+      if (!target) {
+        res.status(400).json({ detail: "target_staff_id does not belong to this business" });
+        return;
+      }
+    }
+    const swap = {
+      id: randomUUID(),
+      business_id: req.context.businessId,
+      requester_id: req.user.id,
+      requester_name: req.user.name || "Staff",
+      target_staff_name: target?.name || "Any available staff",
+      target_staff_id: target?.id || null,
+      requested_for: req.body?.requested_for || nowIso(),
+      note: String(req.body?.note || "").slice(0, 500),
+      status: "pending",
+    };
+    await saveShiftSwaps(req.context.businessId, (current) => [swap, ...current]);
+    res.status(201).json(swap);
+  } catch (error) {
+    next(error);
+  }
 });
 
-router.put("/shift-swaps/:requestId", (req, res) => {
-  const existing = legacyShiftSwaps.find((item) => item.id === req.params.requestId);
+router.put("/shift-swaps/:requestId", requireAuth, async (req, res, next) => {
+  try {
+  const requests = await shiftSwapsFor(req.context.businessId);
+  const existing = requests.find((item) => item.id === req.params.requestId);
   if (!existing) {
     res.status(404).json({ detail: "Shift swap not found" });
     return;
   }
 
-  const updated = {
-    ...existing,
-    status: req.body.status || existing.status,
-  };
-  legacyShiftSwaps = legacyShiftSwaps.map((item) => (item.id === updated.id ? updated : item));
+  const nextStatus = req.body?.status || existing.status;
+  if (!SHIFT_SWAP_STATUSES.has(nextStatus)) {
+    res.status(400).json({ detail: `status must be one of: ${[...SHIFT_SWAP_STATUSES].join(", ")}` });
+    return;
+  }
+  // Approving or rejecting is a manager decision; a requester may only withdraw their own request.
+  const mayWithdraw = existing.requester_id === req.user.id && nextStatus === "cancelled";
+  if (!isManagerRole(req.user) && !mayWithdraw) {
+    res.status(403).json({ detail: "Only a manager can decide shift swap requests" });
+    return;
+  }
+
+  const updated = { ...existing, status: nextStatus, decided_by: req.user.id, decided_at: nowIso() };
+  await saveShiftSwaps(req.context.businessId, (current) => current.map((item) => (item.id === updated.id ? updated : item)));
   res.status(200).json(updated);
+  } catch (error) {
+    next(error);
+  }
 });
 
-router.get("/central-kitchen", async (req, res, next) => {
+router.get("/central-kitchen", requireAnyPermission("central_kitchen", "inventory", "reports"), async (req, res, next) => {
   try {
     res.status(200).json(await getCentralKitchenSnapshot(req.context.tenantId));
   } catch (error) {
@@ -1044,9 +1036,9 @@ router.get("/central-kitchen", async (req, res, next) => {
   }
 });
 
-router.get("/customer-analytics", async (req, res, next) => {
+router.get("/customer-analytics", requireAnyPermission("reports", "dashboard"), async (req, res, next) => {
   try {
-    const bills = await getBills(req.context.tenantId);
+    const bills = filterByOutletScope(req, await getBills(req.context.tenantId), (bill) => getBillOutletId(bill));
     const customersMap = new Map();
     const itemSalesMap = new Map();
 
@@ -1162,70 +1154,53 @@ router.get("/customer-analytics", async (req, res, next) => {
   }
 });
 
-router.post("/central-kitchen/outlets", (req, res) => {
+router.post("/central-kitchen/outlets", requireRole("Owner", "Manager"), (req, res) => {
   const outlet = normalizeOutlet({
-    id: randomUUID(),
     ...req.body,
+    id: randomUUID(),
   });
-  legacyOutlets = [...legacyOutlets, outlet];
+  legacyOutlets = [...legacyOutlets, { ...outlet, business_id: req.context.businessId }];
   res.status(201).json(outlet);
 });
 
-router.post("/central-kitchen/purchase-orders", (req, res) => {
-  const outlet = legacyOutlets.find((item) => item.id === req.body.outlet_id);
+router.post("/central-kitchen/purchase-orders", requireRole("Owner", "Manager"), async (req, res, next) => {
+  try {
+  // The outlet must be one of this business's own real outlets, never an arbitrary id.
+  const [ownedOutletId] = await assertOwnedIds({ kind: "outlet", ids: [req.body?.outlet_id], businessId: req.context.businessId });
+  const outlet = ownedOutletId ? await prisma.outlet.findUnique({ where: { id: ownedOutletId }, select: { name: true } }) : null;
   const order = {
     id: randomUUID(),
-    outlet_id: req.body.outlet_id || null,
+    business_id: req.context.businessId,
+    outlet_id: ownedOutletId || null,
     outlet_name: outlet?.name || "Outlet",
     priority: req.body.priority || "Medium",
     status: "pending",
     required_by: req.body.required_by || null,
     notes: req.body.notes || "",
-    items: req.body.items || [],
+    items: Array.isArray(req.body.items) ? req.body.items : [],
   };
   legacyPurchaseOrders = [order, ...legacyPurchaseOrders];
   res.status(201).json(order);
-});
-
-router.post("/central-kitchen/restocks", async (req, res, next) => {
-  try {
-    const outlet = legacyOutlets.find((item) => item.id === req.body.outlet_id);
-    const inventoryItem = (await getInventoryItems(req.context.tenantId)).find((item) => item.id === req.body.inventory_id);
-
-    const log = {
-      id: randomUUID(),
-      outlet_id: req.body.outlet_id || null,
-      outlet_name: outlet?.name || "Outlet",
-      inventory_id: req.body.inventory_id || null,
-      inventory_name: inventoryItem?.name || "Inventory Item",
-      quantity: toNumber(req.body.quantity, 0),
-      unit: inventoryItem?.unit || "kg",
-      eta: req.body.eta || "",
-      route_name: req.body.route_name || "",
-      note: req.body.note || "",
-    };
-
-    legacyRestockLogs = [log, ...legacyRestockLogs];
-    legacyOutletInventory = [log, ...legacyOutletInventory];
-
-    if (inventoryItem) {
-      await prisma.inventoryItem.update({
-        where: { id: inventoryItem.id },
-        data: {
-          stock: Math.max(0, toNumber(inventoryItem.current_stock, 0) - toNumber(req.body.quantity, 0)),
-        },
-      });
-    }
-
-    res.status(201).json(log);
   } catch (error) {
     next(error);
   }
 });
 
-router.post("/central-kitchen/routes", (req, res) => {
+router.post("/central-kitchen/restocks", requireRole("Owner", "Manager"), requirePermission("inventory"), async (req, res, next) => {
+  try {
+    const transfer = await inventoryOperationsService.createTransferRequest({ tenantId: req.context.tenantId, user: req.user,
+      payload: { destination_outlet_id: req.body.outlet_id, items: [{ inventory_id: req.body.inventory_id, quantity: req.body.quantity }] } });
+    res.status(201).json({ ...transfer, message: "Transfer requested. Manager approval and outlet receipt are required before stock is available." });
+  } catch (error) { next(error); }
+});
+
+router.post("/central-kitchen/routes", requireRole("Owner", "Manager"), async (req, res, next) => {
+  try {
+  const stopOutletIds = await assertOwnedIds({ kind: "outlet", ids: (req.body?.stops || []).map((stop) => stop.outlet_id), businessId: req.context.businessId });
+  const outletNames = new Map((await prisma.outlet.findMany({ where: { id: { in: stopOutletIds } }, select: { id: true, name: true } })).map((row) => [row.id, row.name]));
   const route = {
     id: randomUUID(),
+    business_id: req.context.businessId,
     route_name: req.body.route_name || "Route",
     dispatch_date: req.body.dispatch_date || todayDate(),
     driver_name: req.body.driver_name || "",
@@ -1234,12 +1209,15 @@ router.post("/central-kitchen/routes", (req, res) => {
     stops:
       (req.body.stops || []).map((stop) => ({
         outlet_id: stop.outlet_id,
-        outlet_name: legacyOutlets.find((outlet) => outlet.id === stop.outlet_id)?.name || "Outlet",
+        outlet_name: outletNames.get(stop.outlet_id) || "Outlet",
         eta: stop.eta || "",
       })) || [],
   };
   legacyRoutePlans = [route, ...legacyRoutePlans];
   res.status(201).json(route);
+  } catch (error) {
+    next(error);
+  }
 });
 
 export default router;

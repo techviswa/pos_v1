@@ -1,7 +1,7 @@
 import React from 'react';
 import { Navigate, useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
-import { hasPermission } from '../lib/pos';
+import { PERMISSION_LABELS, hasPermission } from '../lib/pos';
 import { getDefaultRouteForUser } from '../core/navigation/utils/defaultRoute';
 import { ApiErrorPanel } from './ApiErrorPanel';
 
@@ -60,7 +60,7 @@ export const ProtectedRoute = ({ children, requireOwner = false, requirePermissi
   if (requirePermission && !hasPermission(user, requirePermission)) {
     return (
       <AccessDenied
-        reason={`Your account does not have the "${requirePermission}" permission.`}
+        reason={`Your account does not have the "${PERMISSION_LABELS[requirePermission] || requirePermission}" screen. Ask an Owner or Manager to grant it on the Staff screen.`}
         user={user}
       />
     );

@@ -4,8 +4,9 @@ import { featureMiddleware } from "../middleware/feature.middleware.js";
 import { asyncHandler } from "./asyncHandler.js";
 import { createHttpError } from "./http-error.js";
 
-export const createFeatureRouter = ({ featureKey, definitions }) => {
+export const createFeatureRouter = ({ featureKey, definitions, params = {} }) => {
   const router = Router();
+  Object.entries(params).forEach(([name, handler]) => router.param(name, handler));
 
   router.use(featureMiddleware(featureKey));
 

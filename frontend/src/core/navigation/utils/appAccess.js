@@ -10,8 +10,11 @@ export const getVisibleNavigationGroups = ({ user, isModuleEnabled, isFeatureEna
     if (item.feature && !isFeatureEnabled(item.feature)) {
       return false;
     }
-    if (item.roles) {
-      return item.roles.includes(user?.role);
+    if (item.ownerOnly) {
+      return user?.role === "Owner";
+    }
+    if (item.always) {
+      return Boolean(user);
     }
     return hasPermission(user, item.permission);
   });

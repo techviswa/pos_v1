@@ -32,6 +32,7 @@ class UsersController {
       tenantId: req.context.tenantId,
       businessId: req.context.businessId,
       payload: req.body,
+      actor: req.user,
     });
     res.status(201).json(apiResponse({ message: "User created successfully", data }));
   }
@@ -42,6 +43,7 @@ class UsersController {
       businessId: req.context.businessId,
       userId: req.params.userId,
       payload: req.body,
+      actor: req.user,
     });
     res.status(200).json(apiResponse({ message: "User updated successfully", data }));
   }
@@ -51,6 +53,7 @@ class UsersController {
       tenantId: req.context.tenantId,
       businessId: req.context.businessId,
       userId: req.params.userId,
+      actor: req.user,
     });
     res.status(200).json(apiResponse({ message: "User deleted successfully", data }));
   }
@@ -80,6 +83,7 @@ class UsersController {
       businessId: req.context.businessId,
       userId: req.params.userId,
       permissions: req.body?.permissions || [],
+      actor: req.user,
     });
     res.status(200).json(apiResponse({ message: "User permissions updated successfully", data }));
   }
@@ -90,6 +94,7 @@ class UsersController {
       businessId: req.context.businessId,
       userId: req.params.userId,
       outletIds: req.body?.assigned_outlet_ids || [],
+      actor: req.user,
     });
     res.status(200).json(apiResponse({ message: "User outlet assignments updated successfully", data }));
   }

@@ -1,4 +1,7 @@
+import { timingSafeEqual } from "node:crypto";
 import { authService } from "../../core/auth/auth.service.js";
+import { saasService } from "../../core/saas/saas.service.js";
+import { assertRequestOutlets, outletScopeFor } from "./outletScope.js";
 import env from "../../config/env.js";
 import prisma from "../../database/prisma/client.js";
 import { getSessionIdFromRequest } from "../../core/auth/auth-session.js";
@@ -24,13 +27,18 @@ const getAdminCoreBridgeApiKey = (req) =>
   req.get("x-api-key") ||
   getBearerToken(req.get("authorization"));
 
+export const safeEqual = (candidate, expected) => {
+  const a = Buffer.from(String(candidate || ""));
+  const b = Buffer.from(String(expected || ""));
+  return a.length === b.length && a.length > 0 && timingSafeEqual(a, b);
+};
+
 export const isAdminCoreBridgeRequest = (req) => {
   const bridgeKey = env.admincore.apiKey;
   if (!env.admincore.enabled || !bridgeKey) {
     return false;
   }
-  const candidate = getAdminCoreBridgeApiKey(req);
-  return candidate === bridgeKey;
+  return safeEqual(getAdminCoreBridgeApiKey(req), bridgeKey);
 };
 
 const isAdminCoreSyncBridgePath = (req) =>
@@ -102,20 +110,45 @@ const resolveRequestContext = async (req, user) => {
   };
 };
 
+const SAFE_METHODS = new Set(["GET", "HEAD", "OPTIONS"]);
+
+// Subscription lifecycle enforcement. Suspended tenants are locked out; expired/cancelled tenants keep
+// read access to their own data but cannot create new activity. Auth endpoints stay reachable so users can sign out.
+export const assertTenantAccess = async ({ user, businessId, method, url }) => {
+  if (user?.isServiceAccount || !businessId) return;
+  if (String(url || "").startsWith("/api/auth/")) return;
+  const { mode, status } = await saasService.getAccessMode(businessId);
+  // An expired or cancelled business must still be able to pay to get going again.
+  if (mode === "read_only" && String(url || "").startsWith("/api/saas/billing/")) return;
+  if (mode === "blocked") {
+    throw createHttpError({ statusCode: 403, code: "TENANT_SUSPENDED", message: "This business account is suspended. Contact Taskoora support." });
+  }
+  if (mode === "read_only" && !SAFE_METHODS.has(String(method || "GET").toUpperCase())) {
+    throw createHttpError({
+      statusCode: 402,
+      code: "SUBSCRIPTION_INACTIVE",
+      message: `This business subscription is ${status}. Your data is safe and viewable; renew to resume changes.`,
+    });
+  }
+};
+
 const bindRequestContextToUser = async (req, user) => {
   const scopedContext = await resolveRequestContext(req, user);
+  await assertTenantAccess({ user, businessId: scopedContext.businessId, method: req.method, url: req.originalUrl });
   req.user = user;
   req.context = {
     ...(req.context || {}),
     ...scopedContext,
+    outletScope: outletScopeFor(user),
   };
+  assertRequestOutlets(req);
 };
 
 export const bindAdminCoreBridgeRequest = async (req) => {
   await bindRequestContextToUser(req, createAdminCoreBridgeUser());
 };
 
-const getEffectivePermissions = (user) => {
+export const getEffectivePermissions = (user) => {
   const roleName = user?.role || "";
   const storedPermissions = Array.isArray(user?.permissions) ? user.permissions : [];
   const roleDefaults = ROLE_DEFAULT_PERMISSIONS[roleName] || [];
@@ -126,6 +159,11 @@ const getEffectivePermissions = (user) => {
     return [...new Set([...storedPermissions, ...(ROLE_DEFAULT_PERMISSIONS.Owner || [])])];
   }
   return Array.isArray(user?.permissions) ? [...new Set(storedPermissions)] : roleDefaults;
+};
+
+export const hasEffectivePermission = (user, ...keys) => {
+  const permissions = getEffectivePermissions(user);
+  return keys.some((key) => permissions.includes(key));
 };
 
 export const requireAuth = async (req, res, next) => {
@@ -237,6 +275,8 @@ const PUBLIC_API_PREFIXES = [
   "/payments/public",
   "/payments/webhooks",
   "/printer/agent",
+  // Authenticated by a single-use ticket issued through POST /events/ticket (EventSource cannot send headers).
+  "/events/stream",
 ];
 
 export const requireApiSession = async (req, res, next) => {

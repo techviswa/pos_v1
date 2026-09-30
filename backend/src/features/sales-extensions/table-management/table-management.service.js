@@ -2,6 +2,7 @@ import { tableManagementRepository } from "./table-management.repository.js";
 import { tableManagementValidation } from "./table-management.validation.js";
 import { createHttpError, createNotFoundError } from "../../../shared/utils/http-error.js";
 import { randomBytes } from "node:crypto";
+import { assertOwnedIds } from "../../../database/prisma/scope.js";
 import { admincoreChangeSyncService } from "../../../core/admincore/admincore-change-sync.service.js";
 
 const CORE_STATUSES = new Set(["available", "reserved", "occupied"]);
@@ -279,6 +280,7 @@ class TableManagementService {
   async createTable({ tenantId, businessId, payload }) {
     const business = await this.getBusiness({ tenantId, businessId });
     const data = tableManagementValidation.validateTablePayload(payload);
+    await assertOwnedIds({ kind: "area", ids: [data.areaId], businessId: business.id });
     const created = await tableManagementRepository.createTable({
       businessId: business.id,
       data: {
@@ -316,6 +318,7 @@ class TableManagementService {
     if (!existing) throw createNotFoundError("Table", { tableId });
 
     const data = tableManagementValidation.validateTablePayload(payload, { partial: true });
+    await assertOwnedIds({ kind: "area", ids: [data.areaId], businessId: business.id });
     const updated = await tableManagementRepository.updateTable({
       tableId,
       data: {

@@ -7,6 +7,7 @@ import { formatCurrency } from "../lib/pos";
 import { useAuth } from "../contexts/AuthContext";
 import { useUi } from "../contexts/UiContext";
 import { useAutoRefresh } from "../hooks/useAutoRefresh";
+import { MenuStructureEditor, toMenuStructureForm, toMenuStructurePayload, validateMenuStructure } from "../core/menu/MenuStructureEditor";
 
 const API_URL = (() => {
   const configured = String(process.env.REACT_APP_BACKEND_URL || "").replace(/\/+$/, "");
@@ -139,6 +140,7 @@ export const Products = () => {
     recipe_lines: [],
     variationRecipeMap: {},
     addonRecipeMap: {},
+    menuStructure: toMenuStructureForm(null),
   });
   const [stockForm, setStockForm] = useState({
     operation: "add",
@@ -243,6 +245,7 @@ export const Products = () => {
       addonProductIds: deriveAddonSelections(product, products),
       customAddonText: deriveCustomAddonText(product),
       removalText: formatSimpleLines(product?.removal_options || []),
+      menuStructure: toMenuStructureForm(product),
       recipe_lines: createRecipeFormLines(product?.recipe_lines || []),
       variationRecipeMap: Object.fromEntries(
         (product?.variation_options || []).map((option) => [option.name, createRecipeFormLines(option.recipe_lines || [])])
@@ -425,6 +428,11 @@ export const Products = () => {
       setFormError(`Enter ${missingChannelPrice} price in Channel Menu Pricing.`);
       return;
     }
+    const menuStructureError = validateMenuStructure(formData.menuStructure);
+    if (menuStructureError) {
+      setFormError(menuStructureError);
+      return;
+    }
     const invalidRecipeLine = formData.recipe_lines.find((line) => !line.quantity || Number(line.quantity) <= 0);
     if (invalidRecipeLine) {
       setFormError(`Enter a valid recipe quantity for ${invalidRecipeLine.ingredient_name}.`);
@@ -483,6 +491,7 @@ export const Products = () => {
         })),
       })),
       removal_options: parseSimpleLines(formData.removalText),
+      ...toMenuStructurePayload(formData.menuStructure),
       recipe_lines: formData.recipe_lines.map((line) => ({
         inventory_id: line.inventory_id,
         quantity: Number(line.quantity || 0),
@@ -1234,6 +1243,12 @@ export const Products = () => {
                     Add one custom add-on per line as `name:price`. These add-ons do not need to exist in products.
                   </div>
                 </div>
+                <MenuStructureEditor
+                  value={formData.menuStructure}
+                  onChange={(menuStructure) => setFormData((current) => ({ ...current, menuStructure }))}
+                  products={products}
+                  currentProductId={editingProduct?.id || null}
+                />
                 <div className="cf-field">
                   <label>Skip Common Ingredients</label>
                   <textarea

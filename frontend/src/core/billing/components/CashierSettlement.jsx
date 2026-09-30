@@ -47,7 +47,9 @@ export function CashierSettlement({ apiUrl, outletId }) {
       <p>{shift?.status === "open" ? `Shift opened ${new Date(shift.opened_at).toLocaleString()}` : "No open shift"}</p>
       {report && <dl style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))", gap: 12 }}>
         {[["Opening cash", report.opening_cash], ["Cash collected", report.cash_sales], ["Non-cash confirmed", report.non_cash_sales],
-          ["Cash refunds", report.cash_refunds], ["Expected drawer", report.expected_cash], ["Pending confirmation", report.pending_payment_amount]].map(([label, value]) =>
+          ["Cash refunds", report.cash_refunds], ["Expected drawer", report.expected_cash], ["Pending confirmation", report.pending_payment_amount], ["Tips inside sales", report.tips_collected || 0],
+          ["Gift cards sold (cash)", report.gift_card_sales_cash || 0], ["Gift cards sold (UPI/card)", report.gift_card_sales_other || 0],
+          ["Gift card cash payouts", report.gift_card_refunds_cash || 0], ["Paid with gift cards", report.gift_card_redeemed || 0]].map(([label, value]) =>
           <div key={label}><dt>{label}</dt><dd>{formatCurrency(value || 0)}</dd></div>)}
       </dl>}
       <form onSubmit={submit} style={{ display: "flex", flexWrap: "wrap", gap: 12, alignItems: "end" }}>

@@ -4,6 +4,7 @@ import { aggregateKitchenStatus, validateKitchenTransition } from "./kot-workflo
 import { nextDocumentSequence } from "../../../database/prisma/document-sequence.js";
 import { ensureBusiness } from "../../../database/prisma/helpers.js";
 import { createHttpError } from "../../../shared/utils/http-error.js";
+import { publishChange } from "../../../services/realtime/realtime.service.js";
 import {
   appendKotAudit,
   buildKotItemState,
@@ -44,6 +45,7 @@ class KotService {
       ticket_number: kot.ticket_number || ticket.id,
       business_id: ticket.businessId,
       order_id: ticket.orderId,
+      outlet_id: order?.outletId || order?.metadata?.outlet_id || null,
       customer_name: order?.customerName || "Walk-in",
       notes: order?.metadata?.notes || order?.metadata?.customer_note || "",
       channel: order?.channel || "pos",
@@ -116,6 +118,7 @@ class KotService {
         data: { businessId, orderId, status },
         include: getTicketInclude(),
       });
+      await publishChange({ businessId, resource: "kot", action: "created", recordId: ticket.id, outletId: order.outletId }, { tx });
     }
 
     const freshOrder = ticket.order || order;
@@ -259,10 +262,13 @@ class KotService {
           actor_id: actor?.id || null, actor_name: actor?.name || null, reason: next.reason || null },
       );
       await tx.kitchenTicket.update({ where: { id: ticket.id }, data: { status: nextStatus } });
+      // A cancelled/rejected/completed order must not be dragged back into the kitchen pipeline by a late KOT action.
+      const orderIsFinal = ["cancelled", "rejected", "completed"].includes(order.status);
       await tx.order.update({
         where: { id: order.id },
-        data: { status: next.orderStatus || order.status, metadata: { ...(order.metadata || {}), kot: nextKot } },
+        data: { status: orderIsFinal ? order.status : (next.orderStatus || order.status), metadata: { ...(order.metadata || {}), kot: nextKot } },
       });
+      await publishChange({ businessId: ticket.businessId, resource: "kot", action: next.action || "updated", recordId: ticket.id, outletId: order.outletId }, { tx });
       await admincoreChangeSyncService.notifyChange({
         resource: "orders", action: "updated", recordId: order.id,
         tenantId, businessId: ticket.businessId, outletId: order.metadata?.outlet_id || null,
