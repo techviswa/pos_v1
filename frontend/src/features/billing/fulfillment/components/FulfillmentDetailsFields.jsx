@@ -9,6 +9,7 @@ export const FulfillmentDetailsFields = ({
   todayDateValue,
   onSendWhatsApp,
   suggestedTokenNumber,
+  hasServiceChoice = true,
 }) => {
   const updateField = (field, value, clearErrorField) => {
     if (clearErrorField) clearBillingError(clearErrorField);
@@ -18,8 +19,8 @@ export const FulfillmentDetailsFields = ({
   return (
     <div className="cf-card cf-card--padded">
       <div className="cf-card__title">
-        <span>Order Fulfillment</span>
-        <span className="cf-card__meta">Switch between table, token, pickup, and delivery without reloading billing</span>
+        <span>Customer & handover details</span>
+        <span className="cf-card__meta">{hasServiceChoice ? "Select the service, then complete the order details." : "Enter customer and handover details to prepare the bill."}</span>
       </div>
       {billingErrors.form ? <div className="cf-card" style={{ borderColor: "var(--cf-red)", padding: "12px 14px", marginBottom: 16, color: "var(--cf-red)", fontSize: 13 }}>{billingErrors.form}</div> : null}
       <div className="cf-grid-2">
@@ -59,7 +60,7 @@ export const FulfillmentDetailsFields = ({
       {orderMeta.fulfillment_mode === "TOKEN" ? (
         <div className="cf-field">
           <label>Token Number</label>
-          <input className="cf-input" onChange={(event) => updateField("token_number", event.target.value.replace(/[^\d]/g, "").slice(0, 4))} placeholder={suggestedTokenNumber} value={orderMeta.token_number} />
+          <input className="cf-input" inputMode="numeric" onChange={(event) => updateField("token_number", event.target.value.replace(/[^\d]/g, "").slice(0, 4), "token_number")} placeholder={suggestedTokenNumber} value={orderMeta.token_number} />
           {billingErrors.token_number ? <div style={{ color: "var(--cf-red)", fontSize: 12, marginTop: 6 }}>{billingErrors.token_number}</div> : null}
           <div className="cf-card__meta" style={{ marginTop: 6 }}>Leave it as suggested for the next counter token, or override it manually.</div>
         </div>
@@ -81,6 +82,13 @@ export const FulfillmentDetailsFields = ({
         </div>
       ) : null}
 
+      {orderMeta.fulfillment_mode === "DELIVERY" ? (
+        <div className="cf-field">
+          <label htmlFor="delivery-address">Delivery address *</label>
+          <textarea id="delivery-address" className="cf-textarea" autoComplete="street-address" maxLength={1000} value={orderMeta.delivery_address || ""} onChange={(event) => updateField("delivery_address", event.target.value, "delivery_address")} placeholder="House / building, street, area and postal code" aria-invalid={Boolean(billingErrors.delivery_address)} aria-describedby={billingErrors.delivery_address ? "delivery-address-error" : undefined} />
+          {billingErrors.delivery_address ? <div id="delivery-address-error" role="alert" style={{ color: "var(--cf-red)", fontSize: 12 }}>{billingErrors.delivery_address}</div> : null}
+        </div>
+      ) : null}
       <div className="cf-field">
         <label>Order Notes</label>
         <textarea className="cf-textarea" onChange={(event) => updateField("notes", event.target.value)} placeholder="Packing note, gate number, birthday message..." value={orderMeta.notes} />

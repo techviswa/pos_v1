@@ -1,5 +1,8 @@
 import "../../config/env.js";
 import { Prisma, PrismaClient } from "@prisma/client";
+import { createTenantGuard } from "./tenant-guard.js";
+import { createRlsRuntime } from "./rls-runtime.js";
+import { verifyRlsConnection } from "./rls-health.js";
 
 const globalForPrisma = globalThis;
 
@@ -23,17 +26,41 @@ export const toPlainNumbers = (value) => {
   return value;
 };
 
-const createClient = () =>
-  new PrismaClient({
+const createClient = () => {
+  const raw = new PrismaClient({
+    ...(process.env.SYSTEM_DATABASE_URL ? { datasourceUrl: process.env.SYSTEM_DATABASE_URL } : {}),
     log: ["error", "warn"],
-  }).$extends({
-    name: "decimal-as-number",
+  });
+  // Reference checks must not wait on the same pool occupied by interactive
+  // transactions. Use a separate, capped pool to the same database (not a new URL
+  // in environment/config), and close both pools through the exported client.
+  const referenceUrl = new URL(process.env.SYSTEM_DATABASE_URL || process.env.DATABASE_URL);
+  referenceUrl.searchParams.set("connection_limit", "2");
+  const references = new PrismaClient({ datasourceUrl: referenceUrl.toString(), log: ["error", "warn"] }).$extends({
+    query: { async $allOperations({ args, query }) { return toPlainNumbers(await query(args)); } },
+  });
+  const guard = createTenantGuard(references);
+  const tenant = process.env.TENANT_DATABASE_URL ? new PrismaClient({ datasourceUrl: process.env.TENANT_DATABASE_URL, log: ["error", "warn"] }) : null;
+  const rls = createRlsRuntime({ system: raw, tenant, guard, convert: toPlainNumbers });
+  return raw.$extends({
+    name: "tenant-guard-and-decimal-as-number",
+    client: {
+      async $connect() {
+        await raw.$connect();
+        if (process.env.SYSTEM_DATABASE_URL) await verifyRlsConnection(raw, { system: true });
+        if (tenant) { await tenant.$connect(); await verifyRlsConnection(tenant); }
+        else if (process.env.NODE_ENV === "production") throw new Error("TENANT_DATABASE_URL is required in production");
+      },
+      async $disconnect() { await Promise.all([raw.$disconnect(), references.$disconnect(), tenant?.$disconnect()]); },
+      $transaction(work, options) { return rls.transaction(work, options); },
+    },
     query: {
-      async $allOperations({ args, query }) {
-        return toPlainNumbers(await query(args));
+      async $allOperations(operation) {
+        return toPlainNumbers(await guard({ ...operation, query: (args) => rls.execute({ ...operation, args }) }));
       },
     },
   });
+};
 
 export const prisma = globalForPrisma.prisma || createClient();
 

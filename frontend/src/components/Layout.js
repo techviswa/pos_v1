@@ -123,7 +123,10 @@ export const Layout = ({ title, children, billingMode = false }) => {
               <span>Back</span>
             </button>
           ) : null}
-          <div className="cf-topbar__title">{title}</div>
+          <div style={{ minWidth: 0 }}>
+            <div className="cf-topbar__title">{title}</div>
+            {settings.shopName ? <div className="cf-business-name" title={settings.shopName}>{settings.shopName}</div> : null}
+          </div>
         </div>
         <div className="cf-topbar__user">
           {canSwitchOutlets && outlets.length ? (
@@ -185,7 +188,8 @@ export const Layout = ({ title, children, billingMode = false }) => {
                 {effectiveSidebarCollapsed ? <CaretDoubleRight size={14} weight="bold" /> : <CaretDoubleLeft size={14} weight="bold" />}
               </button>
             </div>
-            {!effectiveSidebarCollapsed ? <div className="cf-sidebar__gst">GST: {settings.gst}</div> : null}
+            {!effectiveSidebarCollapsed && settings.shopName ? <div className="cf-sidebar__business" title={settings.shopName}>{settings.shopName}</div> : null}
+            {!effectiveSidebarCollapsed && settings.gst ? <div className="cf-sidebar__gst">GST: {settings.gst}</div> : null}
           </div>
 
           <div

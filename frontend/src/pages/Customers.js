@@ -45,7 +45,7 @@ export const Customers = () => {
       setLoadError(error);
     }
   };
-  useAutoRefresh(load, { liveResources: ["bills"], refreshOnFocus: true });
+  useAutoRefresh(load, { liveResources: ["bills", "orders", "qr_orders", "customers"], refreshOnFocus: true, refreshOnVisibility: true, intervalMs: 15000, focusThrottleMs: 10000 });
   const reloadForQuery = useEffectEvent(() => load());
   const lastQueryRef = useRef(query);
   useEffect(() => {
@@ -145,7 +145,7 @@ export const Customers = () => {
           <div>
             <h1>Customers &amp; Loyalty</h1>
             <p>
-              Every bill with a phone number builds the guest's profile.
+              Orders and bills with a phone number build the guest's profile. Visits and spending come from bills.
               {loyalty?.enabled ? ` Guests earn ${loyalty.earn_percent}% back as points (1 point = ${formatCurrency(loyalty.point_value)}), usable for up to ${loyalty.max_redeem_percent}% of a bill${loyalty.expiry_months ? `, valid ${loyalty.expiry_months} months` : ""}.` : " The loyalty programme is switched off."}
             </p>
           </div>
@@ -243,6 +243,7 @@ export const Customers = () => {
                     <tr key={row.id} onClick={() => open(row.id)} style={{ cursor: "pointer", background: selected?.id === row.id ? "var(--cf-surface-2, #f2f4f7)" : undefined }}>
                       <td>
                         <b>{row.name}</b><div className="cf-card__meta">{row.phone}</div>
+                        {(row.qr_guest_names || []).filter((name) => name.toLowerCase() !== row.name.toLowerCase()).length > 0 && <div className="cf-card__meta">QR guest names: {(row.qr_guest_names || []).filter((name) => name.toLowerCase() !== row.name.toLowerCase()).join(", ")}</div>}
                         {row.birthday_in_days !== null && row.birthday_in_days <= 7 ? <span className="cf-badge cf-badge--amber">Birthday {row.birthday_in_days ? `in ${row.birthday_in_days}d` : "today"}</span> : null}
                         {row.anniversary_in_days !== null && row.anniversary_in_days <= 7 ? <span className="cf-badge cf-badge--amber">Anniversary {row.anniversary_in_days ? `in ${row.anniversary_in_days}d` : "today"}</span> : null}
                       </td>

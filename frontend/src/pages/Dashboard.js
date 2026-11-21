@@ -1,4 +1,5 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
+import { API_URL } from "../lib/apiUrl";
 import axios from "axios";
 import { useNavigate } from "react-router-dom";
 import { Layout } from "../components/Layout";
@@ -7,23 +8,11 @@ import { useUi } from "../contexts/UiContext";
 import { useActiveOutlet } from "../core/outlets/store/ActiveOutletContext";
 import { toast } from "sonner";
 import { QrInbox } from "../components/QrInbox";
+import { ApiErrorPanel } from "../components/ApiErrorPanel";
+import { SalesVisuals } from "../core/reports/SalesVisuals";
+import { AdmincoreSyncHealth } from "../components/AdmincoreSyncHealth";
+import { formatQuantity } from "../lib/quantity";
 
-const API_URL = (() => {
-  const configured = String(process.env.REACT_APP_BACKEND_URL || "").replace(/\/+$/, "");
-  if (typeof window === "undefined") return configured;
-
-  const currentOrigin = window.location.origin.replace(/\/+$/, "");
-  const currentHost = window.location.hostname;
-  if (configured && configured !== currentOrigin && !configured.includes("vercel.app")) {
-    return configured;
-  }
-
-  if (currentHost === "localhost" || currentHost === "127.0.0.1") {
-    return configured || "http://localhost:4001";
-  }
-
-  return "https://pos-v1-fwjm.onrender.com";
-})();
 
 export const Dashboard = () => {
   const { settings } = useUi();
@@ -33,21 +22,29 @@ export const Dashboard = () => {
   const [stats, setStats] = useState(null);
   const [admincoreLink, setAdmincoreLink] = useState(null);
   const [loadErrorShown, setLoadErrorShown] = useState(false);
+  const [loadError, setLoadError] = useState(null);
+  const requestId = useRef(0);
 
   const fetchData = async () => {
+    const currentRequest = ++requestId.current;
+    setLoading(true);
     try {
       const response = await axios.get(`${API_URL}/api/dashboard/stats`, {
         withCredentials: true,
         params: selectedOutletId ? { outlet_id: selectedOutletId } : {},
-      }).catch(() => ({ data: {} }));
+      });
+      if (currentRequest !== requestId.current) return;
       setStats(response.data || {});
+      setLoadError(null);
     } catch (error) {
+      if (currentRequest !== requestId.current) return;
+      setLoadError(error);
       if (!loadErrorShown) {
         toast.error("Dashboard loaded with partial data");
         setLoadErrorShown(true);
       }
     } finally {
-      setLoading(false);
+      if (currentRequest === requestId.current) setLoading(false);
     }
   };
 
@@ -131,15 +128,14 @@ export const Dashboard = () => {
     },
     {
       id: "revenue",
-      label: "Total Revenue",
+      label: "All-time Sales",
       value: formatCurrency(stats?.total_revenue || 0, settings.currency),
       sub: Number(stats?.revenue_summary?.goods_cost || 0) > 0
-        ? `${formatCurrency(stats?.revenue_summary?.gross_profit || 0, settings.currency)} gross profit at ${stats?.revenue_summary?.margin_percent || 0}% margin`
+        ? `${formatCurrency(stats?.revenue_summary?.gross_profit || 0, settings.currency)} gross profit at ${Number(stats?.revenue_summary?.margin_percent || 0).toFixed(1)}% margin`
         : "Update goods cost in Products to unlock true profit",
     },
   ];
 
-  const maxQuantity = Math.max(...topSelling.map((entry) => entry.quantity), 1);
 
   if (loading) {
     return (
@@ -153,6 +149,8 @@ export const Dashboard = () => {
       </Layout>
     );
   }
+
+  if (loadError) return <Layout title="Dashboard"><div className="cf-page"><ApiErrorPanel error={loadError} onRetry={fetchData} /></div></Layout>;
 
   return (
     <Layout title={selectedOutlet ? `Dashboard · ${selectedOutlet.name}` : "Dashboard"}>
@@ -169,14 +167,15 @@ export const Dashboard = () => {
           </div>
           <div className="cf-dashboard-hero__chips">
             {admincoreLink ? (
-              <span className="cf-badge cf-badge--green">Linked to AdminCore</span>
+              <span className="cf-badge cf-badge--green">AdminCore reachable</span>
             ) : null}
             <span className="cf-badge cf-badge--blue">{centralKitchen.overview?.restocks_this_week || 0} restocks this week</span>
-            <span className="cf-badge cf-badge--green">{stats?.cashier_count || 0} active cashiers</span>
+            <span className="cf-badge cf-badge--green">{stats?.cashier_count || 0} active cashier accounts</span>
             <span className="cf-badge cf-badge--amber">{inventorySummary.expiry_alert_count || 0} expiry alerts</span>
           </div>
         </div>
 
+        <AdmincoreSyncHealth />
         <QrInbox currency={settings.currency} />
 
         <div className="cf-metrics">
@@ -189,51 +188,19 @@ export const Dashboard = () => {
           ))}
         </div>
 
-        <div className="cf-dashboard-grid">
-          <div className="cf-card cf-card--padded">
-            <div className="cf-card__title">
-              <span>Top Selling Products</span>
-              <span className="cf-card__meta">quantity sold across all bills</span>
-            </div>
-            <div className="cf-chart-bars">
-              {topSelling.length ? (
-                topSelling.map((item) => (
-                  <div className="cf-chart-bar" key={item.name}>
-                    <div className="cf-chart-bar__value">{item.quantity}</div>
-                    <div className="cf-chart-bar__fill" style={{ height: `${Math.max((item.quantity / maxQuantity) * 100, 8)}px` }} />
-                    <div className="cf-chart-bar__label">{item.name}</div>
-                  </div>
-                ))
-              ) : (
-                <p className="cf-card__meta">No product data yet.</p>
-              )}
-            </div>
-          </div>
+        {stats?.sales_charts ? <SalesVisuals
+          showServiceMix
+          rows={stats.sales_charts.rows}
+          modes={stats.sales_charts.modes}
+          currency={settings.currency}
+          periodLabel={`${selectedOutlet?.name || "Accessible outlets"} · ${stats.sales_charts.from} to ${stats.sales_charts.to} · UTC calendar days`}
+          products={topSelling.map((row) => ({ name: row.name, value: row.quantity }))}
+          productBasis="quantity"
+          productDescription="All-time units sold. This ranking uses a longer period than the 30-day trend above."
+          outlets={outletSales.map((row) => ({ name: row.outlet_name, value: row.sales }))}
+          outletDescription="All-time sales by outlet, after refunds and including tax."
+        /> : null}
 
-          <div className="cf-card cf-card--padded">
-            <div className="cf-card__title">
-              <span>Outlet Sales Snapshot</span>
-              <span className="cf-card__meta">every outlet, every sale trend</span>
-            </div>
-            <div className="cf-kitchen-list">
-              {outletSales.length ? (
-                outletSales.map((outlet) => (
-                  <div className="cf-kitchen-list__item" key={`${outlet.outlet_name}-${outlet.outlet_id || "na"}`}>
-                    <div>
-                      <div className="cf-kitchen-list__title">{outlet.outlet_name}</div>
-                      <div className="cf-kitchen-list__meta">{outlet.bills} bills logged</div>
-                    </div>
-                    <div className="cf-kitchen-list__stats">
-                      <span>{formatCurrency(outlet.sales, settings.currency)}</span>
-                    </div>
-                  </div>
-                ))
-              ) : (
-                <div className="cf-empty-state">No outlet-wise sales mapped yet.</div>
-              )}
-            </div>
-          </div>
-        </div>
 
         <div className="cf-dashboard-grid" style={{ marginTop: 24 }}>
           <div className="cf-table-wrap">
@@ -282,8 +249,8 @@ export const Dashboard = () => {
                   (inventorySummary.at_risk_items || []).map((item) => (
                     <tr key={item.id}>
                       <td>{item.name}</td>
-                      <td className="cf-table__mono">{item.current_stock} {item.unit}</td>
-                      <td className="cf-table__mono">{item.days_remaining ?? "-"}</td>
+                      <td className="cf-table__mono">{formatQuantity(item.current_stock, item.unit)}</td>
+                      <td className="cf-table__mono">{item.days_remaining == null ? "No estimate" : formatQuantity(item.days_remaining, "days")}</td>
                       <td className="cf-table__mono">{item.expiry_date ? item.expiry_date.slice(0, 10) : "-"}</td>
                     </tr>
                   ))
@@ -379,7 +346,7 @@ export const Dashboard = () => {
                     <tr key={product.id}>
                       <td>{product.name}</td>
                       <td>{product.category || "Other"}</td>
-                      <td className="cf-table__mono">{product.stock}</td>
+                      <td className="cf-table__mono">{formatQuantity(product.stock)}</td>
                     </tr>
                   ))
                 ) : (

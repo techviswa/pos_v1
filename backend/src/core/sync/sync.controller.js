@@ -1,5 +1,6 @@
 import { apiResponse } from "../../shared/utils/apiResponse.js";
 import { syncService } from "./sync.service.js";
+import { requestExportSnapshot } from './export-snapshot.js';
 
 class SyncController {
   async strategy(_req, res) {
@@ -25,6 +26,12 @@ class SyncController {
   }
 
   async exportResource(req, res) {
+    if (String(req.query?.consistent) === 'true' || req.query?.export_id) {
+      const result = await requestExportSnapshot({ resource: req.params.resource,
+        tenantId: req.context.tenantId, businessId: req.context.businessId, query: req.query || {} });
+      res.setHeader('Cache-Control', 'private, no-store');
+      return res.status(result.status).json(result.body);
+    }
     const data = await syncService.exportResource({
       resource: req.params.resource,
       tenantId: req.context.tenantId,

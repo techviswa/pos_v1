@@ -35,6 +35,7 @@ export const APP_NAV_ITEMS = [
   { path: "/chef", label: "Chef", icon: ChefHat, group: "Role Screens", permission: "kitchen_view", module: "restaurant", feature: "kot" },
   { path: "/time-clock", label: "Time Clock", icon: Timer, group: "Role Screens", always: true },
   { path: "/billing", label: "Billing", icon: Receipt, group: "Main", permission: "billing", module: "restaurant", feature: "billing" },
+  { path: '/cash-drawer', label: 'Cash drawer', icon: Money, group: 'Main', permission: 'billing', requireRoles: ['Owner', 'Manager', 'Cashier'], module: 'restaurant', feature: 'billing' },
   { path: "/central-kitchen", label: "Central Kitchen", icon: Truck, group: "Main", permission: "central_kitchen", module: "restaurant", feature: "inventory" },
   { path: "/inventory", label: "Inventory", icon: Drop, group: "Main", permission: "inventory", module: "restaurant", feature: "inventory" },
   { path: "/reports", label: "Reports", icon: ChartBar, group: "Main", permission: "reports", module: "restaurant", feature: "reports" },

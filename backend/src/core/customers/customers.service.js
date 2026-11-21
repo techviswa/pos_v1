@@ -1,10 +1,14 @@
 import prisma from "../../database/prisma/client.js";
+import { randomUUID } from 'node:crypto';
 import { createHttpError } from "../../shared/utils/http-error.js";
 import { syncService } from "../sync/sync.service.js";
 import {
   adjustPoints, getCustomerSettings, lockedBalance, normalizePhone, saveCustomerSettings,
 } from "./customer-core.js";
 import { cardState, maskCode } from "./gift-cards.service.js";
+import { synchronizeCustomerHistory } from "./customer-history.js";
+import { erasureMarker, matchesErasure, eraseReceipt } from './customer-privacy.js';
+import { admincoreChangeSyncService } from '../admincore/admincore-change-sync.service.js';
 
 const fail = (statusCode, code, message) => { throw createHttpError({ statusCode, code, message }); };
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -97,13 +101,25 @@ class CustomersService {
   }
 
   async search({ businessId, query = {} }) {
+    await synchronizeCustomerHistory(businessId);
     const search = String(query.search || "").trim();
     const digits = search.replace(/\D/g, "");
+    const qrOrders = await prisma.order.findMany({ where: { businessId, channel: "qr" }, orderBy: { createdAt: "desc" }, select: { customerName: true, metadata: true } });
+    const qrNames = new Map();
+    for (const order of qrOrders) {
+      const phone = normalizePhone(order.metadata?.customer_phone);
+      const name = String(order.customerName || "").trim();
+      if (!phone || !name || ["walk-in", "guest", "erased customer"].includes(name.toLowerCase())) continue;
+      const names = qrNames.get(phone) || [];
+      if (!names.includes(name)) names.push(name);
+      qrNames.set(phone, names);
+    }
     const where = { businessId, anonymizedAt: null };
     if (search) {
       where.OR = [
         { name: { contains: search, mode: "insensitive" } },
         { email: { contains: search, mode: "insensitive" } },
+        { phone: { in: [...qrNames].filter(([, names]) => names.some((name) => name.toLowerCase().includes(search.toLowerCase()))).map(([phone]) => phone) } },
         ...(digits.length >= 3 ? [{ phone: { contains: digits } }] : []),
       ];
     }
@@ -111,18 +127,19 @@ class CustomersService {
     const sortable = { recent: { lastVisitAt: "desc" }, spend: { totalSpent: "desc" }, visits: { visitCount: "desc" }, points: { loyaltyPoints: "desc" }, name: { name: "asc" } };
     let rows = await prisma.customer.findMany({ where, orderBy: [sortable[query.sort] || sortable.recent, { createdAt: "desc" }], take: 500 });
     const within = Number(query.celebrations);
-    if (Number.isInteger(within) && within >= 0 && within <= 60) {
+    if (query.celebrations !== undefined && String(query.celebrations).trim() !== "" && Number.isInteger(within) && within >= 0 && within <= 60) {
       rows = rows.filter((row) => [daysUntil(row.birthday), daysUntil(row.anniversary)].some((days) => days !== null && days <= within));
     }
     if (query.inactive_days) {
       const cutoff = new Date(Date.now() - Number(query.inactive_days) * 86400000);
       rows = rows.filter((row) => row.lastVisitAt && row.lastVisitAt < cutoff);
     }
-    return rows.map((row) => ({ ...serializeCustomer(row), birthday_in_days: daysUntil(row.birthday), anniversary_in_days: daysUntil(row.anniversary) }));
+    return rows.map((row) => ({ ...serializeCustomer(row), qr_guest_names: (qrNames.get(row.phone) || []).slice(0, 5), birthday_in_days: daysUntil(row.birthday), anniversary_in_days: daysUntil(row.anniversary) }));
   }
 
   /** What the till needs: who this is and what they can redeem. Expired points are cleared first. */
   async lookup({ businessId, phone }) {
+    await synchronizeCustomerHistory(businessId);
     const normalized = normalizePhone(phone);
     if (!normalized) fail(400, "PHONE_INVALID", "Enter a valid phone number");
     const settings = await getCustomerSettings(businessId);
@@ -230,16 +247,62 @@ class CustomersService {
         await tx.loyaltyEntry.create({ data: { businessId, customerId: customer.id, type: "adjust", points: -customer.loyaltyPoints, balanceAfter: 0,
           note: "Forfeited: personal data erased", createdById: actor?.id || null, createdByName: actor?.name || null } });
       }
-      await tx.giftCard.updateMany({ where: { customerId: customer.id }, data: { customerId: null } });
-      const bills = await tx.bill.findMany({ where: { businessId, metadata: { path: ["customer_id"], equals: customer.id } }, select: { id: true, metadata: true } });
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`privacy-snapshot:${businessId}`}))`;
+      const epochKey = `privacy-epoch:${businessId}`;
+      const epochData = { business_id: businessId, revision: randomUUID() };
+      await tx.stateDocument.upsert({ where: { key: epochKey }, create: { key: epochKey, data: epochData }, update: { data: epochData } });
+      await tx.stateDocument.deleteMany({ where: { key: { startsWith: `export-snapshot:${businessId}:` } } });
+      const exports = await tx.backgroundJob.findMany({ where: { type: 'admincore.export-snapshot', payload: { path: ['business_id'], equals: businessId } } });
+      for (const job of exports) {
+        await tx.backgroundJob.update({ where: { id: job.id }, data: { status: 'failed', error: 'Export invalidated by customer erasure',
+          leaseToken: null, leaseUntil: null, payload: { ...job.payload, filters: {} } } });
+      }
+      const marker = erasureMarker(customer);
+      const markerKey = `privacy-erasure:${businessId}:${customer.id}`;
+      await tx.stateDocument.upsert({ where: { key: markerKey }, create: { key: markerKey, data: marker }, update: { data: marker } });
+      await tx.giftCard.updateMany({ where: { businessId, customerId: customer.id }, data: { customerId: null, recipientName: null } });
+      const candidates = await tx.bill.findMany({ where: { businessId }, select: { id: true, metadata: true } });
+      const bills = candidates.filter(bill => matchesErasure(bill, marker));
       for (const bill of bills) {
         await tx.bill.update({ where: { id: bill.id }, data: { customerName: "Erased customer",
-          metadata: { ...bill.metadata, customer_name: "Erased customer", customer_phone: null } } });
+          metadata: { ...eraseReceipt(bill.metadata || {}), customer_name: "Erased customer", customer_phone: null, privacy_erased: true } } });
       }
+      const orders = await tx.order.findMany({ where: { businessId }, select: { id: true, metadata: true } });
+      const matchingOrders = orders.filter(order => matchesErasure(order, marker));
+      const billIds = bills.map(bill => bill.id), orderIds = matchingOrders.map(order => order.id);
+      // Bound marker documents so large customer histories remain pageable.
+      for (const [kind, ids] of [['bill_ids', billIds], ['order_ids', orderIds]]) {
+        for (let offset = 0; offset < ids.length; offset += 500) {
+          const id = `${customer.id}:${kind}:${offset / 500}`;
+          const key = `privacy-erasure:${businessId}:${id}`;
+          const data = { ...marker, id, [kind]: ids.slice(offset, offset + 500) };
+          await tx.stateDocument.upsert({ where: { key }, create: { key, data }, update: { data } });
+        }
+      }
+      for (const order of matchingOrders) {
+        await tx.order.update({ where: { id: order.id }, data: { customerName: "Erased customer", metadata: { ...eraseReceipt(order.metadata || {}), privacy_erased: true } } });
+      }
+      for (const model of ['tableSession', 'tableReservation']) {
+        const rows = await tx[model].findMany({ where: { businessId } });
+        for (const row of rows) if (matchesErasure(row, marker)) {
+          const jsonField = model === 'tableSession' ? 'metadata' : 'meta';
+          await tx[model].update({ where: { id: row.id }, data: { customerName: 'Erased customer', customerPhone: null,
+            [jsonField]: eraseReceipt(row[jsonField] || {}), ...(model === 'tableReservation' ? { notes: null } : {}) } });
+        }
+      }
+      await tx.feedback.updateMany({ where: { businessId, billId: { in: bills.map(bill => bill.id) } }, data: { customerName: 'Erased customer', comment: null } });
+      await tx.marketingMessage.updateMany({ where: { businessId, customerId: customer.id },
+        data: { phone: '', body: null, error: null, providerMessageId: null } });
+      await tx.marketingMessage.updateMany({ where: { businessId, customerId: customer.id, status: { in: ['queued', 'sending', 'failed'] } },
+        data: { status: 'skipped', skipReason: 'Customer data erased', lockedUntil: null } });
+      await tx.loyaltyEntry.updateMany({ where: { businessId, customerId: customer.id }, data: { note: null } });
       const erased = await tx.customer.update({ where: { id: customer.id }, data: {
         phone: `erased-${customer.id}`, name: "Erased customer", email: null, birthday: null, anniversary: null, gender: null,
-        notes: `Erased on request by ${actor?.name || "staff"}: ${reason.slice(0, 200)}`, tags: [], marketingOptIn: false, loyaltyPoints: 0, anonymizedAt: new Date(),
+        notes: 'Personal data erased on request', tags: [], marketingOptIn: false, loyaltyPoints: 0, anonymizedAt: new Date(),
       } });
+      const business = await tx.business.findFirst({ where: { id: businessId }, select: { tenantId: true } });
+      await admincoreChangeSyncService.notifyChange({ resource: 'privacy-erasures', action: 'erased',
+        recordId: customer.id, businessId, tenantId: business.tenantId }, { tx });
       return serializeCustomer(erased);
     });
   }
@@ -253,6 +316,7 @@ class CustomersService {
   }
 
   async stats({ businessId }) {
+    await synchronizeCustomerHistory(businessId);
     const [count, points, repeat] = await Promise.all([
       prisma.customer.count({ where: { businessId, anonymizedAt: null } }),
       prisma.customer.aggregate({ where: { businessId, anonymizedAt: null }, _sum: { loyaltyPoints: true } }),

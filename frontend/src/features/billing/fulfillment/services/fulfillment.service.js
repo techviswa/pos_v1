@@ -1,21 +1,8 @@
 import axios from "axios";
+import { setQrConnection, resolveQrApiBaseUrl } from "../../../../lib/qrUrls";
+import { getTabSessionId } from "../../../../lib/sessionSlots";
 
-const API_URL = (() => {
-  const configured = String(process.env.REACT_APP_BACKEND_URL || "").replace(/\/+$/, "");
-  if (typeof window === "undefined") return configured;
-
-  const currentOrigin = window.location.origin.replace(/\/+$/, "");
-  const currentHost = window.location.hostname;
-  if (configured && configured !== currentOrigin && !configured.includes("vercel.app")) {
-    return configured;
-  }
-
-  if (currentHost === "localhost" || currentHost === "127.0.0.1") {
-    return configured || "http://localhost:4001";
-  }
-
-  return "https://pos-v1-fwjm.onrender.com";
-})();
+const API_URL = resolveQrApiBaseUrl(process.env.REACT_APP_BACKEND_URL);
 
 const unwrap = (response) => response?.data?.data ?? response?.data;
 let tableManagementRequest = null;
@@ -27,7 +14,7 @@ const TABLE_MANAGEMENT_CACHE_TTL_MS = 15000;
 
 export const fulfillmentService = {
   async fetchTableManagement({ force = false, includeHistory = false } = {}) {
-    const requestKey = includeHistory ? "history" : "active";
+    const requestKey = `${getTabSessionId()}:${includeHistory ? "history" : "active"}`;
     const now = Date.now();
     if (
       !force &&
@@ -44,16 +31,19 @@ export const fulfillmentService = {
 
     tableManagementRequestKey = requestKey;
     tableManagementRequest = Promise.all([
+      axios.get(`${API_URL}/api/public/qr/connection`, { withCredentials: true }),
       axios.get(`${API_URL}/api/table-management`, { withCredentials: true }),
       axios.get(`${API_URL}/api/table-management/reservations`, {
         withCredentials: true,
         params: includeHistory ? { include_history: true } : undefined,
       }),
     ])
-      .then(([tablesResponse, reservationsResponse]) => ({
-        tables: unwrap(tablesResponse),
-        reservations: unwrap(reservationsResponse),
-      }))
+      .then(([connectionResponse, tablesResponse, reservationsResponse]) => {
+        const connection = unwrap(connectionResponse);
+        if (connection?.network === "local" && !connection.public_frontend_url) throw new Error("Connect the POS computer to Wi-Fi before generating scannable QR links.");
+        setQrConnection(connection);
+        return { tables: unwrap(tablesResponse), reservations: unwrap(reservationsResponse), connection };
+      })
       .then((result) => {
         tableManagementCache = result;
         tableManagementCacheKey = requestKey;
@@ -108,6 +98,11 @@ export const fulfillmentService = {
     tableManagementCache = null;
     const response = await axios.post(`${API_URL}/api/table-management/${tableId}/qr`, payload, { withCredentials: true });
     return unwrap(response);
+  },
+
+  async deleteTableQrCode(tableId) {
+    tableManagementCache = null;
+    return unwrap(await axios.delete(`${API_URL}/api/table-management/${tableId}/qr`, { withCredentials: true }));
   },
 
   async reserveTable(payload) {

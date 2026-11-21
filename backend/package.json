@@ -10,6 +10,10 @@
     "check": "node --check src/server.js",
     "test:smoke": "node scripts/smoke-tests.mjs",
     "test:security": "node scripts/security-hardening-tests.mjs",
+    "test:rls": "node scripts/rls-database-tests.mjs",
+    "test:rls:isolated": "node scripts/rls-isolated-check.mjs",
+    "rls:setup": "node scripts/setup-rls-role.mjs --write-local-env",
+    "rls:status": "node scripts/rls-status.mjs",
     "test:browser": "cd .. && node backend/scripts/mobile-viewport-tests.mjs && node backend/scripts/offline-till-tests.mjs",
     "deploy:check": "node scripts/deploy-check.mjs",
     "prisma:validate": "prisma validate",
@@ -18,6 +22,7 @@
     "prisma:deploy": "prisma migrate deploy",
     "prisma:seed": "node prisma/seed.js",
     "seed:production": "node scripts/seed-production.mjs",
+    "import:render-data": "node scripts/import-local-pos-to-target.mjs --target-from-clipboard",
     "db:setup": "npm run prisma:validate && npm run prisma:generate && npm run prisma:migrate && npm run prisma:seed",
     "db:reset:dev": "prisma migrate reset --force && npm run prisma:seed"
   },

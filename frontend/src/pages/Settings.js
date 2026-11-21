@@ -1,13 +1,14 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import axios from "axios";
 import { Layout } from "../components/Layout";
 import { useUi } from "../contexts/UiContext";
 import { API_URL, useAuth } from "../contexts/AuthContext";
 import { PaymentGatewaySettings } from "../core/payments/PaymentGatewaySettings";
 import { toast } from "sonner";
-import { DEFAULT_UI_SETTINGS } from "../lib/pos";
+import { DEFAULT_UI_SETTINGS, getLegacyUiSettings } from "../lib/pos";
 import { getPaymentMethodFlags, setPaymentMethodEnabled } from "../core/payments/utils/paymentMethods";
 import { fulfillmentService } from "../features/billing/fulfillment/services/fulfillment.service";
+import { apiData } from '../lib/apiData';
 
 const DEFAULT_TABLE_SETTINGS = {
   nichePreset: "restaurant",
@@ -47,9 +48,31 @@ const DEFAULT_TABLE_SETTINGS = {
 };
 
 export const Settings = () => {
-  const { settings, updateSettings, resetSettings } = useUi();
-  const { user } = useAuth();
-  const [form, setForm] = useState(settings);
+  const { settings, updateSettings, profileLoaded, profileError, refreshProfile } = useUi();
+  const [legacySettings] = useState(getLegacyUiSettings);
+  const { user, applyProfile } = useAuth();
+  const [accountName, setAccountName] = useState(user?.name || '');
+  const [savingAccount, setSavingAccount] = useState(false);
+  const accountDirty = useRef(false);
+  useEffect(() => { if (!accountDirty.current) setAccountName(user?.name || ''); }, [user?.name]);
+  const saveAccountName = async () => {
+    const name = accountName.trim();
+    if (!name || name.length > 120) { toast.error('Account name must contain 1 to 120 characters'); return; }
+    setSavingAccount(true);
+    try {
+      const response = await axios.put(`${API_URL}/api/staff/me/profile`, { name }, { withCredentials: true });
+      const saved = apiData(response);
+      applyProfile?.(saved);
+      accountDirty.current = false;
+      setAccountName(saved.name);
+      toast.success('Account name saved');
+    } catch (error) { toast.error(error?.response?.data?.error?.message || 'Account name was not saved. Review and retry.'); }
+    finally { setSavingAccount(false); }
+  };
+  const [form, setFormState] = useState(settings);
+  const dirty = useRef(false);
+  const editVersion = useRef(settings.updated_at);
+  const setForm = next => { dirty.current = true; setFormState(next); };
   const [passwordForm, setPasswordForm] = useState({ current: "", next: "", confirm: "" });
   const [changingPassword, setChangingPassword] = useState(false);
 
@@ -79,20 +102,25 @@ export const Settings = () => {
   };
   const [tableSettings, setTableSettings] = useState(DEFAULT_TABLE_SETTINGS);
   const [tableSettingsLoaded, setTableSettingsLoaded] = useState(false);
+  const [tableSettingsError, setTableSettingsError] = useState(false);
+  const [tableReload, setTableReload] = useState(0);
+  const tableBaseline = useRef(DEFAULT_TABLE_SETTINGS);
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
-    setForm(settings);
+    if (!dirty.current) { setFormState(settings); editVersion.current = settings.updated_at; }
   }, [settings]);
 
   useEffect(() => {
     let active = true;
 
     const loadTableSettings = async () => {
+      setTableSettingsLoaded(false);
+      setTableSettingsError(false);
       try {
         const data = await fulfillmentService.fetchSettings();
         if (!active) return;
-        setTableSettings({
+        const loadedSettings = {
           nichePreset: data?.nichePreset || DEFAULT_TABLE_SETTINGS.nichePreset,
           serviceMode: data?.serviceMode || DEFAULT_TABLE_SETTINGS.serviceMode,
           capabilities: {
@@ -111,14 +139,14 @@ export const Settings = () => {
             ...DEFAULT_TABLE_SETTINGS.uiPreferences,
             ...(data?.uiPreferences || {}),
           },
-        });
+        };
+        tableBaseline.current = loadedSettings;
+        setTableSettings(loadedSettings);
+        setTableSettingsLoaded(true);
       } catch (error) {
         if (active) {
+          setTableSettingsError(true);
           toast.error("Failed to load table management settings");
-        }
-      } finally {
-        if (active) {
-          setTableSettingsLoaded(true);
         }
       }
     };
@@ -128,7 +156,7 @@ export const Settings = () => {
     return () => {
       active = false;
     };
-  }, []);
+  }, [tableReload]);
 
   const paymentFlags = useMemo(
     () => getPaymentMethodFlags(form.paymentMethods),
@@ -184,30 +212,42 @@ export const Settings = () => {
 
   const save = async () => {
     setSaving(true);
+    let profileSaved = false;
     try {
-      updateSettings({
+      const saved = await updateSettings({
         ...form,
         taxRate: Number(form.taxRate) || 0,
-      });
+      }, editVersion.current);
+      dirty.current = false;
+      editVersion.current = saved.updated_at;
+      setFormState(saved);
+      profileSaved = true;
       await fulfillmentService.updateSettings(tableSettings);
+      tableBaseline.current = tableSettings;
       toast.success("Settings saved");
     } catch (error) {
-      toast.error(error?.response?.data?.message || "Failed to save table management settings");
+      toast.error(`${profileSaved ? 'Shop details saved, but table preferences failed: ' : ''}${error?.response?.data?.error?.message || error?.message || 'Review and retry.'}`);
     } finally {
       setSaving(false);
     }
   };
 
   const restoreDefaults = () => {
-    resetSettings();
-    setForm(DEFAULT_UI_SETTINGS);
+    setForm({ ...DEFAULT_UI_SETTINGS, shopName: form.shopName, gst: form.gst, address: form.address, phone: form.phone });
     setTableSettings(DEFAULT_TABLE_SETTINGS);
-    toast.success("Settings reset");
+    toast.info("Defaults prepared. Review and save to apply; shop details were kept.");
   };
 
   return (
     <Layout title="Settings">
       <div className="cf-page">
+        {profileError ? <div role="alert">{profileError} <button className="cf-btn cf-btn--secondary" onClick={refreshProfile}>Retry</button></div> : null}
+        {tableSettingsError ? <div role="alert">Table preferences could not be loaded. Saving is paused to protect existing settings. <button className="cf-btn cf-btn--secondary" onClick={() => setTableReload(value => value + 1)}>Retry table preferences</button></div> : null}
+        {profileLoaded && !settings.persisted && legacySettings ? <div className="cf-settings-migration" role="note">
+          Shop details now save to this business for all staff. Older browser preferences have been kept, but may belong to a different business.
+          <button className="cf-btn cf-btn--secondary" onClick={() => setForm({ ...settings, ...legacySettings })}>Review browser preferences for this business</button>
+        </div> : null}
+        {dirty.current ? <button className="cf-btn cf-btn--secondary" onClick={() => { dirty.current = false; setFormState(settings); setTableSettings(tableBaseline.current); editVersion.current = settings.updated_at; refreshProfile(); }}>Discard draft and reload saved settings</button> : null}
         <div className="cf-page__header">
           <div>
             <h1>Settings</h1>
@@ -217,14 +257,13 @@ export const Settings = () => {
             <button className="cf-btn cf-btn--secondary" disabled={saving} onClick={restoreDefaults}>
               Reset
             </button>
-            <button className="cf-btn cf-btn--primary" disabled={saving || !tableSettingsLoaded} onClick={save}>
+            <button className="cf-btn cf-btn--primary" disabled={saving || !tableSettingsLoaded || !profileLoaded} onClick={save}>
               {saving ? "Saving..." : "Save Changes"}
             </button>
           </div>
         </div>
 
         <div className="cf-settings-grid">
-          {["Owner", "Manager"].includes(user?.role) ? <PaymentGatewaySettings apiUrl={API_URL} isOwner={user?.role === "Owner"} /> : null}
           <div className="cf-settings-card">
             <div className="cf-settings-card__title">Shop Information</div>
             <div className="cf-field">
@@ -297,15 +336,17 @@ export const Settings = () => {
           </div>
 
           <div className="cf-settings-card">
-            <div className="cf-settings-card__title">Owner Account</div>
+            <div className="cf-settings-card__title">Your Account</div>
             <div className="cf-field">
               <label>Full Name</label>
-              <input className="cf-input" value={form.ownerName} onChange={(event) => setForm({ ...form, ownerName: event.target.value })} />
+              <input className="cf-input" maxLength={120} value={accountName} onChange={(event) => { accountDirty.current = true; setAccountName(event.target.value); }} />
             </div>
             <div className="cf-field">
               <label>Email</label>
-              <input className="cf-input" type="email" value={form.ownerEmail} onChange={(event) => setForm({ ...form, ownerEmail: event.target.value })} />
+              <input className="cf-input" type="email" value={user?.email || ''} readOnly />
+              <p className="cf-field__hint">Login email and access are managed in Staff.</p>
             </div>
+            <button className="cf-btn cf-btn--secondary" style={{ marginBottom: 20 }} type="button" disabled={savingAccount || !accountDirty.current} onClick={saveAccountName}>{savingAccount ? 'Saving account...' : 'Save account name'}</button>
             <div className="cf-field">
               <label htmlFor="pw-current">Current Password</label>
               <input id="pw-current" className="cf-input" type="password" autoComplete="current-password" value={passwordForm.current} onChange={(event) => setPasswordForm({ ...passwordForm, current: event.target.value })} />
@@ -323,6 +364,7 @@ export const Settings = () => {
             </button>
           </div>
 
+          {["Owner", "Manager"].includes(user?.role) ? <PaymentGatewaySettings apiUrl={API_URL} isOwner={user?.role === "Owner"} /> : null}
           <div className="cf-settings-card">
             <div className="cf-settings-card__title">System Info</div>
             <table className="cf-table">
@@ -333,15 +375,15 @@ export const Settings = () => {
                 </tr>
                 <tr>
                   <td style={{ color: "var(--cf-text-2)" }}>Configured Tax</td>
-                  <td className="cf-table__mono">{form.taxRate}%</td>
+                  <td className="cf-table__mono">{settings.taxRate}%</td>
                 </tr>
                 <tr>
                   <td style={{ color: "var(--cf-text-2)" }}>Payment Methods</td>
-                  <td className="cf-table__mono">{form.paymentMethods.join(", ")}</td>
+                  <td className="cf-table__mono">{settings.paymentMethods.join(", ")}</td>
                 </tr>
                 <tr>
                   <td style={{ color: "var(--cf-text-2)" }}>Last Backup</td>
-                  <td className="cf-table__mono">Never</td>
+                  <td className="cf-table__mono">Status unavailable</td>
                 </tr>
               </tbody>
             </table>

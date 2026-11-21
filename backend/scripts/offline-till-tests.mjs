@@ -103,14 +103,18 @@ try {
   await send("Network.enable", {}, session);
   await send("Fetch.enable", { patterns: [{ urlPattern: "*", requestStage: "Request" }] }, session);
   await send("Page.addScriptToEvaluateOnNewDocument", { source: `if (!sessionStorage.getItem('cashflow-lite-tab-session-id')) sessionStorage.setItem('cashflow-lite-tab-session-id', ${JSON.stringify(auth.sessionId)});` }, session);
-  const evaluate = async (expression) => (await send("Runtime.evaluate", { expression, returnByValue: true, awaitPromise: true }, session)).result.value;
+  const evaluate = async (expression) => {
+    const response = await send("Runtime.evaluate", { expression, returnByValue: true, awaitPromise: true }, session);
+    if (response.exceptionDetails) throw new Error(response.exceptionDetails.exception?.description || response.exceptionDetails.text);
+    return response.result.value;
+  };
   const waitFor = async (expression, label, timeoutMs = 30000) => {
     const started = Date.now();
     while (Date.now() - started < timeoutMs) {
       if (await evaluate(expression).catch(() => false)) return;
       await sleep(300);
     }
-    throw new Error(`Timed out waiting for: ${label}\n${(await evaluate("document.body.innerText").catch(() => "")).slice(0, 600)}`);
+    throw new Error(`Timed out waiting for: ${label}\n${(await evaluate("document.body.innerText").catch(() => "")).slice(-6000)}\nBrowser errors: ${pageErrors.join(' | ')}`);
   };
   const setOffline = (offline) => send("Network.emulateNetworkConditions", { offline, latency: 0, downloadThroughput: -1, uploadThroughput: -1 }, session);
   const card = `document.querySelector('[data-testid="product-card-${product.id}"]')`;
@@ -121,13 +125,17 @@ try {
     await evaluate(`(() => { const button = [...document.querySelectorAll('[role="dialog"] button')].find((node) => node.textContent.trim() === 'Add to Cart'); if (button) button.click(); return true; })()`);
     await waitFor(`!document.querySelector('[role="dialog"]')`, "customisation dialog closed", 5000);
   };
-  const queue = `Object.keys(localStorage).filter((key) => key.startsWith('cashflow-offline-bills:')).flatMap((key) => JSON.parse(localStorage.getItem(key)))`;
+  const queue = `[...new Map(Object.keys(localStorage).filter((key) => key.startsWith('cashflow-offline-bills:')).flatMap((key) => JSON.parse(localStorage.getItem(key))).map((row) => [row.id, row])).values()].filter((row) => !['synced', 'discarded'].includes(row.status))`;
 
   // 1. Online: the till loads, installs offline support and keeps a copy of the menu.
   await send("Page.navigate", { url: `${webUrl}/billing` }, session);
   await waitFor(`Boolean(${card})`, "menu online");
   await waitFor("Boolean(navigator.serviceWorker && navigator.serviceWorker.controller)", "service worker in control");
   await waitFor(`Object.keys(localStorage).some((key) => key.startsWith('cashflow-offline-data:') && key.includes(':billing:'))`, "menu copy saved");
+  // Channel prices have separate caches. Prime the delivery menu online rather
+  // than assuming that a dine-in price is valid for an uncached service mode.
+  await evaluate(`[...document.querySelectorAll('[aria-label="Order service"] button')].find((button) => button.firstElementChild?.textContent.trim() === 'Delivery').click(); true`);
+  await waitFor(`Boolean(${card}) && Object.keys(localStorage).some((key) => key.startsWith('cashflow-offline-data:') && key.endsWith(':Delivery'))`, "delivery menu copy saved");
 
   // 2. Connection lost and the page reloaded: the app still opens from the device and keeps selling.
   apiReachable = false;
@@ -139,16 +147,19 @@ try {
 
   await addOne();
   await addOne();
-  await evaluate(`[...document.querySelectorAll('button')].find((button) => button.textContent.trim() === 'Delivery').click(); true`);
+  await evaluate(`[...document.querySelectorAll('[aria-label="Order service"] button')].find((button) => button.firstElementChild?.textContent.trim() === 'Delivery').click(); true`);
+  await waitFor("Boolean(document.getElementById('delivery-address'))", "delivery details visible");
   const fill = (label, value) => evaluate(`(() => {
     const field = [...document.querySelectorAll('.cf-field')].find((node) => node.querySelector('label')?.textContent.trim() === ${JSON.stringify(label)});
-    const input = field.querySelector('input');
-    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(input, ${JSON.stringify(value)});
+    const input = field.querySelector('input, textarea');
+    const prototype = input.tagName === 'TEXTAREA' ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
+    Object.getOwnPropertyDescriptor(prototype, 'value').set.call(input, ${JSON.stringify(value)});
     input.dispatchEvent(new Event('input', { bubbles: true }));
     return true;
   })()`);
   await fill("Customer Name", "Offline guest");
   await fill("Phone", "9876543210");
+  await fill("Delivery address *", "Fixture delivery address");
   await evaluate(`[...document.querySelectorAll('button')].find((button) => button.textContent.includes('Generate Bill')).click(); true`);
   await waitFor(`document.body.innerText.includes('Provisional receipt taken offline')`, "offline receipt");
   assert.ok(await evaluate(`document.body.innerText.includes('hand it to the kitchen')`), "the offline receipt tells staff to take it to the kitchen");

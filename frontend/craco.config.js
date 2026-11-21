@@ -42,6 +42,12 @@ let webpackConfig = {
     },
     configure: (webpackConfig) => {
 
+      // Separate dev servers must not write the same filesystem cache pack.
+      // Both 3000 (direct start) and 3002 (root start) are used locally.
+      if (webpackConfig.mode === "development" && webpackConfig.cache && typeof webpackConfig.cache === "object") {
+        webpackConfig.cache = { ...webpackConfig.cache, name: `${webpackConfig.cache.name || "development"}-port-${process.env.PORT || "3000"}` };
+      }
+
       // Add ignored patterns to reduce watched directories
         webpackConfig.watchOptions = {
           ...webpackConfig.watchOptions,

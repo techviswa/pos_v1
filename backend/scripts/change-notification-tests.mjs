@@ -34,7 +34,7 @@ try {
   assert.ok(events.every((event) => event.businessId === businessId && event.tenantId === tenantId));
   await prisma.product.createMany({ data: [1, 2, 3].map((i) => ({ businessId, name: `Paged ${i}`, category: "test", price: i })) });
   const first = await syncService.exportResource({ resource: "products", tenantId, businessId, query: { limit: 2 } });
-  const second = await syncService.exportResource({ resource: "products", tenantId, businessId, query: { limit: 2, offset: first.meta.pagination.next_offset } });
+  const second = await syncService.exportResource({ resource: "products", tenantId, businessId, query: { limit: 2, offset: first.meta.pagination.next_offset, cursor: first.meta.pagination.next_cursor } });
   assert.equal(first.meta.pagination.has_more, true);
   assert.equal(second.meta.pagination.has_more, false);
   assert.equal(new Set([...first.items, ...second.items].map((row) => row.id)).size, 3);

@@ -61,9 +61,20 @@ const shutdown = async (signal) => {
   }
 };
 
-const startServer = () => {
+const startServer = async () => {
   if (initErrorReporting()) logger.info("Error reporting to Sentry is on");
-  getProductionConfigIssues().forEach((issue) => logger.error(`Insecure production configuration: ${issue}`));
+  const configIssues = getProductionConfigIssues();
+  configIssues.forEach((issue) => logger.error(`Insecure production configuration: ${issue}`));
+  if (configIssues.length) { process.exit(1); return; }
+  if (env.nodeEnv === "production" || env.database?.tenantUrl) {
+    try { await connectDatabase(); }
+    catch (error) {
+      logger.error(`Database security preflight failed: ${error instanceof Error ? error.message : String(error)}`);
+      await prisma.$disconnect();
+      process.exit(1);
+      return;
+    }
+  }
   jobQueue.start();
   startMarketingWorker();
   server = app.listen(env.port, () => {

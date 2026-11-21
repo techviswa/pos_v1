@@ -24,6 +24,8 @@ import {
   SUBSCRIPTION_STATUSES,
 } from "./saas-plans.js";
 import { saasStore } from "./saas-store.js";
+import { publishChange } from "../../services/realtime/realtime.service.js";
+import { validateFulfillmentPolicy } from "../billing/fulfillment-policy.js";
 import { hashPassword, isPasswordHash } from "../auth/passwords.js";
 
 const normalizeId = (value, fallback) => String(value || fallback).trim();
@@ -154,6 +156,7 @@ class SaasService {
       },
       usage,
       enabled_features: config.enabled_features || plan.features,
+      fulfillment_modes: config.fulfillment_modes,
       limits_enforced: true,
       onboarding: {
         admincore_client_id: config.admincore_client_id,
@@ -199,6 +202,7 @@ class SaasService {
       public_qr_domain: payload.public_qr_domain ?? current.public_qr_domain,
       limits: { ...plan.limits, ...(payload.limits || {}) },
       enabled_features: payload.enabled_features || payload.features || plan.features,
+      ...(payload.fulfillment_modes !== undefined ? { fulfillment_modes: validateFulfillmentPolicy(payload.fulfillment_modes) } : {}),
       onboarded_at: current.onboarded_at || new Date().toISOString(),
     });
     this.invalidateAccess(updatedBusiness.id);
@@ -247,9 +251,11 @@ class SaasService {
       current_period_end: payload.current_period_end ?? current.current_period_end,
       limits: payload.limits ? { ...plan.limits, ...payload.limits } : plan.limits,
       enabled_features: enabledFeatures,
+      ...(payload.fulfillment_modes !== undefined ? { fulfillment_modes: validateFulfillmentPolicy(payload.fulfillment_modes) } : {}),
     });
     this.invalidateAccess(business.id);
     if (planChanged || payload.enabled_features || payload.features) await featureToggleService.setFeaturesForBusiness(business.id, enabledFeatures);
+    if (payload.fulfillment_modes !== undefined) await publishChange({ businessId: business.id, resource: "billing_modes" });
     return this.getTenantOverview({ businessId: business.id });
   }
 

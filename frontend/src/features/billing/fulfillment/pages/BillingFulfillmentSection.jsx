@@ -2,9 +2,12 @@ import React from "react";
 import { FulfillmentModeSelector } from "../components/FulfillmentModeSelector";
 import { FulfillmentDetailsFields } from "../components/FulfillmentDetailsFields";
 import { FulfillmentTablePanel } from "../components/FulfillmentTablePanel";
+import { buildScheduledDateTime, getTrackingLine, FULFILLMENT_MODES } from "../utils/fulfillmentMode";
 
 export const BillingFulfillmentSection = ({
   orderMeta,
+  allowedModes,
+  hasCartItems = false,
   changeFulfillmentMode,
   setOrderMeta,
   billingErrors,
@@ -30,11 +33,24 @@ export const BillingFulfillmentSection = ({
   onCreateArea,
   onUpdateArea,
   onDeleteArea,
-}) => (
+}) => {
+  const modes = FULFILLMENT_MODES.filter(mode => allowedModes?.[mode.key] === true);
+  if (!allowedModes) return <p role="status">Loading order setup…</p>;
+  if (!modes.length) return <p role="alert">Ordering is currently unavailable for this business. Contact your administrator.</p>;
+  if (!allowedModes[orderMeta.fulfillment_mode]) return <div ref={sectionRef}>
+    {!hasCartItems ? <p role="status">Preparing order setup…</p> : <>
+      <p role="alert">The available order setup has changed. Review it before continuing. Your cart has been kept.</p>
+      {modes.length === 1
+        ? <button className="cf-btn cf-btn--secondary" type="button" onClick={() => changeFulfillmentMode(modes[0].key)}>Update order setup</button>
+        : <FulfillmentModeSelector onChange={changeFulfillmentMode} value={orderMeta.fulfillment_mode} allowedModes={allowedModes} />}
+    </>}
+  </div>;
+  return (
   <div className="cf-quick-order-grid" ref={sectionRef}>
     <div style={{ display: "grid", gap: 16 }}>
-      <FulfillmentModeSelector onChange={changeFulfillmentMode} value={orderMeta.fulfillment_mode} />
+      <FulfillmentModeSelector onChange={changeFulfillmentMode} value={orderMeta.fulfillment_mode} allowedModes={allowedModes} />
       <FulfillmentDetailsFields
+        hasServiceChoice={modes.length > 1}
         billingErrors={billingErrors}
         clearBillingError={clearBillingError}
         onSendWhatsApp={onSendWhatsApp}
@@ -43,6 +59,9 @@ export const BillingFulfillmentSection = ({
         suggestedTokenNumber={suggestedTokenNumber}
         todayDateValue={todayDateValue}
       />
+      {orderMeta.fulfillment_mode !== "TABLE" && <p className="cf-card__meta" aria-live="polite" style={{ margin: 0, overflowWrap: "anywhere" }}>
+        {getTrackingLine({ ...orderMeta, pickup_slot: buildScheduledDateTime(orderMeta.pickup_date, orderMeta.pickup_time, orderMeta.pickup_meridiem) })}
+      </p>}
     </div>
     {orderMeta.fulfillment_mode === "TABLE" ? (
       <FulfillmentTablePanel
@@ -65,32 +84,7 @@ export const BillingFulfillmentSection = ({
         tableItems={tableItems}
         qrOrderingEnabled={qrOrderingEnabled}
       />
-    ) : (
-      <div className="cf-card cf-card--padded">
-        <div className="cf-card__title">
-          <span>
-            {orderMeta.fulfillment_mode === "TOKEN"
-              ? "Token Queue"
-              : orderMeta.fulfillment_mode === "PICKUP"
-                ? "Pickup Handover"
-                : "Delivery Dispatch"}
-          </span>
-          <span className="cf-card__meta">
-            {orderMeta.fulfillment_mode === "TOKEN"
-              ? "Counter token flow stays available."
-              : orderMeta.fulfillment_mode === "PICKUP"
-                ? "Scheduled handover flow is active."
-                : "Dispatch flow keeps customer notes in the bill."}
-          </span>
-        </div>
-        <div className="cf-card__meta" style={{ marginTop: 10 }}>
-          {orderMeta.fulfillment_mode === "TOKEN"
-            ? "Use the suggested token number to call the customer at the counter."
-            : orderMeta.fulfillment_mode === "PICKUP"
-              ? "Pickup orders stay scheduled for later collection."
-              : "Delivery orders skip in-store handover while keeping customer notes in the bill."}
-        </div>
-      </div>
-    )}
+    ) : null}
   </div>
-);
+  );
+};

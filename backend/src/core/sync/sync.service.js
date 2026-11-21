@@ -1,4 +1,9 @@
-import { readFile, writeFile, mkdir } from "fs/promises";
+import env from "../../config/env.js";
+import { EXPORT_CURSOR, beginExportCursor, finishExportCursor, readExportPage } from "../../shared/utils/export-cursor.js";
+import { snapshotRowLimit, registerSnapshotWorker } from './export-snapshot.js';
+import { serializeCustomerRows } from './customer-export.js';
+import { readFile } from "fs/promises";
+import { createHash, randomUUID } from "node:crypto";
 import path from "path";
 import { fileURLToPath } from "url";
 import { businessesService } from "../businesses/businesses.service.js";
@@ -6,6 +11,7 @@ import { outletsService } from "../outlets/outlets.service.js";
 import { productsService } from "../products/products.service.js";
 import { ordersService } from "../orders/orders.service.js";
 import { usersService } from "../users/users.service.js";
+import { serializeUser } from '../../database/prisma/helpers.js';
 import { inventoryService } from "../inventory/inventory.service.js";
 import { billingService } from "../billing/billing.service.js";
 import { paymentsService } from "../payments/payments.service.js";
@@ -22,6 +28,7 @@ import {
 } from "./admincore-sync-log.repository.js";
 import { createSyncEnvelope } from "./sync-contract.js";
 import { getPagination } from "../../shared/utils/pagination.js";
+import { OPERATIONAL_EXPORT_RESOURCES, exportOperationalRows } from "./operational-exports.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -29,23 +36,31 @@ const dataDirectory = path.resolve(__dirname, "../../../data");
 const eventsPath = path.join(dataDirectory, "offline-sync-events.json");
 
 const nowIso = () => new Date().toISOString();
-const collectExportRows = async (fetchPage) => {
-  const rows = [];
-  const seen = new Set();
-  for (let offset = 0; offset < 50000; offset += 250) {
-    const page = await fetchPage({ limit: 250, offset });
+export const collectExportRows = async (fetchPage) => {
+  const rows = [], seen = new Set();
+  let bytes = 0;
+  const context = { state: { limit: 250, offset: 0, positions: {}, bounds: {} }, secret: "internal-collector", completeScope: false, reads: {} };
+  for (let offset = 0; offset < snapshotRowLimit(); offset += 250) {
+    context.reads = {};
+    const cursorQuery = { [EXPORT_CURSOR]: context };
+    const page = await fetchPage({ limit: 250, offset, query: cursorQuery, ...cursorQuery });
+    if (!Object.keys(context.reads).length) throw createHttpError({ statusCode: 502, code: "POS_PAGINATION_INVALID", message: "Export loader did not establish a stable cursor" });
     for (const row of page) {
-      if (!row.id || seen.has(row.id)) {
-        throw createHttpError({ statusCode: 502, code: "POS_PAGINATION_INVALID", message: "Export pagination repeated a record" });
-      }
-      seen.add(row.id);
-      rows.push(row);
+      bytes += Buffer.byteLength(JSON.stringify(row));
+      if (bytes > 64 * 1024 * 1024) throw createHttpError({ statusCode: 413, code: 'POS_EXPORT_MEMORY_LIMIT', message: 'Derived export exceeds the 64 MiB memory safety budget; narrow its scope' });
+      if (!row.id || seen.has(row.id)) throw createHttpError({ statusCode: 502, code: "POS_PAGINATION_INVALID", message: "Export pagination repeated a record" });
+      seen.add(row.id); rows.push(row);
     }
-    if (page.length < 250) return rows;
+    const pagination = finishExportCursor(context, { grouped: Object.keys(context.reads).length > 1 });
+    if (!pagination.has_more) return rows;
+    for (const [group, read] of Object.entries(context.reads)) if (read.last) context.state.positions[group] = read.last;
+    context.state.offset = pagination.next_offset;
   }
   throw createHttpError({ statusCode: 503, code: "POS_EXPORT_TOO_LARGE", message: "Export exceeds the synchronous limit; a background export is required" });
 };
+
 const ADMINCORE_SYNC_RESOURCES = [
+  ...OPERATIONAL_EXPORT_RESOURCES,
   "businesses",
   "outlets",
   "products",
@@ -83,16 +98,13 @@ const readEvents = async () => {
   }
 };
 
-const writeEvents = async (events) => {
-  await mkdir(dataDirectory, { recursive: true });
-  await writeFile(eventsPath, JSON.stringify(events, null, 2), "utf8");
-};
 
 const normalizeResource = (resource) => {
   return normalizeAdminCoreSyncResource(resource);
 };
 
 const normalizeExportData = (resource, data) => {
+  if (Array.isArray(data)) return data;
   if (resource === "tables") {
     return data.items || [];
   }
@@ -162,49 +174,6 @@ const getSyncLimit = (value, fallback = 250, max = 1000) => {
   const parsed = Number(value);
   if (!Number.isFinite(parsed) || parsed <= 0) return fallback;
   return Math.min(Math.floor(parsed), max);
-};
-
-const getCustomerKey = ({ name, phone }) => {
-  const normalizedPhone = String(phone || "").replace(/\D/g, "");
-  if (normalizedPhone) return `phone:${normalizedPhone}`;
-  return `name:${String(name || "Walk-in Customer").trim().toLowerCase()}`;
-};
-
-const serializeCustomerRows = ({ bills = [], orders = [], tenantId, businessId }) => {
-  const rowsByKey = new Map();
-  const upsert = (row) => {
-    const name = String(row.customer_name || row.customerName || "Walk-in Customer").trim() || "Walk-in Customer";
-    const phone = row.customer_phone || row.metadata?.customer_phone || null;
-    const key = getCustomerKey({ name, phone });
-    const current = rowsByKey.get(key) || {
-      id: key.replace(/[^a-zA-Z0-9_-]/g, "_"),
-      customer_id: key.replace(/[^a-zA-Z0-9_-]/g, "_"),
-      tenantId,
-      tenant_id: tenantId,
-      business_id: businessId,
-      name,
-      phone,
-      email: null,
-      order_count: 0,
-      bill_count: 0,
-      total_spent: 0,
-      first_seen_at: row.created_at || row.createdAt?.toISOString?.() || nowIso(),
-      last_seen_at: row.updated_at || row.updatedAt?.toISOString?.() || row.created_at || nowIso(),
-      sync_source: "pos-core",
-      sync_resource: "customers",
-      last_synced_at: nowIso(),
-    };
-
-    current.order_count += row.order_id || row.channel ? 1 : 0;
-    current.bill_count += row.invoice_number || row.bill_id || row.currency ? 1 : 0;
-    current.total_spent += Number(row.total || 0);
-    current.last_seen_at = [current.last_seen_at, row.updated_at || row.created_at].filter(Boolean).sort().at(-1);
-    rowsByKey.set(key, current);
-  };
-
-  bills.forEach(upsert);
-  orders.forEach(upsert);
-  return [...rowsByKey.values()];
 };
 
 const serializePaymentRows = ({ bills = [], intents = [], tenantId, businessId }) => {
@@ -318,26 +287,29 @@ const serializeDiscountRows = ({ bills = [], orders = [], business }) => {
   return rows;
 };
 
-const listQrExportRows = async (business, limit = 250) => {
+const listQrExportRows = async (business, limit = 250, offset = 0, query = {}) => {
   const [qrCodes, sessions, scans] = await Promise.all([
-    prisma.tableQrCode.findMany({
+    readExportPage(prisma.tableQrCode, {
       where: { businessId: business.id },
       include: { table: { include: { area: true } } },
-      orderBy: { updatedAt: "desc" },
+      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
       take: limit,
-    }),
-    prisma.tableSession.findMany({
+      skip: offset,
+    }, query, { group: "table_qr_code" }),
+    readExportPage(prisma.tableSession, {
       where: { businessId: business.id },
       include: { table: true, qrCode: true },
-      orderBy: { updatedAt: "desc" },
+      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
       take: limit,
-    }),
-    prisma.tableQrScanEvent.findMany({
+      skip: offset,
+    }, query, { group: "table_session" }),
+    readExportPage(prisma.tableQrScanEvent, {
       where: { businessId: business.id },
       include: { qrCode: true },
-      orderBy: { scannedAt: "desc" },
+      orderBy: [{ scannedAt: "asc" }, { id: "asc" }],
       take: limit,
-    }),
+      skip: offset,
+    }, query, { group: "qr_scan_event" }),
   ]);
 
   return [
@@ -408,32 +380,36 @@ const listQrExportRows = async (business, limit = 250) => {
   ];
 };
 
-const listCentralKitchenRows = async (business, limit = 250) => {
+const listCentralKitchenRows = async (business, limit = 250, offset = 0, query = {}) => {
   const [purchaseOrders, allocations, routePlans, movements] = await Promise.all([
-    prisma.purchaseOrder.findMany({
+    readExportPage(prisma.purchaseOrder, {
       where: { businessId: business.id },
       include: { outlet: true, requestedBy: { select: { id: true, name: true, email: true } } },
-      orderBy: { updatedAt: "desc" },
+      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
       take: limit,
-    }),
-    prisma.allocation.findMany({
+      skip: offset,
+    }, query, { group: "purchase_order" }),
+    readExportPage(prisma.allocation, {
       where: { businessId: business.id },
       include: { outlet: true },
-      orderBy: { updatedAt: "desc" },
+      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
       take: limit,
-    }),
-    prisma.routePlan.findMany({
+      skip: offset,
+    }, query, { group: "allocation" }),
+    readExportPage(prisma.routePlan, {
       where: { businessId: business.id },
       include: { stops: { include: { outlet: true }, orderBy: { sequence: "asc" } } },
-      orderBy: { updatedAt: "desc" },
+      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
       take: limit,
-    }),
-    prisma.inventoryMovement.findMany({
+      skip: offset,
+    }, query, { group: "route_plan" }),
+    readExportPage(prisma.inventoryMovement, {
       where: { businessId: business.id },
       include: { inventoryItem: true },
-      orderBy: { createdAt: "desc" },
+      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
       take: limit,
-    }),
+      skip: offset,
+    }, query, { group: "inventory_movement" }),
   ]);
 
   return [
@@ -524,8 +500,8 @@ const listCentralKitchenRows = async (business, limit = 250) => {
 
 const listSupplierRows = async (business, limit = 250) => {
   const [items, purchaseOrders] = await Promise.all([
-    prisma.inventoryItem.findMany({ where: { businessId: business.id }, orderBy: { updatedAt: "desc" }, take: limit }),
-    prisma.purchaseOrder.findMany({ where: { businessId: business.id }, include: { outlet: true }, orderBy: { updatedAt: "desc" }, take: limit }),
+    collectExportRows(page => readExportPage(prisma.inventoryItem, { where: { businessId: business.id }, orderBy: [{ createdAt: "asc" }, { id: "asc" }], take: page.limit, skip: page.offset }, page)),
+    collectExportRows(page => readExportPage(prisma.purchaseOrder, { where: { businessId: business.id }, include: { outlet: true }, orderBy: [{ createdAt: "asc" }, { id: "asc" }], take: page.limit, skip: page.offset }, page)),
   ]);
   const suppliers = new Map();
   for (const item of items) {
@@ -590,16 +566,16 @@ const listPermissionRows = async (business, limit = 250) => {
   const [roles, permissions, users] = await Promise.all([
     prisma.role.findMany({ include: { permissions: { include: { permission: true } } }, orderBy: { name: "asc" } }),
     prisma.permission.findMany({ orderBy: { key: "asc" } }),
-    prisma.user.findMany({
+    collectExportRows(page => readExportPage(prisma.user, {
       where: { businessId: business.id },
       include: {
         role: true,
         permissions: { include: { permission: true } },
         outletAssignments: { include: { outlet: true } },
       },
-      orderBy: { name: "asc" },
-      take: limit,
-    }),
+      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
+      take: page.limit, skip: page.offset,
+    }, page)),
   ]);
   return [
     ...roles.map((role) => ({
@@ -657,18 +633,18 @@ const listPermissionRows = async (business, limit = 250) => {
 
 const listAuditSecurityRows = async (business, limit = 250) => {
   const [activities, tokens] = await Promise.all([
-    prisma.staffActivity.findMany({
+    collectExportRows(page => readExportPage(prisma.staffActivity, {
       where: { user: { is: { businessId: business.id } } },
       include: { user: { select: { id: true, name: true, email: true, role: { select: { name: true } } } } },
-      orderBy: { createdAt: "desc" },
-      take: limit,
-    }),
-    prisma.authToken.findMany({
+      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
+      take: page.limit, skip: page.offset,
+    }, page)),
+    collectExportRows(page => readExportPage(prisma.authToken, {
       where: { user: { is: { businessId: business.id } } },
       include: { user: { select: { id: true, name: true, email: true } } },
-      orderBy: { createdAt: "desc" },
-      take: limit,
-    }),
+      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
+      take: page.limit, skip: page.offset,
+    }, page)),
   ]);
   return [
     ...activities.map((activity) => ({
@@ -809,17 +785,20 @@ class SyncService {
   }
 
   async listClientEvents({ tenantId, status } = {}) {
-    const events = await readEvents();
+    if (!tenantId) throw createHttpError({ statusCode: 400, message: "A tenant is required" });
+    const stored = await prisma.stateDocument.findMany({ where: { data: { path: ["tenant_id"], equals: tenantId }, key: { startsWith: "client-event:" } }, take: 1000, orderBy: { updatedAt: "desc" } });
+    const events = [...(await readEvents()).filter((event) => event.tenant_id === tenantId), ...stored.map((row) => row.data)];
     return events
-      .filter((event) => !tenantId || event.tenant_id === tenantId)
+      .filter((event) => event.tenant_id === tenantId)
       .filter((event) => !status || event.status === status)
       .sort((a, b) => String(b.received_at).localeCompare(String(a.received_at)));
   }
 
   async recordClientEvent({ tenantId, businessId, user, payload }) {
-    const events = await readEvents();
+    if (!tenantId || !businessId) throw createHttpError({ statusCode: 400, message: "A tenant and business are required" });
+    const events = (await readEvents()).filter((event) => event.tenant_id === tenantId);
     const event = {
-      id: `sync_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+      id: `sync_${randomUUID()}`,
       tenant_id: tenantId,
       business_id: businessId,
       user_id: user?.id || null,
@@ -839,9 +818,16 @@ class SyncService {
       return { ...duplicate, duplicate: true };
     }
 
-    events.push(event);
-    await writeEvents(events.slice(-1000));
-    return event;
+    const suffix = event.idempotency_key ? createHash("sha256").update(String(event.idempotency_key)).digest("hex") : event.id;
+    const key = `client-event:${businessId}:${suffix}`;
+    let row;
+    try { row = await prisma.stateDocument.upsert({ where: { key }, create: { key, data: event }, update: {} }); }
+    catch (error) {
+      if (error.code !== "P2002") throw error;
+      row = await prisma.stateDocument.findUnique({ where: { key } });
+      if (!row) throw error;
+    }
+    return row.data.id === event.id ? event : { ...row.data, duplicate: true };
   }
 
   async listAdminCoreLogs({ tenantId, resource, status } = {}) {
@@ -854,13 +840,21 @@ class SyncService {
 
   async exportResource({ resource, tenantId, businessId, query = {} }) {
     const normalizedResource = normalizeResource(resource);
-    const paginated = ["products", "orders", "bills", "inventory"].includes(normalizedResource);
+    const grouped = ["qr", "central-kitchen"].includes(normalizedResource);
+    const paginated = grouped || [...OPERATIONAL_EXPORT_RESOURCES, "products", "orders", "bills", "staff", "inventory", "kot"].includes(normalizedResource);
     const pagination = getPagination(query);
     if (paginated) query = { ...query, limit: pagination.limit, offset: pagination.offset };
     const limit = getSyncLimit(query.limit);
+    const cursorContext = paginated ? beginExportCursor({ business: await getBusinessContext({ tenantId, businessId }),
+      resource: normalizedResource, query, limit: pagination.limit, offset: pagination.offset,
+      secret: env.admincore.apiKey || env.auth.jwtSecret }) : null;
+    if (cursorContext) query = { ...query, [EXPORT_CURSOR]: cursorContext };
+
     let data;
 
-    if (normalizedResource === "businesses") {
+    if (OPERATIONAL_EXPORT_RESOURCES.includes(normalizedResource)) {
+      data = await exportOperationalRows({ resource: normalizedResource, business: await getBusinessContext({ tenantId, businessId }), query, client: prisma });
+    } else if (normalizedResource === "businesses") {
       data = await businessesService.listBusinesses({ businessId });
     } else if (normalizedResource === "outlets") {
       data = await outletsService.listOutlets({ tenantId, businessId });
@@ -874,6 +868,7 @@ class SyncService {
         limit,
         page: query.page,
         offset: query.offset,
+        query,
       });
     } else if (normalizedResource === "customers") {
       const [bills, orders] = await Promise.all([
@@ -909,53 +904,62 @@ class SyncService {
         },
       ];
     } else if (normalizedResource === "staff") {
-      data = await usersService.listUsers({ tenantId, businessId });
+      // Export must be read-only. The native staff screen initializes global
+      // role defaults; doing that inside a repeatable-read snapshot can roll
+      // back the export and must not alter access-control data during a read.
+      const business = await getBusinessContext({ tenantId, businessId });
+      const rows = await readExportPage(prisma.user, {
+        where: { businessId: business.id }, orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
+        include: { business: true, role: true, permissions: { include: { permission: true } },
+                   outletAssignments: { include: { outlet: true } } },
+        take: pagination.limit, skip: pagination.offset,
+      }, query);
+      data = rows.map(serializeUser);
     } else if (normalizedResource === "inventory") {
       data = await inventoryService.listItems({ tenantId, query });
     } else if (normalizedResource === "tables") {
       data = await tableManagementService.listTables({ tenantId, businessId });
     } else if (normalizedResource === "qr") {
-      data = await listQrExportRows(await getBusinessContext({ tenantId, businessId }), limit);
+      data = await listQrExportRows(await getBusinessContext({ tenantId, businessId }), limit, pagination.offset, query);
     } else if (normalizedResource === "reservations") {
       data = await tableManagementService.listReservations({ tenantId, businessId, includeHistory: true });
     } else if (normalizedResource === "kot") {
       data = await kotService.listTickets({
         tenantId,
         limit,
+        offset: pagination.offset,
+        ascending: true,
+        query,
         status: query.status,
         stationId: query.station_id || query.stationId,
       });
+      const business = await getBusinessContext({ tenantId, businessId });
+      data = normalizeExportData(normalizedResource, data).map(ticket => {
+        if (ticket.business_id !== business.id ||
+            ((ticket.tenant_id || ticket.tenantId) && (ticket.tenant_id || ticket.tenantId) !== business.tenantId)) {
+          throw createHttpError({ statusCode: 409, code: 'EXPORT_SCOPE_CHANGED', message: 'Kitchen ticket does not belong to the verified export scope' });
+        }
+        // Native kitchen DTOs do not need a tenant field; bridge rows do.
+        return { ...ticket, tenant_id: business.tenantId, tenantId: business.tenantId };
+      });
     } else if (normalizedResource === "central-kitchen") {
-      data = await listCentralKitchenRows(await getBusinessContext({ tenantId, businessId }), limit);
+      data = await listCentralKitchenRows(await getBusinessContext({ tenantId, businessId }), limit, pagination.offset, query);
     } else if (normalizedResource === "taxes") {
       const business = await getBusinessContext({ tenantId, businessId });
-      const bills = await billingService.listInvoices({
-        tenantId: business.tenantId,
-        limit,
-        page: query.page,
-        offset: query.offset,
-      });
+      const bills = await collectExportRows(page => billingService.listInvoices({ tenantId: business.tenantId, ...page }));
       data = serializeTaxRows({ bills, business });
     } else if (normalizedResource === "discounts") {
       const business = await getBusinessContext({ tenantId, businessId });
       const [bills, orders] = await Promise.all([
-        billingService.listInvoices({
-          tenantId: business.tenantId,
-          limit,
-          page: query.page,
-          offset: query.offset,
-        }),
-        ordersService.listOrders({
-          tenantId: business.tenantId,
-          query: { limit, page: query.page, offset: query.offset },
-        }),
+        collectExportRows(page => billingService.listInvoices({ tenantId: business.tenantId, ...page })),
+        collectExportRows(page => ordersService.listOrders({ tenantId: business.tenantId, query: page })),
       ]);
       data = serializeDiscountRows({ bills, orders, business });
     } else if (normalizedResource === "suppliers") {
       data = await listSupplierRows(await getBusinessContext({ tenantId, businessId }), limit);
     } else if (normalizedResource === "expenses") {
       const business = await getBusinessContext({ tenantId, businessId });
-      const centralKitchenRows = await listCentralKitchenRows(business, limit);
+      const centralKitchenRows = await collectExportRows(page => listCentralKitchenRows(business, page.limit, page.offset, page));
       data = centralKitchenRows
         .filter((row) => ["purchase_order", "allocation"].includes(row.resource_type))
         .map((row) => ({
@@ -1050,11 +1054,7 @@ class SyncService {
         lastSyncedAt: syncedAt,
       });
     if (paginated) {
-      envelope.meta.pagination = {
-        limit: pagination.limit, offset: pagination.offset,
-        has_more: items.length === pagination.limit,
-        next_offset: pagination.offset + items.length,
-      };
+      envelope.meta.pagination = finishExportCursor(cursorContext, { grouped });
     }
     return {
       ...envelope,
@@ -1064,3 +1064,4 @@ class SyncService {
 }
 
 export const syncService = new SyncService();
+registerSnapshotWorker(args => syncService.exportResource(args));

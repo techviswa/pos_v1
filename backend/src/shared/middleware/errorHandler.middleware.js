@@ -1,9 +1,11 @@
 import { logger } from "../utils/logger.js";
 import { errorMonitor } from "../utils/error-monitor.js";
+import { publicDatabaseError } from "../utils/database-error.js";
 
 export const errorHandlerMiddleware = (error, req, res, _next) => {
-  const statusCode = Number(error.statusCode || 500);
-  const code = error.code || (statusCode >= 500 ? "INTERNAL_SERVER_ERROR" : "REQUEST_ERROR");
+  const clientError = publicDatabaseError(error);
+  const statusCode = Number(clientError.statusCode || 500);
+  const code = clientError.code || (statusCode >= 500 ? "INTERNAL_SERVER_ERROR" : "REQUEST_ERROR");
   const isAdminCoreSyncRequest =
     String(req.query?.sync || "").toLowerCase() === "admincore" ||
     String(req.query?.admincore || "").toLowerCase() === "true" ||
@@ -12,7 +14,7 @@ export const errorHandlerMiddleware = (error, req, res, _next) => {
   // Server faults can carry database/driver text; customers only ever see a generic message in production.
   const publicMessage = statusCode >= 500 && process.env.NODE_ENV === "production"
     ? "Internal server error"
-    : error.message || "Internal server error";
+    : clientError.message || "Internal server error";
   const resource = req.params?.resource || req.originalUrl?.split("?")[0]?.split("/")?.filter(Boolean)?.at(-1) || "unknown";
 
   errorMonitor.captureRequestException(error, req);

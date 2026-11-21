@@ -60,6 +60,11 @@ class TableManagementController {
     res.status(200).json(apiResponse({ message: "Table QR code updated successfully", data }));
   }
 
+  async deleteTableQrCode(req, res) {
+    const data = await tableManagementService.deleteTableQrCode({ tenantId: req.context.tenantId, businessId: req.context.businessId, tableId: req.params.tableId });
+    res.status(200).json(apiResponse({ message: "QR code deleted. Table and orders retained.", data }));
+  }
+
   async getSettings(req, res) {
     const data = await tableManagementService.getSettings({
       tenantId: req.context.tenantId,

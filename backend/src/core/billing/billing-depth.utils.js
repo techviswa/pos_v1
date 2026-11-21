@@ -69,13 +69,15 @@ export const normalizeSubmittedPayments = (payments, options) => {
 };
 
 export const summarizePayments = (payments = [], total = 0) => {
-  const confirmedPaid = payments
+  // Sum paise so split payments cannot leave a floating-point remainder (e.g. 0.10 + 0.70).
+  const confirmedPaise = payments
     .filter((payment) => payment.status === "confirmed")
-    .reduce((sum, payment) => sum + toNumber(payment.amount, 0), 0);
-  const pendingPaid = payments
+    .reduce((sum, payment) => sum + Math.round(toNumber(payment.amount, 0) * 100), 0);
+  const pendingPaise = payments
     .filter((payment) => payment.status !== "confirmed")
-    .reduce((sum, payment) => sum + toNumber(payment.amount, 0), 0);
-  const dueAmount = Math.max(0, toNumber(total, 0) - confirmedPaid);
+    .reduce((sum, payment) => sum + Math.round(toNumber(payment.amount, 0) * 100), 0);
+  const confirmedPaid = confirmedPaise / 100, pendingPaid = pendingPaise / 100;
+  const dueAmount = Math.max(0, Math.round(toNumber(total, 0) * 100) - confirmedPaise) / 100;
 
   return {
     paid_amount: confirmedPaid,

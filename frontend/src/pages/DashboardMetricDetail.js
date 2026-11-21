@@ -1,4 +1,8 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
+import { formatQuantity } from "../lib/quantity";
+import { apiData } from "../lib/apiData";
+import { ApiErrorPanel } from "../components/ApiErrorPanel";
+import { API_URL } from "../lib/apiUrl";
 import axios from "axios";
 import { useNavigate, useParams } from "react-router-dom";
 import { Layout } from "../components/Layout";
@@ -6,22 +10,6 @@ import { formatCurrency } from "../lib/pos";
 import { useUi } from "../contexts/UiContext";
 import { useActiveOutlet } from "../core/outlets/store/ActiveOutletContext";
 
-const API_URL = (() => {
-  const configured = String(process.env.REACT_APP_BACKEND_URL || "").replace(/\/+$/, "");
-  if (typeof window === "undefined") return configured;
-
-  const currentOrigin = window.location.origin.replace(/\/+$/, "");
-  const currentHost = window.location.hostname;
-  if (configured && configured !== currentOrigin && !configured.includes("vercel.app")) {
-    return configured;
-  }
-
-  if (currentHost === "localhost" || currentHost === "127.0.0.1") {
-    return configured || "http://localhost:4001";
-  }
-
-  return "https://pos-v1-fwjm.onrender.com";
-})();
 
 const METRIC_META = {
   sales: {
@@ -58,8 +46,11 @@ export const DashboardMetricDetail = () => {
   const [loading, setLoading] = useState(true);
   const [stats, setStats] = useState(null);
   const [period, setPeriod] = useState("all");
+  const sequence = useRef(0);
+  const [error, setError] = useState(null);
 
   const fetchData = async () => {
+    const current = ++sequence.current;
     try {
       const statsRes = await axios.get(`${API_URL}/api/dashboard/stats`, {
         withCredentials: true,
@@ -68,9 +59,11 @@ export const DashboardMetricDetail = () => {
           ...(selectedOutletId ? { outlet_id: selectedOutletId } : {}),
         },
       });
-      setStats(statsRes.data);
+      if (current === sequence.current) { setStats(apiData(statsRes)); setError(null); }
+    } catch (failure) {
+      if (current === sequence.current) setError(failure);
     } finally {
-      setLoading(false);
+      if (current === sequence.current) setLoading(false);
     }
   };
 
@@ -129,6 +122,7 @@ export const DashboardMetricDetail = () => {
   return (
     <Layout title={meta.title}>
       <div className="cf-page">
+        {error ? <ApiErrorPanel error={error} onRetry={fetchData} /> : null}
         <div className="cf-page__header">
           <div>
             <h1>{meta.title}</h1>
@@ -219,8 +213,8 @@ export const DashboardMetricDetail = () => {
                     (inventorySummary.at_risk_items || []).map((item) => (
                       <tr key={item.id}>
                         <td>{item.name}</td>
-                        <td className="cf-table__mono">{item.current_stock} {item.unit}</td>
-                        <td className="cf-table__mono">{item.days_remaining ?? "-"}</td>
+                        <td className="cf-table__mono">{formatQuantity(item.current_stock, item.unit)}</td>
+                        <td className="cf-table__mono">{item.days_remaining == null ? "No estimate" : formatQuantity(item.days_remaining, "days")}</td>
                         <td className="cf-table__mono">{item.expiry_date ? item.expiry_date.slice(0, 10) : "-"}</td>
                       </tr>
                     ))
@@ -245,7 +239,7 @@ export const DashboardMetricDetail = () => {
                     (inventorySummary.expiry_alerts || []).map((item) => (
                       <tr key={item.id}>
                         <td>{item.name}</td>
-                        <td className="cf-table__mono">{item.current_stock} {item.unit}</td>
+                        <td className="cf-table__mono">{formatQuantity(item.current_stock, item.unit)}</td>
                         <td className="cf-table__mono">{item.expiry_date ? item.expiry_date.slice(0, 10) : "-"}</td>
                       </tr>
                     ))
@@ -278,8 +272,8 @@ export const DashboardMetricDetail = () => {
                     <tr>
                       <th>Product</th>
                       <th>Base Recipe</th>
-                      <th>Variation Extras</th>
-                      <th>Add-on Extras</th>
+                      <th>Largest variation extra</th>
+                      <th>All add-on extras</th>
                       <th>Status</th>
                     </tr>
                   </thead>
@@ -288,10 +282,10 @@ export const DashboardMetricDetail = () => {
                       (recipeAnalytics.top_recipe_cost_products || []).map((product) => (
                         <tr key={product.id}>
                           <td>{product.name}</td>
-                          <td className="cf-table__mono">{formatCurrency(product.base_recipe_cost || 0, settings.currency)}</td>
-                          <td className="cf-table__mono">{formatCurrency(product.variation_recipe_cost || 0, settings.currency)}</td>
-                          <td className="cf-table__mono">{formatCurrency(product.addon_recipe_cost || 0, settings.currency)}</td>
-                          <td>{product.ingredient_blocked ? "Blocked" : "Ready"}</td>
+                          <td className="cf-table__mono">{product.base_recipe_cost == null ? "Needs review" : formatCurrency(product.base_recipe_cost, settings.currency)}</td>
+                          <td className="cf-table__mono">{product.variation_recipe_cost == null ? "Needs review" : formatCurrency(product.variation_recipe_cost, settings.currency)}</td>
+                          <td className="cf-table__mono">{product.addon_recipe_cost == null ? "Needs review" : formatCurrency(product.addon_recipe_cost, settings.currency)}</td>
+                          <td>{product.recipe_needs_review ? "Recipe or stock setup needed" : product.ingredient_blocked ? "Blocked" : "Base recipe ready"}</td>
                         </tr>
                       ))
                     ) : (
@@ -301,7 +295,7 @@ export const DashboardMetricDetail = () => {
                 </table>
               </div>
               <div className="cf-table-wrap">
-                <div className="cf-section-title">Top Ingredient Usage</div>
+                <div className="cf-section-title">Recorded ingredient consumption</div>
                 <table className="cf-table">
                   <thead>
                     <tr>
@@ -315,7 +309,7 @@ export const DashboardMetricDetail = () => {
                       (recipeAnalytics.top_ingredient_usage || []).map((ingredient) => (
                         <tr key={ingredient.inventory_id}>
                           <td>{ingredient.ingredient_name}</td>
-                          <td className="cf-table__mono">{ingredient.quantity_used}</td>
+                          <td className="cf-table__mono">{formatQuantity(ingredient.quantity_used, ingredient.unit)}</td>
                           <td>{ingredient.unit || "-"}</td>
                         </tr>
                       ))
@@ -332,7 +326,7 @@ export const DashboardMetricDetail = () => {
                 <thead>
                   <tr>
                     <th>Product</th>
-                    <th>Orders</th>
+                    <th>Invoices</th>
                     <th>Recipe Nodes</th>
                     <th>Available Units</th>
                   </tr>

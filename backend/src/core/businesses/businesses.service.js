@@ -2,6 +2,7 @@ import prisma from "../../database/prisma/client.js";
 import { serializeBusiness } from "../../database/prisma/helpers.js";
 import { createHttpError, createNotFoundError } from "../../shared/utils/http-error.js";
 import { admincoreChangeSyncService } from "../admincore/admincore-change-sync.service.js";
+import { readBusinessProfile, updateBusinessProfile } from './business-profile.js';
 
 const getBusinessInclude = () => ({
   users: {
@@ -49,20 +50,13 @@ class BusinessesService {
 
     return serializedBusiness;
   }
-  async renameBusiness({ businessId, name }) {
+  async renameBusiness({ businessId, name, expectedUpdatedAt }) {
     const trimmed = String(name || "").trim();
     if (!trimmed) throw createHttpError({ statusCode: 400, code: "BUSINESS_NAME_REQUIRED", message: "name is required" });
     if (trimmed.length > 120) throw createHttpError({ statusCode: 400, code: "BUSINESS_NAME_TOO_LONG", message: "name must be at most 120 characters" });
-    const business = await prisma.business.update({ where: { id: String(businessId) }, data: { name: trimmed }, include: getBusinessInclude() });
+    await updateBusinessProfile(businessId, { shopName: trimmed, expected_updated_at: expectedUpdatedAt });
+    const business = await prisma.business.findUnique({ where: { id: String(businessId) }, include: getBusinessInclude() });
     const serialized = serializeBusiness(business);
-    await admincoreChangeSyncService.notifyChange({
-      resource: "businesses",
-      action: "updated",
-      recordId: serialized.id,
-      tenantId: serialized.tenant_id,
-      businessId: serialized.id,
-      metadata: { name: serialized.name, status: serialized.status, plan: serialized.plan },
-    });
     return serialized;
   }
 
@@ -73,7 +67,10 @@ class BusinessesService {
       include: getBusinessInclude(),
     });
 
-    return businesses.map(serializeBusiness);
+    return Promise.all(businesses.map(async business => {
+      const profile = await readBusinessProfile(business.id);
+      return { ...serializeBusiness(business), name: profile.shopName, updated_at: profile.updated_at, profile };
+    }));
   }
 
   async getBusinessById({ businessId, currentBusinessId }) {

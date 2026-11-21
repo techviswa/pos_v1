@@ -1,17 +1,18 @@
-// The POS backend base URL, shared by every module that talks to the API.
-export const API_URL = (() => {
-  const configured = String(process.env.REACT_APP_BACKEND_URL || "").replace(/\/+$/, "");
-  if (typeof window === "undefined") return configured;
-
-  const currentOrigin = window.location.origin.replace(/\/+$/, "");
-  const currentHost = window.location.hostname;
-  if (configured && configured !== currentOrigin && !configured.includes("vercel.app")) {
-    return configured;
+// Staff and public menu requests share the configured backend.
+export const resolveApiBaseUrl = (configured = "", pageOrigin = typeof window === "undefined" ? "http://localhost" : window.location.origin) => {
+  const value = String(configured || "").trim().replace(/\/+$/, "");
+  const page = new URL(pageOrigin);
+  const loopback = (host) => ["localhost", "127.0.0.1", "[::1]"].includes(host);
+  const lan = /^(10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.)/.test(page.hostname);
+  if (value) {
+    const api = new URL(value, pageOrigin);
+    if (lan && loopback(api.hostname)) return ""; // Phones use the local /api proxy.
+    return api.href.replace(/\/$/, "");
   }
-
-  if (currentHost === "localhost" || currentHost === "127.0.0.1") {
-    return configured || "http://localhost:4001";
-  }
-
-  return "https://pos-v1-fwjm.onrender.com";
-})();
+  if (lan) return "";
+  if (loopback(page.hostname)) return `${page.protocol}//${page.hostname}:4001`;
+  // Public deployments must configure a backend or /api proxy. Never silently
+  // contact a hardcoded, potentially unrelated cloud service.
+  return "";
+};
+export const API_URL = resolveApiBaseUrl(process.env.REACT_APP_BACKEND_URL);

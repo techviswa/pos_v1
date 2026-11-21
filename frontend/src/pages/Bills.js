@@ -1,9 +1,13 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useNavigate } from 'react-router-dom';
+import { API_URL } from "../lib/apiUrl";
 import { useAutoRefresh } from "../hooks/useAutoRefresh";
 import axios from "axios";
 import { Layout } from "../components/Layout";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "../components/ui/dialog";
-import { formatCurrency } from "../lib/pos";
+import { formatCurrency, hasPermission } from "../lib/pos";
+import { apiData } from '../lib/apiData';
+import { getApiErrorMessage } from '../lib/apiErrors';
 import { useAuth } from "../contexts/AuthContext";
 import { useUi } from "../contexts/UiContext";
 import { getTrackingLine } from "../core/billing/utils/orderTracking";
@@ -12,22 +16,6 @@ import { useActiveOutlet } from "../core/outlets/store/ActiveOutletContext";
 import { StockReversal } from "../core/billing/components/StockReversal";
 import { BillPayments } from "../core/billing/components/BillPayments";
 
-const API_URL = (() => {
-  const configured = String(process.env.REACT_APP_BACKEND_URL || "").replace(/\/+$/, "");
-  if (typeof window === "undefined") return configured;
-
-  const currentOrigin = window.location.origin.replace(/\/+$/, "");
-  const currentHost = window.location.hostname;
-  if (configured && configured !== currentOrigin && !configured.includes("vercel.app")) {
-    return configured;
-  }
-
-  if (currentHost === "localhost" || currentHost === "127.0.0.1") {
-    return configured || "http://localhost:4001";
-  }
-
-  return "https://pos-v1-fwjm.onrender.com";
-})();
 
 const getStartOfToday = () => {
   const today = new Date();
@@ -50,40 +38,51 @@ const isFromTodayOrYesterday = (dateInput) => {
 
 export const Bills = () => {
   const { user } = useAuth();
+  const navigate = useNavigate();
   const { settings } = useUi();
   const { selectedOutlet, selectedOutletId } = useActiveOutlet();
   const [loading, setLoading] = useState(true);
-  const [bills, setBills] = useState([]);
+  const [snapshot, setSnapshot] = useState(null);
+  const [page, setPage] = useState(1), [error, setError] = useState('');
   const [filters, setFilters] = useState({ num: "", date: "", min: "", max: "", pay: "" });
   const [selectedBill, setSelectedBill] = useState(null);
+  const reusableItems = selectedBill?.items?.length && selectedBill.items.every(item =>
+    !Object.prototype.hasOwnProperty.call(item, 'productId') || item.productId || item.product_id);
+  useEffect(() => setSelectedBill(null), [selectedOutletId, user?.id]);
+  const scopeKey = JSON.stringify([selectedOutletId, user?.id, user?.role, page, filters]);
+  const scope = useRef(scopeKey), sequence = useRef(0);
+  scope.current = scopeKey;
+  const bills = useMemo(() => snapshot?.scope === scopeKey ? snapshot.items : [], [snapshot, scopeKey]);
+  const hasMore = snapshot?.scope === scopeKey && snapshot.has_more;
+  const changeFilter = changes => { setFilters(current => ({ ...current, ...changes })); setPage(1); setSelectedBill(null); };
 
-  const fetchBills = async () => {
+  const fetchBills = useCallback(async () => {
     if (!selectedOutletId) {
-      setBills([]);
       setLoading(false);
       return;
     }
-
-    const response = await axios.get(`${API_URL}/api/bills`, {
+    const key = scopeKey, request = ++sequence.current;
+    setLoading(true); setError('');
+    try {
+    const response = await axios.get(`${API_URL}/api/billing`, {
       withCredentials: true,
+      skipCache: true,
       params: {
-        outlet_id: selectedOutletId,
-        limit: 100,
+        outlet_id: selectedOutletId, paged: true, page,
+        search: filters.num || undefined, date: filters.date || undefined,
+        min: filters.min || undefined, max: filters.max || undefined, payment: filters.pay || undefined,
+        created_since: user?.role === 'Waiter' ? (() => { const date = getStartOfToday(); date.setDate(date.getDate() - 1); return date.toISOString(); })() : undefined,
       },
     });
-    setBills(response.data);
-    setLoading(false);
-  };
+    const data = apiData(response);
+    if (!Array.isArray(data?.items)) throw new Error('Invalid bill history response');
+    if (scope.current === key && sequence.current === request) setSnapshot({ ...data, scope: key });
+    } catch (failure) { if (scope.current === key && sequence.current === request) setError(getApiErrorMessage(failure, 'Bill history could not be loaded. Retry.')); }
+    finally { if (scope.current === key && sequence.current === request) setLoading(false); }
+  }, [selectedOutletId, scopeKey, page, filters, user?.role]);
 
   // New bills, payments and refunds from other terminals appear without a manual refresh.
-  useAutoRefresh(fetchBills, { liveResources: ["bills"], enabled: Boolean(selectedOutletId) });
-
-  useEffect(() => {
-    setLoading(true);
-    void fetchBills();
-    // We only want to react to outlet changes here.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedOutletId]);
+  useAutoRefresh(fetchBills, { liveResources: ["bills"], enabled: Boolean(selectedOutletId), refreshKey: scopeKey });
 
   const visibleBills = useMemo(() => {
     if (user?.role === "Waiter") {
@@ -92,19 +91,9 @@ export const Bills = () => {
     return bills;
   }, [bills, user]);
 
-  const filtered = useMemo(() => {
-    return visibleBills.filter((bill) => {
-      const billDate = new Date(bill.created_at).toISOString().slice(0, 10);
-      const matchesNum = !filters.num || bill.id.toLowerCase().includes(filters.num.toLowerCase());
-      const matchesDate = !filters.date || billDate === filters.date;
-      const matchesMin = !filters.min || bill.total >= Number(filters.min);
-      const matchesMax = !filters.max || bill.total <= Number(filters.max);
-      const matchesPay = !filters.pay || bill.payment_type === filters.pay;
-      return matchesNum && matchesDate && matchesMin && matchesMax && matchesPay;
-    });
-  }, [visibleBills, filters]);
+  const filtered = visibleBills;
 
-  if (loading) {
+  if (selectedOutletId && loading && !snapshot && !error) {
     return (
       <Layout title="Bills">
         <div className="cf-loading">
@@ -134,28 +123,30 @@ export const Bills = () => {
       <div className="cf-page" data-testid="bills-page">
         <div className="cf-page__header">
           <div>
-            <h1>Bills</h1>
+            <h1>Bills &amp; history</h1>
             <p>
               {user?.role === "Waiter"
                 ? "Bills generated from your waiter account for today and yesterday"
-                : "All generated bills"}
+                : "Review recent and older invoices, payments and receipts"}
             </p>
           </div>
         </div>
+        {error && <p role="alert" className="cf-card cf-card--padded">{error} <button className="cf-btn cf-btn--secondary" onClick={fetchBills}>Retry history</button></p>}
+        {loading && <p role="status">Refreshing bill history…</p>}
 
         <div className="cf-table-wrap">
           <div className="cf-table-toolbar">
-            <input className="cf-search" onChange={(event) => setFilters({ ...filters, num: event.target.value })} placeholder="Bill #..." style={{ width: 110 }} value={filters.num} />
-            <input className="cf-search" onChange={(event) => setFilters({ ...filters, date: event.target.value })} style={{ width: 145 }} type="date" value={filters.date} />
-            <input className="cf-search" onChange={(event) => setFilters({ ...filters, min: event.target.value })} placeholder="Min" style={{ width: 90 }} type="number" value={filters.min} />
-            <input className="cf-search" onChange={(event) => setFilters({ ...filters, max: event.target.value })} placeholder="Max" style={{ width: 90 }} type="number" value={filters.max} />
-            <select className="cf-select" onChange={(event) => setFilters({ ...filters, pay: event.target.value })} style={{ width: 160 }} value={filters.pay}>
+            <input className="cf-search" aria-label="Search bill or customer" onChange={(event) => changeFilter({ num: event.target.value })} placeholder="Bill or customer…" value={filters.num} />
+            <input className="cf-search" aria-label="Bill date" onChange={(event) => changeFilter({ date: event.target.value })} style={{ width: 145 }} type="date" value={filters.date} />
+            <input className="cf-search" aria-label="Minimum bill amount" onChange={(event) => changeFilter({ min: event.target.value })} placeholder="Min" min="0" style={{ width: 90 }} type="number" value={filters.min} />
+            <input className="cf-search" aria-label="Maximum bill amount" onChange={(event) => changeFilter({ max: event.target.value })} placeholder="Max" min="0" style={{ width: 90 }} type="number" value={filters.max} />
+            <select className="cf-select" aria-label="Bill payment method" onChange={(event) => changeFilter({ pay: event.target.value })} style={{ width: 160 }} value={filters.pay}>
               <option value="">All Payment</option>
               <option value="Cash">Cash</option>
               <option value="UPI">UPI</option>
               <option value="Card">Card</option>
             </select>
-            <span style={{ color: "var(--cf-text-3)", fontSize: 12 }}>{filtered.length} bills</span>
+            <span style={{ color: "var(--cf-text-3)", fontSize: 12 }}>Page {page} · {filtered.length} bills</span>
           </div>
 
           <table className="cf-table">
@@ -180,9 +171,9 @@ export const Bills = () => {
                 return (
                   <tr key={bill.id} data-testid={`bill-row-${bill.id}`}>
                     <td className="cf-table__mono" style={{ fontWeight: 600 }}>
-                      {bill.id}
+                      {bill.invoice_number || bill.id}
                     </td>
-                    <td className="cf-table__mono">{created.toISOString().slice(0, 10)}</td>
+                    <td className="cf-table__mono">{Number.isFinite(created.getTime()) ? created.toISOString().slice(0, 10) : 'Not recorded'}</td>
                     <td className="cf-table__mono" style={{ color: "var(--cf-text-2)" }}>
                       {created.toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" })}
                     </td>
@@ -204,17 +195,27 @@ export const Bills = () => {
                   </tr>
                 );
               })}
+              {!filtered.length && !loading && !error && <tr><td colSpan={10}>No bills match these filters.</td></tr>}
             </tbody>
           </table>
         </div>
+        <nav className="cf-billing-panel__actions" aria-label="Bill history pages">
+          <button className="cf-btn cf-btn--secondary" disabled={loading || page <= 1} onClick={() => { setPage(value => value - 1); setSelectedBill(null); }}>Previous</button>
+          <span>Page {page}</span>
+          <button className="cf-btn cf-btn--secondary" disabled={loading || !hasMore} onClick={() => { setPage(value => value + 1); setSelectedBill(null); }}>Next</button>
+        </nav>
 
-        <Dialog onOpenChange={() => setSelectedBill(null)} open={Boolean(selectedBill)}>
+        <Dialog onOpenChange={() => setSelectedBill(null)} open={Boolean(selectedBill) && bills.some(bill => bill.id === selectedBill.id)}>
           <DialogContent className="bg-white">
             <DialogHeader>
               <DialogTitle className="cf-dialog__title">Bill Details</DialogTitle>
             </DialogHeader>
             {selectedBill ? (
               <div style={{ display: "grid", gap: 16 }}>
+                {hasPermission(user, 'billing') && <div>
+                  <button className="cf-btn cf-btn--secondary" onClick={() => navigate('/billing', reusableItems ? { state: { repeatBillId: selectedBill.id, repeatOutletId: selectedOutletId } } : {})}>{reusableItems ? 'Use items for a new sale' : 'Start a new sale'}</button>
+                  <p className="cf-card__meta">{reusableItems ? 'Current menu prices and availability apply.' : 'These historical items have no menu references. Choose the current products for the new sale.'} The original bill, payments and table reservation remain unchanged.</p>
+                </div>}
                 <div className="cf-grid-2">
                   <div>
                     <div className="cf-page__overline" style={{ marginBottom: 6 }}>Bill #</div>

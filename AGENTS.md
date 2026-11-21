@@ -231,6 +231,20 @@ New tests run inside `deploy:check`: `security-hardening`, `tenant-lifecycle`, `
 
 ## Working Rules For Agents
 
+### Quality requirements for every new feature and repair
+
+- Use `PROJECT_AUDIT_2026-10-25.md` as the tracked repair backlog. Update status with evidence; do not mark the whole audit complete after one batch.
+- Persist operational writes in PostgreSQL through the existing services/ledger. Never use process-local arrays for user-created operational records.
+- Enforce both business and outlet scope on the API; frontend filters alone are insufficient.
+- Use the shared frontend `lib/apiUrl`, `lib/apiData` and quantity/currency formatters. Do not copy API URL fallback logic into new screens.
+- Show actual workflow status. Creating a pending transfer is not restocking an outlet, and queueing a sync notification is not successful synchronisation.
+- Metrics must have a defined data source, location, date range and denominator. Do not show hardcoded counts, invented zeroes or forecasts without enough history.
+- Keep browsing screens compact. Put item-specific editing and optional details in an appropriate detail view, rather than repeating forms on every list row.
+- Preserve dirty edits during refresh, guard against stale outlet responses, and provide usable paging/search instead of silently truncating lists.
+- Test response handling with the real unwrapped API format as well as envelopes. Browser checks must inspect successful data loading and relevant actions, not only component presence.
+- Use isolated fixtures for checks. Keep inactive test records out of operational selectors and do not hard-delete historical data as a cleanup shortcut.
+- Report exactly what was verified and what remains dependent on credentials, deployment or operator data. Do not promise future work will have zero issues.
+
 - Before changing code, reproduce or identify the exact failing endpoint/component.
 - Prefer focused fixes over broad rewrites.
 - Do not remove routes or modules just because they appear unused.

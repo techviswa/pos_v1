@@ -10,6 +10,8 @@ class KotController {
       limit: req.query?.limit,
       status: req.query?.status,
       stationId: req.query?.station_id || req.query?.stationId,
+      active: req.query?.active === "true",
+      outletIds: req.query?.outlet_id ? [req.query.outlet_id] : req.context?.outletScope,
     });
     if (req.context?.outletScope) {
       data.items = filterByOutletScope(req, data.items, (ticket) => ticket.outlet_id);

@@ -53,6 +53,7 @@ export const buildKotItemState = ({ orderItems = [], stations = DEFAULT_STATIONS
       price: toNumber(item.price, 0),
       variation: item.variation || null,
       addons: item.addons || [],
+      kitchen_note: item.modifiers?.kitchen_note || "",
       station_id: existing?.station_id || station.id,
       station_name: existing?.station_name || station.name,
       status: existing?.status || KOT_STATUSES.PENDING,

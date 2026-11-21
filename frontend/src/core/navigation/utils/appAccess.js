@@ -4,6 +4,7 @@ import { getDefaultRouteForUser } from "./defaultRoute";
 
 export const getVisibleNavigationGroups = ({ user, isModuleEnabled, isFeatureEnabled }) => {
   const visible = APP_NAV_ITEMS.filter((item) => {
+    if (item.requireRoles && !item.requireRoles.includes(user?.role)) return false;
     if (item.module && !isModuleEnabled(item.module)) {
       return false;
     }

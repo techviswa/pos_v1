@@ -1,4 +1,5 @@
 import prisma from "../../database/prisma/client.js";
+import { operationalWrite } from "../../shared/utils/operational-write.js";
 import { moveStock } from "../inventory/stock-ledger.service.js";
 import { assertOwnedIds } from "../../database/prisma/scope.js";
 import { createHttpError } from "../../shared/utils/http-error.js";
@@ -332,9 +333,9 @@ class OutletsService {
     };
   }
 
-  async getOutletRecord({ tenantId, outletId }) {
+  async getOutletRecord({ tenantId, outletId, client = prisma }) {
     const business = await ensureBusiness({ tenantId });
-    const outlet = await prisma.outlet.findFirstOrThrow({
+    const outlet = await client.outlet.findFirstOrThrow({
       where: {
         id: outletId,
         businessId: business.id,
@@ -348,23 +349,23 @@ class OutletsService {
     return { business, outlet };
   }
 
-  async getOutletById({ tenantId, outletId }) {
-    const { business, outlet } = await this.getOutletRecord({ tenantId, outletId });
-    const purchaseOrderCount = await prisma.purchaseOrder.count({
+  async getOutletById({ tenantId, outletId, client = prisma }) {
+    const { business, outlet } = await this.getOutletRecord({ tenantId, outletId, client });
+    const purchaseOrderCount = await client.purchaseOrder.count({
       where: {
         businessId: business.id,
         outletId,
         status: { in: ["pending", "approved"] },
       },
     });
-    const allocationCount = await prisma.allocation.count({
+    const allocationCount = await client.allocation.count({
       where: {
         businessId: business.id,
         outletId,
       },
     });
     const orderOutletMap = new Map((outlet.orders || []).map((order) => [order.id, outlet.id]));
-    const bills = await prisma.bill.findMany({
+    const bills = await client.bill.findMany({
       where: {
         businessId: business.id,
       },
@@ -409,125 +410,124 @@ class OutletsService {
     });
   }
 
-  async createOutlet({ tenantId, payload }) {
+  async createOutlet({ tenantId, payload, transaction = null, sourceOutletId = null, commandId = null }) {
     const business = await ensureBusiness({ tenantId });
-    const createdOutlet = await prisma.outlet.create({
-      data: {
+    const work = async tx => {
+      if (sourceOutletId) {
+        const existing = await tx.outlet.findUnique({ where: { id: sourceOutletId } });
+        if (existing) {
+          if (existing.businessId !== business.id) throw createHttpError({ statusCode: 409, code: "OUTLET_IDENTITY_CONFLICT", message: "Outlet identity belongs to another business" });
+          return { id: existing.id };
+        }
+      }
+      const createdOutlet = await tx.outlet.create({
+        data: {
+          ...(sourceOutletId ? { id: sourceOutletId } : {}),
+          businessId: business.id,
+          name: payload.name || "New Outlet",
+          code: payload.code || `OUT${Date.now()}`.slice(-8),
+          location: payload.location || "",
+          managerName: payload.manager_name || "",
+          phone: payload.phone || "",
+          status: payload.status || DEFAULT_OUTLET_STATUS,
+        },
+      });
+
+      await syncOutletAssignments(createdOutlet.id, await assertOwnedIds({ kind: "user", ids: payload.assigned_user_ids, businessId: business.id, client: tx }), tx);
+
+      const [products, inventoryItems] = await Promise.all([
+        tx.product.findMany({ where: { businessId: business.id } }),
+        tx.inventoryItem.findMany({ where: { businessId: business.id } }),
+      ]);
+
+      if (products.length) {
+        await tx.outletProduct.createMany({
+          data: products.map((product) => ({
+            outletId: createdOutlet.id,
+            productId: product.id,
+            enabled: true,
+            priceOverride: null,
+          })),
+          skipDuplicates: true,
+        });
+      }
+
+      if (inventoryItems.length) {
+        await tx.outletInventory.createMany({
+          data: inventoryItems.map((item) => ({
+            outletId: createdOutlet.id,
+            inventoryItemId: item.id,
+            stock: 0,
+            reorderLevel: item.reorderLevel || 0,
+            enabled: true,
+          })),
+          skipDuplicates: true,
+        });
+      }
+
+      await tx.outletFeatureToggle.createMany({
+        data: FEATURE_REGISTRY.map((feature) => ({
+          outletId: createdOutlet.id,
+          featureKey: feature.key,
+          enabled: true,
+        })),
+        skipDuplicates: true,
+      });
+
+      const outlet = createdOutlet;
+      await admincoreChangeSyncService.notifyChange({
+        resource: "outlets",
+        action: "created",
+        recordId: outlet.id,
+        tenantId,
         businessId: business.id,
-        name: payload.name || "New Outlet",
-        code: payload.code || `OUT${Date.now()}`.slice(-8),
-        location: payload.location || "",
-        managerName: payload.manager_name || "",
-        phone: payload.phone || "",
-        status: payload.status || DEFAULT_OUTLET_STATUS,
-      },
-    });
+        outletId: outlet.id,
+        metadata: {
+          name: outlet.name,
+          code: outlet.code,
+          status: outlet.status,
+        },
+      }, { tx });
 
-    await syncOutletAssignments(createdOutlet.id, await assertOwnedIds({ kind: "user", ids: payload.assigned_user_ids, businessId: business.id }));
-
-    const [products, inventoryItems] = await Promise.all([
-      prisma.product.findMany({ where: { businessId: business.id } }),
-      prisma.inventoryItem.findMany({ where: { businessId: business.id } }),
-    ]);
-
-    if (products.length) {
-      await prisma.outletProduct.createMany({
-        data: products.map((product) => ({
-          outletId: createdOutlet.id,
-          productId: product.id,
-          enabled: true,
-          priceOverride: null,
-        })),
-        skipDuplicates: true,
-      });
-    }
-
-    if (inventoryItems.length) {
-      await prisma.outletInventory.createMany({
-        data: inventoryItems.map((item) => ({
-          outletId: createdOutlet.id,
-          inventoryItemId: item.id,
-          stock: 0,
-          reorderLevel: item.reorderLevel || 0,
-          enabled: true,
-        })),
-        skipDuplicates: true,
-      });
-    }
-
-    await prisma.outletFeatureToggle.createMany({
-      data: FEATURE_REGISTRY.map((feature) => ({
-        outletId: createdOutlet.id,
-        featureKey: feature.key,
-        enabled: true,
-      })),
-      skipDuplicates: true,
-    });
-
-    const outlet = await this.getOutletById({
-      tenantId,
-      outletId: createdOutlet.id,
-    });
-    await admincoreChangeSyncService.notifyChange({
-      resource: "outlets",
-      action: "created",
-      recordId: outlet.id,
-      tenantId,
-      businessId: business.id,
-      outletId: outlet.id,
-      metadata: {
-        name: outlet.name,
-        code: outlet.code,
-        status: outlet.status,
-      },
-    });
-
-    return outlet;
+      return { id: outlet.id };
+    };
+    const result = transaction ? await work(transaction) : await operationalWrite({
+      businessId: business.id, kind: "outlet-create", payload: { ...payload, ...(commandId ? { request_id: commandId } : {}) },
+    }, work);
+    return this.getOutletById({ tenantId, outletId: result.id, client: transaction || prisma });
   }
 
-  async updateOutlet({ tenantId, outletId, payload }) {
-    const { outlet } = await this.getOutletRecord({ tenantId, outletId });
-
-    await prisma.outlet.update({
-      where: { id: outletId },
-      data: {
-        name: payload.name ?? outlet.name,
-        code: payload.code ?? outlet.code,
-        location: payload.location ?? outlet.location,
-        managerName: payload.manager_name ?? outlet.managerName,
-        phone: payload.phone ?? outlet.phone,
-        status: payload.status ?? outlet.status,
-      },
+  async updateOutlet({ tenantId, outletId, payload, commandId = null, expectedUpdatedAt = null }) {
+    const { business, outlet } = await this.getOutletRecord({ tenantId, outletId });
+    await operationalWrite({ businessId: business.id, kind: `outlet-update:${outletId}`,
+      payload: { ...payload, ...(commandId ? { request_id: commandId } : {}) } }, async tx => {
+      const changed = await tx.outlet.updateMany({
+        where: { id: outletId, businessId: business.id, updatedAt: expectedUpdatedAt ? new Date(expectedUpdatedAt) : outlet.updatedAt },
+        data: {
+          name: payload.name ?? outlet.name,
+          code: payload.code ?? outlet.code,
+          location: payload.location ?? outlet.location,
+          managerName: payload.manager_name ?? outlet.managerName,
+          phone: payload.phone ?? outlet.phone,
+          status: payload.status ?? outlet.status,
+        },
+      });
+      if (changed.count !== 1) throw createHttpError({ statusCode: 409, code: "OUTLET_VERSION_CONFLICT", message: "The outlet changed while you were editing. Reload it before saving." });
+      if (payload.assigned_user_ids !== undefined) {
+        const ids = await assertOwnedIds({ kind: "user", ids: payload.assigned_user_ids, businessId: business.id, client: tx });
+        await syncOutletAssignments(outletId, ids, tx);
+      }
+      await admincoreChangeSyncService.notifyChange({ resource: "outlets", action: "updated", recordId: outletId,
+        tenantId, businessId: business.id, outletId,
+        metadata: { name: payload.name ?? outlet.name, code: payload.code ?? outlet.code, status: payload.status ?? outlet.status },
+      }, { tx });
+      return { id: outletId };
     });
-
-    if (payload.assigned_user_ids !== undefined) {
-      await syncOutletAssignments(outletId, await assertOwnedIds({ kind: "user", ids: payload.assigned_user_ids, businessId: business.id }));
-    }
-
-    const outletResult = await this.getOutletById({ tenantId, outletId });
-    await admincoreChangeSyncService.notifyChange({
-      resource: "outlets",
-      action: "updated",
-      recordId: outletResult.id,
-      tenantId,
-      businessId: outlet.businessId,
-      outletId: outletResult.id,
-      metadata: {
-        name: outletResult.name,
-        code: outletResult.code,
-        status: outletResult.status,
-      },
-    });
-
-    return outletResult;
+    return this.getOutletById({ tenantId, outletId });
   }
 
-  async deleteOutlet({ tenantId, outletId }) {
-    return this.updateOutlet({
-      tenantId,
-      outletId,
-      payload: { status: "inactive" },
-    });
+  async deleteOutlet({ tenantId, outletId, commandId = null, expectedUpdatedAt = null }) {
+    return this.updateOutlet({ tenantId, outletId, commandId, expectedUpdatedAt, payload: { status: "inactive" } });
   }
 
   async assignUsers({ tenantId, outletId, userIds }) {

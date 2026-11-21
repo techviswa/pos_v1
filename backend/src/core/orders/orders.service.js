@@ -1,3 +1,5 @@
+import { readExportPage } from "../../shared/utils/export-cursor.js";
+import { assertFulfillmentEnabled } from "../billing/fulfillment-policy.js";
 import prisma from "../../database/prisma/client.js";
 import {
   ensureBusiness,
@@ -22,7 +24,7 @@ const TERMINAL_ORDER_STATUSES = new Set(["cancelled", "completed", "billed", "re
 const RESERVED_CHANNELS = new Set(["qr"]);
 // Order metadata carries system state (KOT numbers, approval, payment). Staff can only edit descriptive fields.
 const STAFF_METADATA_KEYS = ["notes", "table_id", "table_label", "table_name", "service_mode", "order_type", "customer_phone",
-  "token_number", "pickup_slot", "fulfillment_label", "guests_count", "reservation_id"];
+  "token_number", "pickup_slot", "fulfillment_label", "guests_count", "reservation_id", "delivery_address"];
 
 const pickStaffMetadata = (metadata) => {
   const picked = {};
@@ -60,13 +62,13 @@ class OrdersService {
   async listOrders({ tenantId, query = {} }) {
     const business = await ensureBusiness({ tenantId });
     const pagination = getPagination(query);
-    const orders = await prisma.order.findMany({
+    const orders = await readExportPage(prisma.order, {
       where: { businessId: business.id },
       include: getOrderInclude(),
       orderBy: { createdAt: "desc" },
       take: pagination.take,
       skip: pagination.skip,
-    });
+    }, query);
 
     return orders.map(serializeOrder);
   }
@@ -87,6 +89,7 @@ class OrdersService {
   async createOrder({ tenantId, payload, actor }) {
     const business = await ensureBusiness({ tenantId });
     requireStaffChannel(payload.channel);
+    await assertFulfillmentEnabled(business.id, { channel: payload.channel, ...(payload.metadata || {}) });
     const status = payload.status || "open";
     requireManualStatus(status);
     const outletId = payload.outlet_id || payload.outletId || null;
@@ -236,7 +239,7 @@ class OrdersService {
         where: { id: orderId, businessId: business.id },
         include: { ...getOrderInclude(), bill: { select: { id: true } } },
       });
-      if (found.bill) {
+        if (found.bill || found.metadata?.qr_bill_ids?.length) {
         // Deleting would orphan the bill and its audit trail.
         throw createHttpError({ statusCode: 409, code: "ORDER_HAS_BILL", message: "A billed order cannot be deleted" });
       }

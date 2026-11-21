@@ -1,4 +1,5 @@
 ﻿import prisma from "../../database/prisma/client.js";
+import { operationalWrite } from '../../shared/utils/operational-write.js';
 import {
   ensureAccessControlSeed,
   ensureBusiness,
@@ -87,13 +88,24 @@ class UsersService {
     if (excess.length) throw forbid(`You cannot grant permissions you do not hold: ${excess.join(", ")}`);
   }
 
-  async assertNotLastOwner({ businessId, userId }) {
-    const otherOwners = await prisma.user.count({
+  async assertNotLastOwner({ businessId, userId, client = prisma }) {
+    const otherOwners = await client.user.count({
       where: { businessId, active: true, id: { not: userId }, role: { name: { in: ["Owner", "System Owner"] } } },
     });
     if (!otherOwners) {
       throw createHttpError({ statusCode: 409, code: "LAST_OWNER", message: "A business must keep at least one active Owner" });
     }
+  }
+
+  async refreshActor(actor, businessId, tx) {
+    if (!actor) return undefined;
+    const record = await tx.user.findFirst({ where: { id: actor.id, businessId }, include: getUserInclude() });
+    if (!record?.active) throw createHttpError({ statusCode: 403, code: 'ACTOR_PERMISSION_REVOKED', message: 'This staff administrator no longer has access' });
+    const fresh = serializeUser(record);
+    if ((!isOwnerRole(fresh.role) && !(fresh.permissions || []).includes('staff')) || (actor.admincore_owner_required && !isOwnerRole(fresh.role))) {
+      throw createHttpError({ statusCode: 403, code: 'ACTOR_PERMISSION_REVOKED', message: 'Staff administration authority was revoked' });
+    }
+    return fresh;
   }
 
   async assertOutletsInBusiness(businessId, outletIds) {
@@ -139,7 +151,7 @@ class UsersService {
     return serializeUser(user);
   }
 
-  async createUser({ tenantId, businessId, payload, actor }) {
+  async createUser({ tenantId, businessId, payload, actor, rejectExisting = false }) {
     const business = await ensureBusiness({ tenantId, businessId });
     const roleName = canonicalRoleName(payload.role || DEFAULT_USER_ROLE);
     this.assertActorMayAssignRole(actor, roleName);
@@ -148,18 +160,26 @@ class UsersService {
     const outletIds = await this.assertOutletsInBusiness(business.id, payload.assigned_outlet_ids);
     const role = await ensureRole(roleName);
     const email = payload.email || `${Date.now()}@pos.local`;
-    const existingUser = await prisma.user.findUnique({
+    return operationalWrite({ businessId: business.id, kind: "staff-create",
+      payload: { ...payload, request_id: payload.admincore_command_id || payload.request_id } }, async tx => {
+    await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`business-owners:${business.id}`}))`;
+    const freshActor = await this.refreshActor(actor, business.id, tx);
+    this.assertActorMayAssignRole(freshActor, roleName);
+    this.assertActorMayGrant(freshActor, permissions);
+    const existingUser = await tx.user.findUnique({
       where: { businessId_email: { businessId: business.id, email } },
       include: getUserInclude(),
     });
 
-    if (existingUser && actor) {
+    if (existingUser && (actor || rejectExisting)) {
       // A signed-in user creating staff must never silently take over an existing account.
       throw createHttpError({ statusCode: 409, code: "EMAIL_EXISTS", message: "A user with this email already exists" });
     }
 
     if (existingUser) {
-      const updatedUser = await prisma.user.update({
+      const roleChanged = normalizeRoleName(roleName) !== normalizeRoleName(existingUser.role?.name);
+      if (isOwnerRole(existingUser.role?.name) && (roleChanged || payload.active === false)) await this.assertNotLastOwner({ businessId: business.id, userId: existingUser.id, client: tx });
+      const updatedUser = await tx.user.update({
         where: { id: existingUser.id },
         data: {
           roleId: role.id,
@@ -173,10 +193,11 @@ class UsersService {
         include: getUserInclude(),
       });
 
-      await syncUserPermissions(updatedUser.id, permissions);
-      await syncUserOutlets(updatedUser.id, outletIds);
+      await syncUserPermissions(updatedUser.id, permissions, tx);
+      await syncUserOutlets(updatedUser.id, outletIds, tx);
+      if (payload.password !== undefined || payload.active === false || roleChanged) await tx.authSession.deleteMany({ where: { userId: existingUser.id } });
 
-      const user = await prisma.user.findUniqueOrThrow({
+      const user = await tx.user.findUniqueOrThrow({
         where: { id: updatedUser.id },
         include: getUserInclude(),
       });
@@ -194,12 +215,12 @@ class UsersService {
           role: serializedUser.role,
           active: serializedUser.active,
         },
-      });
+      }, { tx });
 
       return serializedUser;
     }
 
-    const createdUser = await prisma.user.create({
+    const createdUser = await tx.user.create({
       data: {
         businessId: business.id,
         roleId: role.id,
@@ -213,10 +234,10 @@ class UsersService {
       include: getUserInclude(),
     });
 
-    await syncUserPermissions(createdUser.id, permissions);
-    await syncUserOutlets(createdUser.id, outletIds);
+    await syncUserPermissions(createdUser.id, permissions, tx);
+    await syncUserOutlets(createdUser.id, outletIds, tx);
 
-    const user = await prisma.user.findUniqueOrThrow({
+    const user = await tx.user.findUniqueOrThrow({
       where: { id: createdUser.id },
       include: getUserInclude(),
     });
@@ -234,12 +255,20 @@ class UsersService {
         role: serializedUser.role,
         active: serializedUser.active,
       },
-    });
+    }, { tx });
 
     return serializedUser;
+    });
   }
 
   async updateUser({ tenantId, businessId, userId, payload, actor }) {
+    const requestPayload = payload;
+    if (payload.name !== undefined) {
+      if (typeof payload.name !== 'string' || !payload.name.trim() || payload.name.trim().length > 120) {
+        throw createHttpError({ statusCode: 400, code: 'USER_NAME_INVALID', message: 'Name must contain 1 to 120 characters' });
+      }
+      payload = { ...payload, name: payload.name.trim() };
+    }
     const business = await ensureBusiness({ tenantId, businessId });
     const currentUser = await prisma.user.findFirstOrThrow({
       where: {
@@ -261,6 +290,9 @@ class UsersService {
       }
       const role = await ensureRole(roleName);
       roleId = role.id;
+      if (roleChanged && payload.reset_permissions_for_role === true && payload.permissions === undefined) {
+        payload = { ...payload, permissions: ROLE_DEFAULT_PERMISSIONS[roleName] || [] };
+      }
     }
     if (actor && actor.id === userId && payload.active === false) throw forbid("You cannot deactivate your own account");
     // Demoting or deactivating the only Owner would leave the business without anyone able to administer it.
@@ -275,77 +307,74 @@ class UsersService {
     const nextPasswordHash =
       payload.password !== undefined ? this.normalizePassword(payload.password) : currentUser.passwordHash;
 
-    await prisma.user.update({
-      where: { id: userId },
-      data: {
-        name: payload.name ?? currentUser.name,
-        email: payload.email ?? currentUser.email,
-        passwordHash: nextPasswordHash,
-        roleId,
-        profileRequired: payload.profile_required ?? currentUser.profileRequired,
-        active: payload.active ?? currentUser.active,
-        bio: payload.bio ?? currentUser.bio,
-      },
-    });
-
-    if (payload.permissions !== undefined) {
-      await syncUserPermissions(userId, payload.permissions || []);
+    let nextEmail = currentUser.email;
+    if (payload.email !== undefined) {
+      if (typeof payload.email !== "string" || !payload.email.trim()) {
+        throw createHttpError({ statusCode: 400, code: "EMAIL_REQUIRED", message: "Email is required" });
+      }
+      nextEmail = payload.email.trim().toLowerCase();
+      if (nextEmail !== currentUser.email) {
+        const duplicate = await prisma.user.findFirst({
+          where: { businessId: business.id, email: { equals: nextEmail, mode: "insensitive" }, id: { not: userId } },
+          select: { id: true },
+        });
+        if (duplicate) {
+          throw createHttpError({ statusCode: 409, code: "EMAIL_EXISTS", message: "A user with that email already exists in this business" });
+        }
+      }
     }
 
-    if (assignedOutletIds !== undefined) {
-      await syncUserOutlets(userId, assignedOutletIds);
-    }
-
-    if (payload.password !== undefined || payload.active === false) {
-      await prisma.authSession.deleteMany({ where: { userId } });
-    }
-
-    const user = await prisma.user.findUniqueOrThrow({
-      where: { id: userId },
-      include: getUserInclude(),
+    return operationalWrite({ businessId: business.id, kind: `staff-update:${userId}`,
+      payload: { ...requestPayload, request_id: requestPayload.admincore_command_id || requestPayload.request_id } }, async (tx) => {
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`business-owners:${business.id}`}))`;
+      const freshActor = await this.refreshActor(actor, business.id, tx);
+      this.assertActorMayModify(freshActor, currentUser);
+      if (payload.role) this.assertActorMayAssignRole(freshActor, canonicalRoleName(payload.role));
+      if (payload.permissions !== undefined) this.assertActorMayGrant(freshActor, payload.permissions || []);
+      if (isOwnerRole(currentUser.role?.name) && (roleChanged || payload.active === false)) await this.assertNotLastOwner({ businessId: business.id, userId, client: tx });
+      const applied = await tx.user.updateMany({
+        where: { id: userId, businessId: business.id, updatedAt: currentUser.updatedAt },
+        data: {
+          name: payload.name ?? currentUser.name, email: nextEmail,
+          passwordHash: nextPasswordHash, roleId,
+          profileRequired: payload.profile_required ?? currentUser.profileRequired,
+          active: payload.active ?? currentUser.active, bio: payload.bio ?? currentUser.bio,
+        },
+      });
+      if (!applied.count) throw createHttpError({ statusCode: 409, code: 'STAFF_VERSION_CONFLICT', message: 'The staff profile changed during this update; refresh and review the current profile' });
+      if (payload.permissions !== undefined) await syncUserPermissions(userId, payload.permissions || [], tx);
+      if (assignedOutletIds !== undefined) await syncUserOutlets(userId, assignedOutletIds, tx);
+      if (payload.password !== undefined || nextEmail !== currentUser.email || payload.active === false || roleChanged) {
+        await tx.authSession.deleteMany({ where: { userId } });
+      }
+      const user = await tx.user.findUniqueOrThrow({ where: { id: userId }, include: getUserInclude() });
+      // Persist the notification in the same database transaction as the credentials.
+      // A failure rolls back the password, access changes and session revocation.
+      await admincoreChangeSyncService.notifyChange({
+        resource: "staff", action: "updated", recordId: userId, tenantId, businessId: business.id,
+      }, { tx });
+      return serializeUser(user);
     });
-
-    const result = serializeUser(user);
-    await admincoreChangeSyncService.notifyChange({
-      resource: "staff", action: "updated", recordId: userId, tenantId, businessId: business.id,
-    });
-    return result;
   }
 
   async deleteUser({ tenantId, businessId, userId, actor }) {
     const business = await ensureBusiness({ tenantId, businessId });
-    const deletedUser = await prisma.user.findFirstOrThrow({
-      where: {
-        id: userId,
-        businessId: business.id,
-      },
-      include: getUserInclude(),
+    return prisma.$transaction(async tx => {
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`business-owners:${business.id}`}))`;
+      const freshActor = await this.refreshActor(actor, business.id, tx);
+      const deletedUser = await tx.user.findFirstOrThrow({ where: { id: userId, businessId: business.id }, include: getUserInclude() });
+      this.assertActorMayModify(freshActor, deletedUser);
+      if (actor && actor.id === userId) throw forbid("You cannot delete your own account");
+      if (isOwnerRole(deletedUser.role?.name)) await this.assertNotLastOwner({ businessId: business.id, userId, client: tx });
+      await tx.authSession.deleteMany({ where: { userId } });
+      await tx.user.delete({ where: { id: userId } });
+      const serializedUser = serializeUser(deletedUser);
+      await admincoreChangeSyncService.notifyChange({
+        resource: "staff", action: "deleted", recordId: serializedUser.id, tenantId, businessId: business.id,
+        metadata: { name: serializedUser.name, email: serializedUser.email, role: serializedUser.role, active: serializedUser.active },
+      }, { tx });
+      return serializedUser;
     });
-
-    this.assertActorMayModify(actor, deletedUser);
-    if (actor && actor.id === userId) throw forbid("You cannot delete your own account");
-    if (isOwnerRole(deletedUser.role?.name)) await this.assertNotLastOwner({ businessId: business.id, userId });
-
-    await prisma.user.delete({
-      where: { id: userId },
-    });
-
-    const serializedUser = serializeUser(deletedUser);
-    await admincoreChangeSyncService.notifyChange({
-      resource: "staff",
-      action: "deleted",
-      recordId: serializedUser.id,
-      tenantId,
-      businessId: business.id,
-      metadata: {
-        name: serializedUser.name,
-        email: serializedUser.email,
-        role: serializedUser.role,
-        active: serializedUser.active,
-      },
-    });
-
-    return serializedUser;
   }
 
   async updateOwnProfile({ tenantId, businessId, userId, payload = {} }) {

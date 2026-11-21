@@ -37,7 +37,7 @@ const buildCacheKey = (config = {}) => {
   const baseUrl = config.baseURL || '';
   const url = config.url || '';
   const params = JSON.stringify(config.params || {});
-  return `${method}:${baseUrl}${url}:${params}`;
+  return `${getTabSessionId()}:${method}:${baseUrl}${url}:${params}`;
 };
 
 const cloneCachedResponse = (response) => ({
@@ -387,7 +387,9 @@ export const AuthProvider = ({ children }) => {
   };
 
   return (
-    <AuthContext.Provider value={{ user, loading, login, logout, checkAuth }}>
+    <AuthContext.Provider value={{ user, loading, login, logout, checkAuth, applyProfile: profile => setUser(current =>
+      current && profile && current.id && current.business_id && current.id === profile.id && current.business_id === profile.business_id
+        ? { ...current, name: profile.name, bio: profile.bio, profile_required: profile.profile_required } : current) }}>
       {waking && <div role="status" style={{ padding: 12, background: '#fff3cd', color: '#332700' }}>The server may be waking up. Reconnecting…</div>}
       {tenantNotice && (
         <div role="alert" style={{ padding: 12, background: '#fdecea', color: '#611a15', display: 'flex', gap: 12, alignItems: 'center' }}>

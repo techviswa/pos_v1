@@ -19,6 +19,10 @@ services:
         value: postgresql
       - key: DATABASE_URL
         sync: false
+      - key: SYSTEM_DATABASE_URL
+        sync: false
+      - key: TENANT_DATABASE_URL
+        sync: false
       - key: DEFAULT_TENANT_ID
         value: demo-tenant
       - key: DEFAULT_BUSINESS_ID

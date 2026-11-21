@@ -3,6 +3,10 @@ import { ArrowClockwise, Copy, QrCode } from "@phosphor-icons/react";
 import { toast } from "sonner";
 import { Layout } from "../components/Layout";
 import { fulfillmentService } from "../features/billing/fulfillment/services/fulfillment.service";
+import { getPublicQrUrl } from "../lib/qrUrls";
+import { LocalQrCode } from "../components/LocalQrCode";
+import { ApiErrorPanel } from "../components/ApiErrorPanel";
+import { QrServiceAnalytics } from "../components/QrServiceAnalytics";
 
 const DEFAULT_QR_RULES = {
   orderingPaused: false,
@@ -18,10 +22,6 @@ const DEFAULT_QR_RULES = {
   paymentRequiredBeforeApproval: false,
 };
 
-const getPublicQrUrl = (token) => {
-  const publicOrigin = (process.env.REACT_APP_PUBLIC_FRONTEND_URL || window.location.origin).replace(/\/$/, "");
-  return `${publicOrigin}/qr/${token}`;
-};
 
 const normalizeSettings = (settings = {}) => ({
   ...settings,
@@ -38,7 +38,9 @@ const normalizeSettings = (settings = {}) => ({
 });
 
 export const QrManagement = () => {
+  const [section, setSection] = useState("codes");
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState(null);
   const [busyTableId, setBusyTableId] = useState("");
   const [savingRules, setSavingRules] = useState(false);
   const [tableData, setTableData] = useState(null);
@@ -61,7 +63,9 @@ export const QrManagement = () => {
       ]);
       setTableData(nextTableData);
       setSettings(normalizeSettings(nextSettings));
+      setLoadError(null);
     } catch (error) {
+      setLoadError(error);
       toast.error("Unable to load QR ordering workspace");
     } finally {
       setLoading(false);
@@ -113,9 +117,9 @@ export const QrManagement = () => {
     try {
       const qr = await fulfillmentService.upsertTableQrCode(table.id, { active: true, ...payload });
       const url = getPublicQrUrl(qr.token);
-      await window.navigator.clipboard?.writeText(url);
+      await window.navigator.clipboard?.writeText(url).catch(() => {});
       setLastGeneratedTableId(table.id);
-      toast.success(payload.rotate ? "New QR link copied" : "QR generated and copied");
+      toast.success(payload.rotate ? "New QR code ready below" : "QR code ready below");
       await load();
     } catch {
       toast.error("Unable to prepare QR link");
@@ -131,15 +135,26 @@ export const QrManagement = () => {
     toast.success("QR link copied");
   };
 
+  const deleteQr = async (table) => {
+    if (!window.confirm(`Delete the QR code for ${table.name}? Printed copies will stop working. The table and its orders will be kept.`)) return;
+    setBusyTableId(table.id);
+    try {
+      await fulfillmentService.deleteTableQrCode(table.id);
+      await load();
+      toast.success("QR code deleted");
+    } catch { toast.error("Unable to delete the QR code. Try again."); }
+    finally { setBusyTableId(""); }
+  };
+
   return (
     <Layout title="QR">
       <div className="cf-page">
         <div className="cf-page__header">
           <div>
             <h1>QR Ordering</h1>
-            <p>Manage table QR links, scan activity, and public ordering rules.</p>
+            <p>{section === "codes" ? "Manage table QR links, scan activity, and public ordering rules." : "Review offers, guest feedback, and service performance."}</p>
           </div>
-          <div className="cf-page__header-actions">
+          {section === "codes" ? <div className="cf-page__header-actions">
             <button className="cf-btn cf-btn--secondary" disabled={loading} onClick={load} type="button">
               <ArrowClockwise size={15} weight="bold" />
               Refresh
@@ -147,15 +162,33 @@ export const QrManagement = () => {
             <button className="cf-btn cf-btn--primary" disabled={savingRules || loading} onClick={saveRules} type="button">
               {savingRules ? "Saving..." : "Save Rules"}
             </button>
-          </div>
+          </div> : null}
         </div>
 
-        {loading ? (
+        <nav aria-label="QR workspace sections" style={{ display: "flex", gap: 12, marginBottom: 20 }}>
+          <button className="cf-btn cf-btn--secondary" type="button" aria-pressed={section === "codes"} onClick={() => setSection("codes")}>QR codes & settings</button>
+          <button className="cf-btn cf-btn--secondary" type="button" aria-pressed={section === "analytics"} onClick={() => setSection("analytics")}>Offers, feedback & analytics</button>
+        </nav>
+        {section === "analytics" ? <QrServiceAnalytics /> : loadError ? <ApiErrorPanel error={loadError} onRetry={load} /> : loading ? (
           <div className="cf-card cf-card--padded">
             <div className="cf-card__meta">Loading QR workspace...</div>
           </div>
         ) : (
           <>
+            <section className="cf-card cf-card--padded" style={{ marginBottom: 24 }} aria-label="Scannable table QR codes">
+              <div className="cf-card__title"><span>Scan a table QR code</span></div>
+              <p className="cf-card__meta">Scan the image with your phone camera, or download it to print for the table. On this local setup, phones must use the same Wi-Fi as the POS computer.</p>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(190px, 1fr))", gap: 12 }}>
+                {qrTables.map((table) => <article className="cf-card cf-card--padded" key={table.id} style={{ textAlign: "center" }}>
+                  <h3>{table.name}</h3>
+                  <p className="cf-card__meta">{table.area_name || "Unassigned"} · {table.qr_ordering.active ? "Active" : "Inactive — activate before use"}</p>
+                  {table.qr_ordering.active ? <LocalQrCode size={128} value={getPublicQrUrl(table.qr_ordering.token)} label={`Scan to order at ${table.name}`} filename={`table-${table.code || table.id}-qr.png`} /> : <p>Generate an active QR code for this table below.</p>}
+                  <a className="cf-btn cf-btn--secondary cf-btn--small" style={{ marginTop: 12 }} href={getPublicQrUrl(table.qr_ordering.token)} target="_blank" rel="noreferrer">Open menu</a>
+                  <button className="cf-btn cf-btn--danger cf-btn--small" style={{ marginTop: 8 }} type="button" disabled={busyTableId === table.id} onClick={() => deleteQr(table)}>Delete QR</button>
+                </article>)}
+              </div>
+              {!qrTables.length ? <p>No QR codes yet. Use Generate QR in the table list below.</p> : null}
+            </section>
             <div className="cf-metrics">
               <div className="cf-metric">
                 <div className="cf-metric__value">{tables.length}</div>
@@ -249,10 +282,11 @@ export const QrManagement = () => {
                   <span>Public Link</span>
                 </div>
                 <div className="cf-card__meta">QR codes generated from this screen use the public frontend URL for phone scanning.</div>
-                <div className="cf-code-block">{process.env.REACT_APP_PUBLIC_FRONTEND_URL || window.location.origin}</div>
+                <div className="cf-code-block">{tableData?.connection?.public_frontend_url || new URL(getPublicQrUrl("preview")).origin}</div>
                 <div className="cf-card__meta">Use Billing table setup to create/edit dining tables. This page manages ordering links for those tables.</div>
               </section>
             </div>
+
 
             <section className="cf-card cf-card--padded">
               <div className="cf-card__title">
@@ -299,6 +333,7 @@ export const QrManagement = () => {
                                   <Copy size={14} weight="bold" />
                                   Copy
                                 </button>
+                                <button className="cf-btn cf-btn--danger cf-btn--small" disabled={busy} onClick={() => deleteQr(table)} type="button">Delete QR</button>
                                 <button className="cf-btn cf-btn--secondary cf-btn--small" disabled={busy} onClick={() => prepareQr(table, { rotate: true })} type="button">
                                   <ArrowClockwise size={14} weight="bold" />
                                   Rotate

@@ -3,6 +3,8 @@ import { toast } from "sonner";
 import {
   discardOfflineBill,
   getOfflineQueue,
+  getOfflineStorageError,
+  getOfflineRecoveryCopy,
   OFFLINE_QUEUE_EVENT,
   replayOfflineQueue,
   retryOfflineBill,
@@ -14,6 +16,7 @@ const RETRY_INTERVAL_MS = 30000;
 export const OfflineStatus = () => {
   const [online, setOnline] = useState(() => navigator.onLine);
   const [queue, setQueue] = useState(() => getOfflineQueue());
+  const [storageError, setStorageError] = useState(() => getOfflineStorageError());
   const [syncing, setSyncing] = useState(false);
   const [showFailed, setShowFailed] = useState(false);
   const [updateReady, setUpdateReady] = useState(() => hasWaitingUpdate());
@@ -28,6 +31,7 @@ export const OfflineStatus = () => {
     const refresh = () => {
       setOnline(navigator.onLine);
       setQueue(getOfflineQueue());
+      setStorageError(getOfflineStorageError());
     };
 
     const sync = async () => {
@@ -42,6 +46,8 @@ export const OfflineStatus = () => {
         if (result.failed) {
           toast.error(`${result.failed} offline bill${result.failed !== 1 ? "s were" : " was"} refused by the server and need review`);
         }
+      } catch (error) {
+        toast.error(error.message || 'Offline receipts need recovery', { id: 'offline-storage' });
       } finally {
         setSyncing(false);
         refresh();
@@ -66,7 +72,7 @@ export const OfflineStatus = () => {
   const pending = queue.filter((row) => row.status === "pending");
   const failed = queue.filter((row) => row.status === "failed");
 
-  if (online && !pending.length && !failed.length && !syncing) {
+  if (online && !pending.length && !failed.length && !syncing && !storageError) {
     return updateReady ? (
       <div className="cf-offline-status is-online" role="status">
         <strong>Update ready</strong>
@@ -82,21 +88,36 @@ export const OfflineStatus = () => {
     setSyncing(true);
     try {
       await retryOfflineBill(id);
+    } catch (error) {
+      toast.error(error.message || 'Offline receipt could not be retried');
     } finally {
       setSyncing(false);
       setQueue(getOfflineQueue());
+      setStorageError(getOfflineStorageError());
     }
   };
 
   const discard = (row) => {
     if (!window.confirm(`Discard offline bill ${row.summary?.label || row.id} for ${row.summary?.total ?? ""}? It was never recorded on the server.`)) return;
-    discardOfflineBill(row.id);
-    setQueue(getOfflineQueue());
+    try {
+      discardOfflineBill(row.id);
+      setQueue(getOfflineQueue());
+    } catch (error) { toast.error(error.message || 'Offline receipt could not be discarded'); }
+  };
+
+  const recover = () => {
+    try {
+      const url = URL.createObjectURL(new Blob([getOfflineRecoveryCopy()], { type: 'application/json' }));
+      const link = document.createElement('a');
+      link.href = url; link.download = 'offline-receipts-recovery.json'; link.click();
+      window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+    } catch (error) { toast.error(error.message || 'Recovery copy could not be downloaded'); }
   };
 
   return (
     <div className={`cf-offline-status ${online ? "is-online" : "is-offline"}`} role="status">
-      <strong>{!online ? "Offline mode" : syncing ? "Syncing" : failed.length ? "Needs review" : "Waiting to sync"}</strong>
+      <strong>{storageError ? 'Receipt recovery needed' : !online ? "Offline mode" : syncing ? "Syncing" : failed.length ? "Needs review" : "Waiting to sync"}</strong>
+      {storageError && <span role="alert">{storageError} <button type="button" className="cf-btn cf-btn--secondary" onClick={recover}>Download recovery copy</button></span>}
       <span>
         {syncing
           ? "Sending offline bills..."

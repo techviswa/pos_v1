@@ -1,5 +1,6 @@
 ﻿import env from "../../config/env.js";
 import prisma from "./client.js";
+import { currentTenantScope } from "./tenant-context.js";
 import { createHttpError } from "../../shared/utils/http-error.js";
 import {
   DEFAULT_BILLING_CURRENCY,
@@ -58,10 +59,13 @@ const syncFields = ({ record, tenantId, businessId, outletId, resource }) => ({
   last_synced_at: toIso(record.updatedAt || record.createdAt) || new Date().toISOString(),
 });
 
-export const ensureBusiness = async ({
-  tenantId = env.defaultTenantId,
-  businessId = env.defaultBusinessId,
-} = {}) => {
+export const ensureBusiness = async (context = {}) => {
+  const scope = currentTenantScope();
+  const tenantId = context.tenantId ?? scope?.tenantId ?? env.defaultTenantId;
+  const businessId = context.businessId ?? scope?.businessId ?? env.defaultBusinessId;
+  if (scope?.businessId && (tenantId !== scope.tenantId || businessId !== scope.businessId)) {
+    throw createHttpError({ statusCode: 403, code: "TENANT_CONTEXT_CONFLICT", message: "Business context does not match the authenticated request" });
+  }
   const normalizedTenantId = String(tenantId || env.defaultTenantId);
   const normalizedBusinessId = String(businessId || env.defaultBusinessId);
   const cacheKey = `${normalizedTenantId}:${normalizedBusinessId}`;
@@ -110,12 +114,12 @@ export const findBusinessById = async (businessId) => {
   });
 };
 
-export const ensurePermissions = async (permissionKeys = []) => {
+export const ensurePermissions = async (permissionKeys = [], client = prisma) => {
   const uniqueKeys = [...new Set(permissionKeys.filter(Boolean))];
 
   await Promise.all(
     uniqueKeys.map((key) =>
-      prisma.permission.upsert({
+      client.permission.upsert({
         where: { key },
         update: { label: key },
         create: { key, label: key },
@@ -123,7 +127,7 @@ export const ensurePermissions = async (permissionKeys = []) => {
     ),
   );
 
-  return prisma.permission.findMany({
+  return client.permission.findMany({
     where: { key: { in: uniqueKeys } },
   });
 };
@@ -197,10 +201,10 @@ export const ensureAccessControlSeed = async () => {
   await accessControlSeedPromise;
 };
 
-export const syncUserPermissions = async (userId, permissionKeys = []) => {
-  const permissions = await ensurePermissions(permissionKeys);
+export const syncUserPermissions = async (userId, permissionKeys = [], client = prisma) => {
+  const permissions = await ensurePermissions(permissionKeys, client);
 
-  await prisma.userPermission.deleteMany({
+  await client.userPermission.deleteMany({
     where: { userId },
   });
 
@@ -208,7 +212,7 @@ export const syncUserPermissions = async (userId, permissionKeys = []) => {
     return;
   }
 
-  await prisma.userPermission.createMany({
+  await client.userPermission.createMany({
     data: permissions.map((permission) => ({
       userId,
       permissionId: permission.id,
@@ -216,10 +220,10 @@ export const syncUserPermissions = async (userId, permissionKeys = []) => {
   });
 };
 
-export const syncUserOutlets = async (userId, outletIds = []) => {
+export const syncUserOutlets = async (userId, outletIds = [], client = prisma) => {
   const uniqueOutletIds = [...new Set((outletIds || []).filter(Boolean))];
 
-  await prisma.userOutletAssignment.deleteMany({
+  await client.userOutletAssignment.deleteMany({
     where: { userId },
   });
 
@@ -229,7 +233,7 @@ export const syncUserOutlets = async (userId, outletIds = []) => {
 
   await Promise.all(
     uniqueOutletIds.map((outletId) =>
-      prisma.userOutletAssignment.upsert({
+      client.userOutletAssignment.upsert({
         where: {
           userId_outletId: {
             userId,
@@ -246,10 +250,10 @@ export const syncUserOutlets = async (userId, outletIds = []) => {
   );
 };
 
-export const syncOutletAssignments = async (outletId, userIds = []) => {
+export const syncOutletAssignments = async (outletId, userIds = [], client = prisma) => {
   const uniqueUserIds = [...new Set((userIds || []).filter(Boolean))];
 
-  await prisma.userOutletAssignment.deleteMany({
+  await client.userOutletAssignment.deleteMany({
     where: { outletId },
   });
 
@@ -259,7 +263,7 @@ export const syncOutletAssignments = async (outletId, userIds = []) => {
 
   await Promise.all(
     uniqueUserIds.map((userId) =>
-      prisma.userOutletAssignment.upsert({
+      client.userOutletAssignment.upsert({
         where: {
           userId_outletId: {
             userId,
@@ -276,8 +280,8 @@ export const syncOutletAssignments = async (outletId, userIds = []) => {
   );
 };
 
-export const syncProductVariations = async (productId, variations = []) => {
-  await prisma.variation.deleteMany({
+export const syncProductVariations = async (productId, variations = [], client = prisma) => {
+  await client.variation.deleteMany({
     where: { productId },
   });
 
@@ -285,7 +289,7 @@ export const syncProductVariations = async (productId, variations = []) => {
     return;
   }
 
-  await prisma.variation.createMany({
+  await client.variation.createMany({
     data: variations.map((variation) => ({
       productId,
       name: variation.name || variation.label || "Variation",
@@ -295,8 +299,8 @@ export const syncProductVariations = async (productId, variations = []) => {
   });
 };
 
-export const syncProductAddons = async (productId, addons = []) => {
-  await prisma.addon.deleteMany({
+export const syncProductAddons = async (productId, addons = [], client = prisma) => {
+  await client.addon.deleteMany({
     where: { productId },
   });
 
@@ -304,7 +308,7 @@ export const syncProductAddons = async (productId, addons = []) => {
     return;
   }
 
-  await prisma.addon.createMany({
+  await client.addon.createMany({
     data: addons.map((addon) => ({
       productId,
       linkedProductId: addon.linked_product_id || addon.linkedProductId || null,
@@ -497,6 +501,7 @@ export const serializeOrder = (order) => ({
 });
 
 export const serializeBill = (bill) => ({
+  ...Object.fromEntries(Object.entries(normalizeBillingMetadata(bill.metadata || {})).filter(([key]) => key !== "item_costs")),
   id: bill.id,
   tenantId: bill.business?.tenantId || env.defaultTenantId,
   business_id: bill.businessId,
@@ -506,6 +511,7 @@ export const serializeBill = (bill) => ({
   subtotal: bill.subtotal,
   tax: bill.tax,
   total: bill.total,
+  invoice_number: bill.invoiceNumber || normalizeBillingMetadata(bill.metadata || {}).invoice_number || null,
   status: bill.status,
   kitchen_status: bill.kitchenStatus || null,
   created_at: bill.createdAt ? bill.createdAt.toISOString() : null,
@@ -521,7 +527,6 @@ export const serializeBill = (bill) => ({
       addons: cloneJson(item.addons, []),
       modifiers: cloneJson(item.modifiers, null),
     })) || [],
-  ...Object.fromEntries(Object.entries(normalizeBillingMetadata(bill.metadata || {})).filter(([key]) => key !== "item_costs")),
 });
 
 export const serializeInventoryItem = (item) => ({

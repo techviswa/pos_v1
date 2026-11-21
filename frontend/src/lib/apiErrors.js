@@ -1,10 +1,11 @@
 export const getApiErrorStatus = (error) => Number(error?.response?.status || error?.status || 0);
+const isConnectionError = (error) => Boolean(error?.isAxiosError && !error?.response && error?.code !== "ERR_CANCELED") || ["ERR_NETWORK", "ECONNABORTED", "ETIMEDOUT"].includes(error?.code);
 
 export const getApiErrorTitle = (error) => {
   const status = getApiErrorStatus(error);
 
   if (!error?.response) {
-    return "Backend unavailable";
+    return isConnectionError(error) ? "Backend unavailable" : error?.code === "ERR_CANCELED" ? "Request cancelled" : "Screen error";
   }
   if (status === 401) {
     return "Session expired";
@@ -27,9 +28,10 @@ export const getApiErrorMessage = (error, fallback = "Something went wrong. Plea
     return fallback;
   }
 
-  if (!error.response) {
+  if (!error.response && isConnectionError(error)) {
     return "We couldn’t reach the server. Check your connection and try again shortly.";
   }
+  if (!error.response) return error.message || fallback;
 
   const payload = error.response.data || {};
   if ([502, 503, 504].includes(Number(error.response.status))) return "The server may be waking up or temporarily unavailable. Please try again shortly.";
@@ -55,10 +57,10 @@ export const getApiErrorDetails = (error, fallback) => {
 
   if (!error?.response) {
     return {
-      title: "Backend unavailable",
+      title: getApiErrorTitle(error),
       message,
       status: null,
-      action: "Check your connection, then retry this screen.",
+      action: isConnectionError(error) ? "Check your connection, then retry this screen." : "Retry this screen. If it happens again, report the screen and action to support.",
     };
   }
 

@@ -1,11 +1,22 @@
 import http from "http";
+import { randomUUID } from "node:crypto";
 
 import app from "../src/app.js";
 import prisma from "../src/database/prisma/client.js";
+import env from "../src/config/env.js";
 import { outletsService } from "../src/core/outlets/outlets.service.js";
 import { calculateInvoiceTotals } from "../src/core/billing/billing-depth.utils.js";
+import { usersService } from "../src/core/users/users.service.js";
+import { saasService } from "../src/core/saas/saas.service.js";
+import { connectDatabase } from "../src/config/db.js";
+import { admincoreChangeSyncService } from "../src/core/admincore/admincore-change-sync.service.js";
+import { stopRealtime } from "../src/services/realtime/realtime.service.js";
 
 const server = http.createServer(app);
+const fixtureId = randomUUID(), fixtureBusiness = `smoke-${fixtureId}`, fixtureTenant = `tenant-${fixtureId}`;
+const fallbackBusinessId = `smoke-fallback-${fixtureId}`, fallbackTenantId = `tenant-fallback-${fixtureId}`;
+const fixtureEmail = `smoke-${fixtureId}@example.invalid`, fixturePassword = randomUUID();
+const originalConfigured = admincoreChangeSyncService.isConfigured;
 
 const listen = () =>
   new Promise((resolve, reject) => {
@@ -79,6 +90,12 @@ const run = async () => {
   const baseUrl = `http://${address.address}:${address.port}`;
 
   try {
+    await connectDatabase();
+    // Bridge handlers remain enabled, but fixtures must never notify the real AdminCore.
+    admincoreChangeSyncService.isConfigured = () => false;
+    await prisma.business.create({ data: { id: fixtureBusiness, tenantId: fixtureTenant, name: "Isolated smoke fixture" } });
+    await saasService.updateSubscription({ businessId: fixtureBusiness, payload: { plan: "growth", subscription_status: "active" } });
+    await usersService.createUser({ businessId: fixtureBusiness, tenantId: fixtureTenant, payload: { name: "Smoke owner", email: fixtureEmail, password: fixturePassword, role: "Owner", profile_required: false } });
     await request({ baseUrl, path: "/health" });
     await request({ baseUrl, path: "/health/database", expected: [200, 503] });
     await request({ baseUrl, path: "/health/jobs" });
@@ -89,8 +106,9 @@ const run = async () => {
       path: "/api/auth/login",
       method: "POST",
       body: {
-        email: process.env.SMOKE_OWNER_EMAIL || process.env.ADMIN_EMAIL || "owner@pos.com",
-        password: process.env.SMOKE_OWNER_PASSWORD || process.env.ADMIN_PASSWORD || "admin123",
+        email: fixtureEmail,
+        password: fixturePassword,
+        business_id: fixtureBusiness,
       },
     });
     const cookie = extractCookie(login.response);
@@ -107,8 +125,6 @@ const run = async () => {
     if (!Array.isArray(outlets.data) || outlets.data.length < 1) {
       throw new Error(`/api/outlets must return at least one outlet for a valid business: ${JSON.stringify(outlets.data)}`);
     }
-    const fallbackTenantId = "smoke-outlet-tenant";
-    const fallbackBusinessId = "smoke-outlet-business";
     const fallbackOutlets = await outletsService.listOutlets({
       tenantId: fallbackTenantId,
       businessId: fallbackBusinessId,
@@ -131,6 +147,21 @@ const run = async () => {
       throw new Error(`Dashboard revenue detail must match dashboard card revenue: ${JSON.stringify(dashboardStats.data?.revenue_detail)}`);
     }
     await request({ baseUrl, path: "/api/reports/gst", cookie });
+    // Exercise the actual dashboard endpoint, not only the pure report rule.
+    const emptyClosed = `empty-${fixtureId}`, historicalClosed = `closed-${fixtureId}`;
+    await prisma.outlet.createMany({ data: [
+      { id: emptyClosed, businessId: fixtureBusiness, name: 'Empty closed fixture', code: 'EMPTY', status: 'inactive' },
+      { id: historicalClosed, businessId: fixtureBusiness, name: 'Historical closed fixture', code: 'HISTORY', status: 'inactive' },
+    ] });
+    await prisma.bill.create({ data: { businessId: fixtureBusiness, customerName: 'Isolated fixture', subtotal: 7, total: 7, currency: 'INR', status: 'paid', metadata: { outlet_id: historicalClosed } } });
+    const outletRanking = (await request({ baseUrl, path: '/api/dashboard/stats?period=all', cookie })).data.sales_by_outlet;
+    if (outletRanking.some(row => row.outlet_id === emptyClosed) || !outletRanking.some(row => row.outlet_id === historicalClosed && row.sales === 7)) {
+      throw new Error('Dashboard must omit empty closed outlets and retain closed-outlet sales');
+    }
+    const scopedRanking = (await request({ baseUrl, path: `/api/dashboard/stats?period=all&outlet_id=${historicalClosed}`, cookie })).data.sales_by_outlet;
+    if (scopedRanking.length !== 1 || scopedRanking[0].outlet_id !== historicalClosed || scopedRanking[0].sales !== 7) {
+      throw new Error('Dashboard outlet ranking ignored the selected outlet');
+    }
     await request({ baseUrl, path: "/api/sync/strategy", cookie });
 
     for (const resource of [
@@ -202,11 +233,11 @@ const run = async () => {
       throw new Error(`AdminCore sync error envelope failed: ${JSON.stringify(failedSync.data)}`);
     }
 
-    if (process.env.ADMINCORE_API_KEY) {
+    if (env.admincore.enabled && env.admincore.apiKey) {
       const bridgeHeaders = {
         "x-admincore-api-key": process.env.ADMINCORE_API_KEY,
-        "x-business-id": process.env.DEFAULT_BUSINESS_ID || "demo-business",
-        "x-tenant-id": process.env.DEFAULT_TENANT_ID || "demo-tenant",
+        "x-business-id": fixtureBusiness,
+        "x-tenant-id": fixtureTenant,
       };
       await request({ baseUrl, path: "/api/sync/export/products", headers: {
         "x-admincore-api-key": process.env.ADMINCORE_API_KEY,
@@ -266,8 +297,8 @@ const run = async () => {
           name: `AdminCore Bridge Outlet ${Date.now()}`,
           code: `SMK${String(Date.now()).slice(-6)}`,
           status: "active",
-          business_id: process.env.DEFAULT_BUSINESS_ID || "demo-business",
-          tenant_id: process.env.DEFAULT_TENANT_ID || "demo-tenant",
+          business_id: fixtureBusiness,
+          tenant_id: fixtureTenant,
         },
         expected: [201],
       });
@@ -281,7 +312,7 @@ const run = async () => {
         method: "DELETE",
         headers: {
           ...bridgeHeaders,
-          "x-tenant-id": process.env.DEFAULT_TENANT_ID || "demo-tenant",
+          "x-tenant-id": fixtureTenant,
         },
       });
 
@@ -295,8 +326,8 @@ const run = async () => {
           price: 1,
           stock: 1,
           category: "Smoke",
-          business_id: process.env.DEFAULT_BUSINESS_ID || "demo-business",
-          tenant_id: process.env.DEFAULT_TENANT_ID || "demo-tenant",
+          business_id: fixtureBusiness,
+          tenant_id: fixtureTenant,
         },
         expected: [201],
       });
@@ -310,7 +341,7 @@ const run = async () => {
         method: "DELETE",
         headers: {
           ...bridgeHeaders,
-          "x-tenant-id": process.env.DEFAULT_TENANT_ID || "demo-tenant",
+          "x-tenant-id": fixtureTenant,
         },
       });
 
@@ -342,7 +373,18 @@ const run = async () => {
 
     console.log("Smoke tests passed");
   } finally {
+    admincoreChangeSyncService.isConfigured = originalConfigured;
     await close();
+    const ids = [fixtureBusiness, fallbackBusinessId];
+    const users = await prisma.user.findMany({ where: { businessId: { in: ids } }, select: { id: true } });
+    await prisma.authSession.deleteMany({ where: { userId: { in: users.map((row) => row.id) } } });
+    await prisma.business.deleteMany({ where: { id: { in: ids } } });
+    for (const businessId of ids) {
+      await prisma.stateDocument.deleteMany({ where: { OR: [{ key: { contains: businessId } }, { data: { path: ["business_id"], equals: businessId } }] } });
+      await prisma.backgroundJob.deleteMany({ where: { payload: { path: ["business_id"], equals: businessId } } });
+    }
+    await prisma.adminCoreSyncLog.deleteMany({ where: { tenantId: { in: [fixtureTenant, fallbackTenantId] } } });
+    await stopRealtime();
     await prisma.$disconnect();
   }
 };

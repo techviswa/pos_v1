@@ -1,4 +1,6 @@
 import React, { useMemo, useRef, useState } from "react";
+import { formatQuantity } from "../lib/quantity";
+import { API_URL } from "../lib/apiUrl";
 import axios from "axios";
 import { useNavigate } from "react-router-dom";
 import { Layout } from "../components/Layout";
@@ -6,23 +8,8 @@ import { toast } from "sonner";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "../components/ui/dialog";
 import { useAutoRefresh } from "../hooks/useAutoRefresh";
 import { InventoryAccounting } from "../core/inventory/InventoryAccounting";
+import { IngredientAllergens } from "../components/IngredientAllergens";
 
-const API_URL = (() => {
-  const configured = String(process.env.REACT_APP_BACKEND_URL || "").replace(/\/+$/, "");
-  if (typeof window === "undefined") return configured;
-
-  const currentOrigin = window.location.origin.replace(/\/+$/, "");
-  const currentHost = window.location.hostname;
-  if (configured && configured !== currentOrigin && !configured.includes("vercel.app")) {
-    return configured;
-  }
-
-  if (currentHost === "localhost" || currentHost === "127.0.0.1") {
-    return configured || "http://localhost:4001";
-  }
-
-  return "https://pos-v1-fwjm.onrender.com";
-})();
 const INVENTORY_UNIT_OPTIONS = ["kg", "liter", "pound", "tonne", "pieces", "dozens"];
 const formatUnitLabel = (unit) => {
   if (unit === "kg") return "Kilograms (kg)";
@@ -379,6 +366,7 @@ export const Inventory = () => {
         </div>
 
         <InventoryAccounting apiUrl={API_URL} onChanged={fetchInventory} inventory={inventory} />
+        <IngredientAllergens apiUrl={API_URL} />
         <div className="cf-metrics">
           <button className="cf-metric cf-metric--button" onClick={() => navigateToSummary("items")} type="button">
             <div className="cf-metric__label">Inventory Items</div>
@@ -420,9 +408,9 @@ export const Inventory = () => {
                 {(summary?.atRisk || []).slice(0, 6).map((item) => (
                   <tr key={item.id}>
                     <td>{item.name}</td>
-                    <td className="cf-table__mono">{item.current_stock} {item.unit}</td>
-                    <td className="cf-table__mono">{item.avg_daily_consumption || 0} {item.unit}</td>
-                    <td className="cf-table__mono">{item.days_remaining ?? "-"}</td>
+                    <td className="cf-table__mono">{formatQuantity(item.current_stock, item.unit)}</td>
+                    <td className="cf-table__mono">{item.usage_history_available === false ? "No usage history" : formatQuantity(item.avg_daily_consumption, item.unit)}</td>
+                    <td className="cf-table__mono">{item.days_remaining == null ? "No estimate" : formatQuantity(item.days_remaining)}</td>
                   </tr>
                 ))}
                 {!(summary?.atRisk || []).length ? (
@@ -508,7 +496,7 @@ export const Inventory = () => {
                         </div>
                       </div>
                       <div className="cf-table__mono" style={{ alignSelf: "center" }}>
-                        {item.current_stock} {item.unit}
+                        {formatQuantity(item.current_stock, item.unit)}
                       </div>
                     </div>
                   ))}
@@ -542,10 +530,10 @@ export const Inventory = () => {
                       {item.vendor || "No vendor"} · {item.storage_location || "No location"}
                     </div>
                   </td>
-                  <td className="cf-table__mono">{item.current_stock} {item.unit}</td>
+                  <td className="cf-table__mono">{formatQuantity(item.current_stock, item.unit)}</td>
                   <td className="cf-table__mono">{item.reorder_level} {item.unit}</td>
-                  <td className="cf-table__mono">{item.avg_daily_consumption || 0} {item.unit}</td>
-                  <td className="cf-table__mono">{item.days_remaining ?? "-"}</td>
+                  <td className="cf-table__mono">{item.usage_history_available === false ? "No usage history" : formatQuantity(item.avg_daily_consumption, item.unit)}</td>
+                  <td className="cf-table__mono">{item.days_remaining == null ? "No estimate" : formatQuantity(item.days_remaining)}</td>
                   <td className="cf-table__mono">{item.expiry_date ? item.expiry_date.slice(0, 10) : "-"}</td>
                   <td className="cf-table__mono">{item.wastage_last_30_days || 0}</td>
                   <td className="cf-table__mono">{item.pilferage_last_30_days || 0}</td>

@@ -1,4 +1,5 @@
 import { Router } from "express";
+import { readBusinessProfile, updateBusinessProfile } from '../businesses/business-profile.js';
 
 import {
   getConnection,
@@ -47,7 +48,18 @@ const requireAdmincoreBridgeKey = (req, _res, next) => {
 };
 
 router.get("/connection", asyncHandler(getConnection));
+router.get('/business-profile/:businessId', requireAdmincoreBridgeKey, asyncHandler(async (req, res) => {
+  const profile = await readBusinessProfile(req.params.businessId);
+  if (!req.query.tenant_id || profile.tenant_id !== req.query.tenant_id) throw createHttpError({ statusCode: 403, message: 'Business tenant mismatch' });
+  res.json({ success: true, data: profile });
+}));
+router.put('/business-profile/:businessId', requireAdmincoreBridgeKey, asyncHandler(async (req, res) => {
+  const profile = await readBusinessProfile(req.params.businessId);
+  if (!req.body?.tenant_id || profile.tenant_id !== req.body.tenant_id) throw createHttpError({ statusCode: 403, message: 'Business tenant mismatch' });
+  res.json({ success: true, data: await updateBusinessProfile(req.params.businessId, req.body) });
+}));
 router.get("/health", asyncHandler(getHealth));
+router.get("/capabilities", requireAdmincoreBridgeKey, (_req, res) => res.json({ success: true, data: { product_commands: 1, outlet_commands: 1, export_paging: 3, privacy_erasures: 1, frozen_exports: 1, actor_checks: 1 } }));
 router.post("/sync-status", requireAdmincoreBridgeKey, asyncHandler(postSyncStatus));
 router.post("/tenants", requireAdmincoreBridgeKey, asyncHandler(postSaasTenant));
 router.post("/staff", requireAdmincoreBridgeKey, asyncHandler(postBridgeStaff));

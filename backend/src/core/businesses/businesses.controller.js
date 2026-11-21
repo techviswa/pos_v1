@@ -14,7 +14,7 @@ class BusinessesController {
     if (String(req.params.businessId) !== String(req.context.businessId)) {
       throw createHttpError({ statusCode: 403, message: "Forbidden: business access denied" });
     }
-    const data = await businessesService.renameBusiness({ businessId: req.context.businessId, name: req.body?.name || req.body?.business_name });
+    const data = await businessesService.renameBusiness({ businessId: req.context.businessId, name: req.body?.name || req.body?.business_name, expectedUpdatedAt: req.body?.expected_updated_at });
     res.status(200).json(apiResponse({ message: "Business updated successfully", data }));
   }
   async list(req, res) {

@@ -15,9 +15,11 @@ class QrOrderingController {
   }
 
   async getMenu(req, res) {
+    res.set("Cache-Control", "no-store");
     const data = await qrOrderingService.getMenu({
       token: req.params.token,
       requestMeta: {
+        refresh: req.query.refresh === "1",
         userAgent: req.get("user-agent"),
         referrer: req.get("referer"),
         ipAddress: req.ip,
@@ -49,6 +51,7 @@ class QrOrderingController {
   }
 
   async getOrder(req, res) {
+    res.set("Cache-Control", "no-store");
     const data = await qrOrderingService.getOrderByTrackingToken({ trackingToken: req.params.trackingToken });
     res.status(200).json(apiResponse({ message: "QR order tracking fetched successfully", data }));
   }

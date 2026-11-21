@@ -1,4 +1,7 @@
+import { readExportPage } from "../../shared/utils/export-cursor.js";
+import { assertFulfillmentEnabled } from "./fulfillment-policy.js";
 import prisma from "../../database/prisma/client.js";
+import { Prisma } from "@prisma/client";
 import { nextDocumentSequence } from "../../database/prisma/document-sequence.js";
 import { settlementService, lockSettlement, ensureOpenShift } from "./settlement.service.js";
 import { createHttpError } from "../../shared/utils/http-error.js";
@@ -44,7 +47,7 @@ const isManagerRole = (user) => ["owner", "manager"].includes(String(user?.role 
 const CLIENT_INVOICE_FIELDS = [
   "customer_name", "customerName", "customer_phone", "payment_type", "paymentType", "payments", "order_id", "orderId",
   "items", "outlet_id", "outletId", "currency", "kitchen_status", "kitchenStatus",
-  "order_type", "service_mode", "menu_channel", "table_label", "token_number", "pickup_slot", "fulfillment_label", "notes",
+  "order_type", "service_mode", "fulfillment_mode", "menu_channel", "table_label", "token_number", "pickup_slot", "fulfillment_label", "notes", "delivery_address",
   "discount_label", "discount_type", "discountType", "discount_value", "discountValue", "discount_amount", "discountAmount",
   "printable_offer_title", "printable_offer_message", "invoice_format", "gstin", "receipt_printer",
   "tip_amount", "tip_staff_id", "loyalty_redeem_points", "marketing_opt_in",
@@ -113,16 +116,62 @@ class BillingService {
     };
   }
 
-  async listInvoices({ tenantId, limit, page, offset }) {
+  async listInvoices({ tenantId, limit, page, offset, outletIds = null, from, to, createdBy = null, query = {} }) {
     const business = await ensureBusiness({ tenantId });
+    for (const value of [from, to]) if (value && (typeof value !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(value) || !Number.isFinite(Date.parse(value)) || new Date(value).toISOString().slice(0, 10) !== value)) throw createHttpError({ statusCode: 400, message: "Use valid invoice dates (YYYY-MM-DD)" });
+    if (from && to && from > to) throw createHttpError({ statusCode: 400, message: "Start date must not follow end date" });
     const pagination = getPagination({ limit, page, offset });
-    const bills = await prisma.bill.findMany({
-      where: { businessId: business.id },
+    const terms = [];
+    const predicates = [Prisma.sql`b."businessId"=${business.id}`];
+    if (createdBy) {
+      terms.push({ metadata: { path: ['created_by'], equals: createdBy } });
+      predicates.push(Prisma.sql`b.metadata->>'created_by'=${createdBy}`);
+    }
+    for (const [field, comparator] of [['min', 'gte'], ['max', 'lte']]) {
+      if (query[field] !== undefined && query[field] !== '') {
+        const value = Number(query[field]);
+        if (!Number.isFinite(value) || value < 0) throw createHttpError({ statusCode: 400, message: 'Use a non-negative bill amount' });
+        terms.push({ total: { [comparator]: value } });
+        predicates.push(comparator === 'gte' ? Prisma.sql`b.total>=${value}` : Prisma.sql`b.total<=${value}`);
+      }
+    }
+    if (query.search) {
+      if (typeof query.search !== 'string' || query.search.length > 120) throw createHttpError({ statusCode: 400, message: 'Search must be at most 120 characters' });
+      terms.push({ OR: ['id', 'invoiceNumber', 'customerName'].map(field => ({ [field]: { contains: query.search, mode: 'insensitive' } })) });
+      const search = `%${query.search}%`;
+      predicates.push(Prisma.sql`(b.id ILIKE ${search} OR b."invoiceNumber" ILIKE ${search} OR b."customerName" ILIKE ${search})`);
+    }
+    if (query.payment) {
+      terms.push({ metadata: { path: ['payment_type'], equals: String(query.payment) } });
+      predicates.push(Prisma.sql`b.metadata->>'payment_type'=${String(query.payment)}`);
+    }
+    if (query.created_since) {
+      if (typeof query.created_since !== 'string' || query.created_since.length > 64 || !Number.isFinite(Date.parse(query.created_since))) throw createHttpError({ statusCode: 400, message: 'Invalid history start date' });
+      terms.push({ createdAt: { gte: new Date(query.created_since) } });
+      predicates.push(Prisma.sql`b."createdAt">=${new Date(query.created_since).toISOString()}::timestamp`);
+    }
+    if (query.paged === 'true') {
+      // Filter and page in PostgreSQL: never load every invoice ID into application
+      // memory or let another outlet consume the selected outlet's page.
+      if (outletIds) predicates.push(outletIds.length
+        ? Prisma.sql`COALESCE(NULLIF(b.metadata->>'outlet_id',''), NULLIF(b.metadata->>'outletId',''), o."outletId") IN (${Prisma.join(outletIds)})`
+        : Prisma.sql`false`);
+      if (from) predicates.push(Prisma.sql`b."createdAt">=${`${from}T00:00:00`}::timestamp`);
+      if (to) predicates.push(Prisma.sql`b."createdAt"<${new Date(Date.parse(`${to}T00:00:00Z`) + 86400000).toISOString()}::timestamp`);
+      const ids = await prisma.$queryRaw(Prisma.sql`SELECT b.id FROM "Bill" b LEFT JOIN "Order" o ON o.id=b."orderId"
+        WHERE ${Prisma.join(predicates, ' AND ')} ORDER BY b."createdAt" DESC, b.id DESC LIMIT ${pagination.take} OFFSET ${pagination.skip}`);
+      const bills = await prisma.bill.findMany({ where: { businessId: business.id, id: { in: ids.map(row => row.id) } },
+        include: getBillInclude(), orderBy: [{ createdAt: 'desc' }, { id: 'desc' }] });
+      return bills.map(serializeBill);
+    }
+    const scopedIds = outletIds ? (outletIds.length ? await prisma.$queryRaw(Prisma.sql`SELECT b.id FROM "Bill" b LEFT JOIN "Order" o ON o.id=b."orderId" WHERE b."businessId"=${business.id} AND COALESCE(NULLIF(b.metadata->>'outlet_id',''), NULLIF(b.metadata->>'outletId',''), o."outletId") IN (${Prisma.join(outletIds)})`) : []) : null;
+    const bills = await readExportPage(prisma.bill, {
+      where: { businessId: business.id, ...(terms.length ? { AND: terms } : {}), ...(scopedIds ? { id: { in: scopedIds.map((row) => row.id) } } : {}), ...((from || to) ? { createdAt: { ...(from ? { gte: new Date(`${from}T00:00:00Z`) } : {}), ...(to ? { lt: new Date(Date.parse(`${to}T00:00:00Z`) + 86400000) } : {}) } } : {}) },
       include: getBillInclude(),
       orderBy: { createdAt: "desc" },
       take: pagination.take,
       skip: pagination.skip,
-    });
+    }, query);
 
     return bills.map(serializeBill);
   }
@@ -140,13 +189,14 @@ class BillingService {
     return serializeBill(bill);
   }
 
-  async createInvoice({ tenantId, payload: rawPayload, user }) {
+  async createInvoice({ tenantId, payload: rawPayload, user, transaction = null, qrAllocation = null }) {
     const business = await ensureBusiness({ tenantId });
     const payload = sanitizeInvoiceRequest(rawPayload, user);
     if (payload.outlet_id || payload.outletId) {
       await assertOwnedIds({ kind: "outlet", ids: [payload.outlet_id || payload.outletId], businessId: business.id });
     }
-    const { bill: createdBill, replayed } = await prisma.$transaction(async (tx) => {
+    const transact = transaction ? (work) => work(transaction) : (work) => prisma.$transaction(work);
+    const { bill: createdBill, replayed } = await transact(async (tx) => {
       await lockSettlement(tx, business.id);
 
       // Retry safety: the same checkout submitted twice (double tap, network replay) yields the same bill.
@@ -164,6 +214,7 @@ class BillingService {
       }
 
       const requestedOrderId = payload.order_id || payload.orderId || null;
+      if (requestedOrderId) await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`qr-invoice:${requestedOrderId}`}))`;
       if (requestedOrderId && !await tx.order.findFirst({ where: { id: requestedOrderId, businessId: business.id }, select: { id: true } })) {
         throw createHttpError({ statusCode: 404, message: "Order not found for this business" });
       }
@@ -178,11 +229,12 @@ class BillingService {
           },
           include: { items: true, bill: { select: { id: true } } },
         });
-        if (linkedOrder?.bill) {
+        if (linkedOrder?.bill || linkedOrder?.metadata?.qr_bill_ids?.length) {
           throw createHttpError({ statusCode: 409, code: "ORDER_ALREADY_BILLED", message: "This order already has a bill" });
         }
       }
 
+      payload.service_mode = await assertFulfillmentEnabled(business.id, linkedOrder ? { ...payload, ...(linkedOrder.metadata || {}), channel: linkedOrder.channel } : payload);
       if (linkedOrder && !(resolvedItems || []).length) {
         resolvedItems = linkedOrder.items.map((item) => ({
           productId: item.productId,
@@ -195,12 +247,14 @@ class BillingService {
         }));
       }
 
+      // Internal QR allocation is built from locked, persisted order lines, never from HTTP prices.
+      if (qrAllocation) resolvedItems = qrAllocation.items;
       if (!resolvedItems.length) {
         throw createHttpError({ statusCode: 400, code: "BILL_ITEMS_REQUIRED", message: "A bill needs at least one item" });
       }
       // Prices come from the catalogue, never from the request. Lines taken from an existing order keep the price
       // the server fixed when that order was created (a QR customer has already seen it).
-      const itemsFromOrder = Boolean(linkedOrder) && !(payload.items || []).length;
+      const itemsFromOrder = Boolean(qrAllocation) || (Boolean(linkedOrder) && !(payload.items || []).length);
       resolvedItems = itemsFromOrder
         ? resolvedItems.map((item) => ({ ...item, quantity: Math.max(1, Math.floor(Number(item.quantity) || 1)) }))
         : await resolveTrustedItems({
@@ -216,8 +270,8 @@ class BillingService {
 
       // QR orders carry a service charge and tip the customer already saw; they must survive into the bill.
       // At the counter a tip can be added at checkout. Either way it is paid with the bill and never taxed.
-      const carriesCharges = linkedOrder?.channel === "qr";
-      let tipAmount = carriesCharges ? Number(linkedOrder.metadata?.tip_amount || 0) : 0;
+      const carriesCharges = Boolean(qrAllocation) || linkedOrder?.channel === "qr";
+      let tipAmount = qrAllocation ? qrAllocation.tip : carriesCharges ? Number(linkedOrder.metadata?.tip_amount || 0) : 0;
       if (!carriesCharges && payload.tip_amount !== undefined && payload.tip_amount !== null && payload.tip_amount !== "") {
         tipAmount = Number(payload.tip_amount);
         if (!Number.isFinite(tipAmount) || tipAmount < 0) {
@@ -228,13 +282,14 @@ class BillingService {
       // The guest behind the phone number: builds their profile and pays with / earns loyalty points.
       const customer = await upsertCustomerForBill(tx, {
         businessId: business.id,
-        phone: payload.customer_phone,
+        phone: payload.customer_phone || linkedOrder?.metadata?.customer_phone,
         name: payload.customer_name || payload.customerName,
         marketingOptIn: payload.marketing_opt_in === true,
       });
-      const chargeOptions = { serviceCharge: carriesCharges ? linkedOrder.metadata?.service_charge : 0, tip: tipAmount };
-      const redeemPoints = payload.loyalty_redeem_points === undefined || payload.loyalty_redeem_points === null || payload.loyalty_redeem_points === ""
-        ? 0 : Number(payload.loyalty_redeem_points);
+      const chargeOptions = { serviceCharge: qrAllocation ? qrAllocation.serviceCharge : carriesCharges ? linkedOrder.metadata?.service_charge : 0, tip: tipAmount };
+      const requestedPoints = payload.loyalty_redeem_points === undefined && linkedOrder?.metadata?.qr_loyalty_verified
+        ? linkedOrder.metadata.qr_loyalty_points : payload.loyalty_redeem_points;
+      const redeemPoints = requestedPoints === undefined || requestedPoints === null || requestedPoints === "" ? 0 : Number(requestedPoints);
       let loyaltyDiscount = 0;
       if (redeemPoints) {
         const before = calculateInvoiceTotals(payload, resolvedItems, chargeOptions);
@@ -345,6 +400,7 @@ class BillingService {
             gst_breakup: gstBreakup,
             item_costs: itemCosts,
             customer_id: customer?.id || null,
+            customer_phone: payload.customer_phone || linkedOrder?.metadata?.customer_phone || null,
             loyalty_redeem_points: loyaltyDiscount ? redeemPoints : 0,
             loyalty_discount: totals.loyalty_discount,
             payments: payments.map(({ gift_card_code: _code, ...payment }) => ({
@@ -373,6 +429,12 @@ class BillingService {
         },
         include: getBillInclude(),
       });
+
+      if (qrAllocation) {
+        bill.metadata = { ...bill.metadata, qr_source_order_ids: qrAllocation.orderIds,
+          qr_allocations: qrAllocation.lines, qr_billing_batch: qrAllocation.batchId, menu_channel: "QR" };
+        await tx.bill.update({ where: { id: bill.id }, data: { metadata: bill.metadata } });
+      }
 
       for (const payment of giftPayments) {
         await redeemForBill(tx, { businessId: business.id, code: payment.gift_card_code, amount: payment.amount, billId: bill.id, actor: user, outletId: shift.outlet_id });
@@ -430,7 +492,7 @@ class BillingService {
         status: serializedBill.status,
         invoice_number: serializedBill.invoice_number,
       },
-    });
+    }, transaction ? { tx: transaction } : undefined);
 
     return serializedBill;
   }
@@ -507,9 +569,9 @@ class BillingService {
     return settlementService.close({ businessId: business.id, outletId, closingCash, shiftId, user });
   }
 
-  async getShiftHistory({ tenantId, outletId = null }) {
+  async getShiftHistory({ tenantId, outletId = null, outletIds = null, query = {} }) {
     const business = await ensureBusiness({ tenantId });
-    return settlementService.history({ businessId: business.id, outletId });
+    return settlementService.history({ businessId: business.id, outletId, outletIds, query });
   }
 
   async addPayment({ tenantId, invoiceId, payload, user }) {

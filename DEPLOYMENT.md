@@ -1,6 +1,9 @@
 # CashFlow Lite POS Deployment
 
-Production deployment requires resolving the configuration blockers below:
+Production deployment requires resolving the configuration blockers below.
+Install the RLS migration and separate runtime roles following
+[RLS_DEPLOYMENT.md](RLS_DEPLOYMENT.md); production now requires both runtime URLs
+and verifies the database privileges before accepting HTTP requests.
 
 - Frontend: Vercel, using the `frontend` directory.
 - Backend: Render Web Service, using `render.yaml`.

@@ -1,6 +1,8 @@
 import React, { useMemo, useState } from "react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "../../../../components/ui/dialog";
 import { toast } from "sonner";
+import { getPublicQrUrl } from "../../../../lib/qrUrls";
+import { LocalQrCode } from "../../../../components/LocalQrCode";
 
 const createEmptyTableForm = () => ({
   name: "",
@@ -185,14 +187,6 @@ export const FulfillmentTablePanel = ({
       }),
     [reservationItems],
   );
-  const reservationHistory = useMemo(
-    () =>
-      reservationItems.filter((reservation) => {
-        const status = String(reservation.status || "").toLowerCase();
-        return status !== "reserved" && status !== "occupied";
-      }),
-    [reservationItems],
-  );
 
   const closeTableModal = () => {
     setIsTableModalOpen(false);
@@ -356,8 +350,7 @@ export const FulfillmentTablePanel = ({
   };
 
   const getQrUrl = (token) => {
-    const publicOrigin = (process.env.REACT_APP_PUBLIC_FRONTEND_URL || window.location.origin).replace(/\/$/, "");
-    return `${publicOrigin}/qr/${token}`;
+    return getPublicQrUrl(token);
   };
 
   const copyToClipboard = async (url) => {
@@ -586,38 +579,6 @@ export const FulfillmentTablePanel = ({
         </div>
       ) : null}
 
-      {reservationHistory.length ? (
-        <div className="cf-table-sketch__reserved">
-          <div className="cf-card__title" style={{ marginTop: 8 }}>
-            <span>Recent Reservation History</span>
-            <span className="cf-card__meta">Released and canceled reservations still stored in the backend.</span>
-          </div>
-          {reservationHistory.slice(0, 8).map((reservation) => (
-            <div className="cf-table-sketch__reserved-item" key={reservation.id}>
-              <div>
-                <strong>{reservation.table_label || "Table history"}</strong>
-                <span>
-                  {reservation.customer_name || "Walk-in"}
-                  {reservation.guests_count ? ` | ${reservation.guests_count} guests` : ""}
-                  {reservation.area_name ? ` | ${reservation.area_name}` : ""}
-                  {reservation.reservation_for ? ` | ${formatReservationDateTime(reservation.reservation_for)}` : ""}
-                  {reservation.source ? ` | ${reservation.source}` : ""}
-                  {reservation.released_at ? ` | Released ${formatReservationDateTime(reservation.released_at)}` : ""}
-                  {reservation.canceled_at ? ` | Canceled ${formatReservationDateTime(reservation.canceled_at)}` : ""}
-                </span>
-                {reservation.meta && Object.keys(reservation.meta).length ? (
-                  <div className="cf-card__meta" style={{ marginTop: 6 }}>Meta: {safeSerializeMeta(reservation.meta)}</div>
-                ) : null}
-              </div>
-              {canManageTables ? (
-                <button className="cf-btn cf-btn--secondary cf-btn--small" disabled={busy} onClick={() => onDeleteReservation(reservation.id)} type="button">
-                  Delete
-                </button>
-              ) : null}
-            </div>
-          ))}
-        </div>
-      ) : null}
 
       <Dialog onOpenChange={setIsTableModalOpen} open={isTableModalOpen}>
         <DialogContent className="bg-white cf-table-modal">
@@ -784,10 +745,7 @@ export const FulfillmentTablePanel = ({
                     : ""}
                 </div>
               </div>
-              <img
-                alt={`QR ordering code for ${qrPreview.table?.name || "table"}`}
-                src={`https://api.qrserver.com/v1/create-qr-code/?size=220x220&data=${encodeURIComponent(qrPreview.url)}`}
-              />
+              <LocalQrCode value={qrPreview.url} label={`QR ordering code for ${qrPreview.table?.name || "table"}`} />
               <input className="cf-input" readOnly value={qrPreview.url} />
               <div className="cf-table-modal__actions-right">
                 <button className="cf-btn cf-btn--secondary" onClick={() => copyToClipboard(qrPreview.url).then(() => toast.success("QR link copied"))} type="button">

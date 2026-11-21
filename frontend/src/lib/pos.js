@@ -117,12 +117,16 @@ const UI_SETTINGS_KEY = "cashflow-lite-ui-settings";
 const STAFF_META_KEY = "cashflow-lite-staff-meta";
 
 export function getStoredUiSettings() {
+  return { ...DEFAULT_UI_SETTINGS, ...getLegacyUiSettings() };
+}
+
+export function getLegacyUiSettings() {
   try {
     const raw = window.localStorage.getItem(UI_SETTINGS_KEY);
-    if (!raw) return DEFAULT_UI_SETTINGS;
-    return { ...DEFAULT_UI_SETTINGS, ...JSON.parse(raw) };
+    const value = raw ? JSON.parse(raw) : null;
+    return value && typeof value === 'object' && !Array.isArray(value) ? value : null;
   } catch (error) {
-    return DEFAULT_UI_SETTINGS;
+    return null;
   }
 }
 

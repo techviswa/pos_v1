@@ -21,7 +21,9 @@ export const getAdmincoreConnection = () => {
     pos_base_url: config.posBaseUrl,
     project: "CashFlow Lite POS",
     status: configured ? "linked" : "not_configured",
-    last_sync_status: syncStatuses[0] || null,
+    // This endpoint is public. Business delivery history is available only
+    // through the authenticated, tenant-scoped delivery-health endpoint.
+    last_sync_status: null,
   };
 };
 

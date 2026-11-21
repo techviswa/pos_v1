@@ -54,6 +54,7 @@ export const createInitialOrderMeta = () => ({
   token_number: "",
   customer_name: "",
   customer_phone: "",
+  delivery_address: "",
   notes: "",
 });
 
@@ -72,6 +73,7 @@ export const buildScheduledDateTime = (dateValue, timeValue, meridiemValue) => {
   if (meridiem === "AM" && hours === 12) hours = 0;
   const [year, month, day] = dateValue.split("-").map(Number);
   const localDate = new Date(year, month - 1, day, hours, minutes, 0, 0);
+  if (localDate.getFullYear() !== year || localDate.getMonth() !== month - 1 || localDate.getDate() !== day) return null;
   return Number.isNaN(localDate.getTime()) ? null : localDate.toISOString();
 };
 
@@ -88,13 +90,30 @@ const parseScheduledFields = (value) => {
   hours %= 12;
   if (hours === 0) hours = 12;
   return {
-    date: parsed.toISOString().slice(0, 10),
+    date: `${parsed.getFullYear()}-${String(parsed.getMonth() + 1).padStart(2, "0")}-${String(parsed.getDate()).padStart(2, "0")}`,
     time: `${String(hours).padStart(2, "0")}:${String(parsed.getMinutes()).padStart(2, "0")}`,
     meridiem,
   };
 };
 
 export const getMenuChannelForMode = (mode) => getModeConfig(mode).menuChannel;
+
+export const buildFulfillmentPayload = (meta) => {
+  const mode = getModeConfig(meta.fulfillment_mode).key;
+  const pickupSlot = mode === "PICKUP" ? buildScheduledDateTime(meta.pickup_date, meta.pickup_time, meta.pickup_meridiem) : null;
+  return {
+    order_type: getOrderTypeForMode(mode),
+    service_mode: mode,
+    table_id: mode === "TABLE" ? meta.table_id || null : null,
+    table_label: mode === "TABLE" ? meta.table_label || null : null,
+    reservation_id: mode === "TABLE" ? meta.reservation_id || null : null,
+    guests_count: mode === "TABLE" ? Number(meta.guests_count) || null : null,
+    token_number: mode === "TOKEN" ? meta.token_number || null : null,
+    pickup_slot: pickupSlot,
+    delivery_address: mode === "DELIVERY" ? String(meta.delivery_address || "").trim() : null,
+    fulfillment_label: getFulfillmentLabel({ ...meta, fulfillment_mode: mode, pickup_slot: pickupSlot }),
+  };
+};
 
 export const applyFulfillmentMode = (current, mode, suggestedTokenNumber = "") => {
   const nextMode = getModeConfig(mode).key;
@@ -122,6 +141,7 @@ export const applyFulfillmentMode = (current, mode, suggestedTokenNumber = "") =
     next.reservation_id = "";
     next.guests_count = "";
   }
+  if (nextMode !== "DELIVERY") next.delivery_address = "";
 
   return next;
 };
@@ -136,6 +156,7 @@ export const hydrateOrderMeta = (record = {}, suggestedTokenNumber = "") => {
       order_type: record.order_type || getOrderTypeForMode(mode),
       customer_name: record.customer_name || "",
       customer_phone: record.customer_phone || "",
+      delivery_address: record.delivery_address || "",
       notes: record.notes || "",
       token_number: record.token_number || "",
       table_id: record.table_id || "",
@@ -149,6 +170,22 @@ export const hydrateOrderMeta = (record = {}, suggestedTokenNumber = "") => {
     mode,
     suggestedTokenNumber,
   );
+};
+
+// Checkout and mode-specific forms use the same rules.
+export const validateFulfillment = (meta, now = Date.now()) => {
+  const errors = {};
+  if (!String(meta.customer_name || "").trim()) errors.customer_name = "Enter customer name before billing.";
+  if (!/^\d{10}$/.test(String(meta.customer_phone || ""))) errors.customer_phone = "Customer phone must be exactly 10 digits.";
+  if (meta.fulfillment_mode === "TABLE" && !meta.table_id) errors.table_id = "Select a table before billing.";
+  if (meta.fulfillment_mode === "TOKEN" && !/^\d{1,4}$/.test(String(meta.token_number || ""))) errors.token_number = "Enter a token number with 1 to 4 digits.";
+  if (meta.fulfillment_mode === "PICKUP") {
+    const slot = buildScheduledDateTime(meta.pickup_date, meta.pickup_time, meta.pickup_meridiem);
+    if (!slot || new Date(slot).getTime() <= now) errors.pickup_slot = "Choose a pickup date and time in the future.";
+  }
+  if (meta.fulfillment_mode === "DELIVERY" && !String(meta.delivery_address || "").trim()) errors.delivery_address = "Enter the delivery address before billing.";
+  if (Object.keys(errors).length) errors.form = "Complete the required order details before generating the bill.";
+  return errors;
 };
 
 export {

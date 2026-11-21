@@ -69,10 +69,10 @@ export const PlanBilling = () => {
         <div className="cf-page__header">
           <div>
             <h1>Plan &amp; Billing</h1>
-            <p>Your Taskoora subscription. Payments are taken automatically each period by UPI Autopay or card through Razorpay; your data is never deleted if a payment fails.</p>
+            <p>Manage your Taskoora subscription, renewal status and available payment options.</p>
           </div>
         </div>
-        {loadError ? <ApiErrorPanel error={loadError} onRetry={load} /> : null}
+        {loadError ? <ApiErrorPanel error={loadError} message={loadError.response?.data?.error?.message || 'Subscription details could not be refreshed. Retry when the subscription service is available.'} onRetry={load} /> : null}
         {data ? (
           <>
             <div className="cf-metrics">

@@ -49,7 +49,7 @@ export const getFulfillmentLabel = (record = {}) => {
   if (mode === "PICKUP") {
     return record.pickup_slot ? `Pickup ${formatScheduledSlot(record.pickup_slot)}` : "Pickup";
   }
-  return "";
+  return record.delivery_address ? `Delivery to ${record.delivery_address}` : "Delivery";
 };
 
 export const getTrackingLine = (record = {}) => {

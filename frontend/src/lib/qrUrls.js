@@ -1,0 +1,15 @@
+import { resolveApiBaseUrl } from "./apiUrl";
+const isLoopback = (host) => ["localhost", "127.0.0.1", "[::1]"].includes(host);
+const isLan = (host) => /^(10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.)/.test(host);
+let runtimeConnection = null;
+export const setQrConnection = (connection) => { runtimeConnection = connection; };
+
+export const resolveQrApiBaseUrl = (configured = "", pageOrigin = window.location.origin) => resolveApiBaseUrl(configured, pageOrigin);
+
+export const getPublicQrUrl = (token, configured = process.env.REACT_APP_PUBLIC_FRONTEND_URL, pageOrigin = window.location.origin) => {
+  const page = new URL(pageOrigin);
+  const base = new URL(runtimeConnection?.public_frontend_url || configured || pageOrigin);
+  // Opening POS through its current LAN address also corrects stale local QR hosts.
+  if (isLan(page.hostname) && (isLan(base.hostname) || isLoopback(base.hostname))) base.host = page.host;
+  return `${base.href.replace(/\/$/, "")}/qr/${encodeURIComponent(token)}`;
+};

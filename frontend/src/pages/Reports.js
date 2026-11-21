@@ -1,45 +1,30 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
+import { formatQuantity } from "../lib/quantity";
+import { API_URL } from "../lib/apiUrl";
 import axios from "axios";
 import { Layout } from "../components/Layout";
 import { ApiErrorPanel } from "../components/ApiErrorPanel";
-import { formatCurrency, isDateInPeriod } from "../lib/pos";
+import { formatCurrency } from "../lib/pos";
+import { apiData } from "../lib/apiData";
 import { useUi } from "../contexts/UiContext";
 import { toast } from "sonner";
+import { SalesVisuals } from "../core/reports/SalesVisuals";
+import { useActiveOutlet } from "../core/outlets/store/ActiveOutletContext";
 
-const API_URL = (() => {
-  const configured = String(process.env.REACT_APP_BACKEND_URL || "").replace(/\/+$/, "");
-  if (typeof window === "undefined") return configured;
-
-  const currentOrigin = window.location.origin.replace(/\/+$/, "");
-  const currentHost = window.location.hostname;
-  if (configured && configured !== currentOrigin && !configured.includes("vercel.app")) {
-    return configured;
-  }
-
-  if (currentHost === "localhost" || currentHost === "127.0.0.1") {
-    return configured || "http://localhost:4001";
-  }
-
-  return "https://pos-v1-fwjm.onrender.com";
-})();
 const EMPTY_ARRAY = [];
 const EMPTY_OBJECT = {};
 
-const toArrayPayload = (payload) => {
-  const data = payload?.data ?? payload;
-  if (Array.isArray(data)) return data;
-  if (Array.isArray(data?.items)) return data.items;
-  return [];
-};
 
 export const Reports = () => {
   const { settings } = useUi();
+  const { selectedOutletId, selectedOutlet } = useActiveOutlet();
+  const requestId = useRef(0);
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState("date");
   const [period, setPeriod] = useState("today");
-  const [customDateRange, setCustomDateRange] = useState({ from: "", to: "" });
-  const [bills, setBills] = useState([]);
-  const [products, setProducts] = useState([]);
+  const [customDateRange, setCustomDateRange] = useState(() => { const today = new Date().toISOString().slice(0, 10); return { from: today, to: today }; });
+  const [dateDraft, setDateDraft] = useState(customDateRange);
+  const [dateError, setDateError] = useState("");
   const [inventory, setInventory] = useState([]);
   const [reportOverview, setReportOverview] = useState({});
   const [feedback, setFeedback] = useState({ items: [], summary: {} });
@@ -56,58 +41,40 @@ export const Reports = () => {
   const [recipeView, setRecipeView] = useState("with");
 
   const fetchData = async () => {
+    const currentRequest = ++requestId.current;
+    setLoading(true);
     try {
       const reportParams = (() => {
         if (period === "custom") return { from: customDateRange.from || undefined, to: customDateRange.to || undefined };
         const now = new Date();
-        const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+        const today = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
         const to = today.toISOString().slice(0, 10);
         if (period === "today") return { from: to, to };
         if (period === "week") {
           const startWeek = new Date(today);
-          startWeek.setDate(startWeek.getDate() - startWeek.getDay());
+          startWeek.setUTCDate(startWeek.getUTCDate() - startWeek.getUTCDay());
           return { from: startWeek.toISOString().slice(0, 10), to };
         }
-        const startMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+        const startMonth = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
         return { from: startMonth.toISOString().slice(0, 10), to };
       })();
-      const [reportsRes, billsRes, productsRes, inventoryRes, feedbackRes, customerAnalyticsRes] = await Promise.all([
-        axios.get(`${API_URL}/api/reports`, { withCredentials: true, params: reportParams }).catch(() => ({ data: { data: {} } })),
-        axios.get(`${API_URL}/api/bills`, { withCredentials: true, params: { limit: 500 } }).catch(() => ({ data: [] })),
-        axios.get(`${API_URL}/api/products`, { withCredentials: true, params: { limit: 500 } }).catch(() => ({ data: [] })),
-        axios.get(`${API_URL}/api/inventory`, { withCredentials: true, params: { limit: 500 } }).catch(() => ({ data: { items: [] } })),
-        axios.get(`${API_URL}/api/feedback`, { withCredentials: true }).catch(() => ({ data: { items: [], summary: {} } })),
-        axios.get(`${API_URL}/api/customer-analytics`, { withCredentials: true }).catch(() => ({
-          data: {
-            summary: {},
-            customers: [],
-            item_sales_by_channel: [],
-            campaign_suggestions: [],
-          },
-        })),
-      ]);
-      setReportOverview(reportsRes.data?.data || reportsRes.data || {});
-      setBills(toArrayPayload(billsRes.data));
-      setProducts(toArrayPayload(productsRes.data));
-      setInventory(toArrayPayload(inventoryRes.data));
-      setFeedback(feedbackRes.data || { items: [], summary: {} });
-      setCustomerAnalytics(
-        customerAnalyticsRes.data || {
-          summary: {},
-          customers: [],
-          item_sales_by_channel: [],
-          campaign_suggestions: [],
-        }
-      );
+      const reportsRes = await axios.get(`${API_URL}/api/reports`, { withCredentials: true, skipCache: true, params: { ...reportParams, outlet_id: selectedOutletId || undefined } });
+      if (currentRequest !== requestId.current) return;
+      const data = apiData(reportsRes) || {};
+      setReportOverview(data);
+      setInventory(data.inventory || []);
+      setFeedback(data.feedback || { items: [], summary: {} });
+      setCustomerAnalytics(data.customer_insights || { summary: {}, customers: [], item_sales_by_channel: [], campaign_suggestions: [] });
       setLoadError(null);
     } catch (error) {
+      if (currentRequest !== requestId.current) return;
       setLoadError(error);
       if (!loadErrorShown) {
-        toast.error("Reports loaded with partial data");
+        toast.error("Unable to load reports. Adjust the dates or try again.");
         setLoadErrorShown(true);
       }
     } finally {
-      setLoading(false);
+      if (currentRequest === requestId.current) setLoading(false);
     }
   };
 
@@ -116,38 +83,8 @@ export const Reports = () => {
     void fetchData();
     // Reports must refetch when the selected reporting period changes.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [period, customDateRange.from, customDateRange.to]);
+  }, [period, customDateRange.from, customDateRange.to, selectedOutletId]);
 
-  const filteredBills = useMemo(
-    () =>
-      bills.filter((bill) => {
-        if (period !== "custom") {
-          return isDateInPeriod(bill.created_at, period);
-        }
-
-        const createdAt = new Date(bill.created_at);
-        if (Number.isNaN(createdAt.getTime())) {
-          return false;
-        }
-
-        if (customDateRange.from) {
-          const fromDate = new Date(`${customDateRange.from}T00:00:00`);
-          if (createdAt < fromDate) {
-            return false;
-          }
-        }
-
-        if (customDateRange.to) {
-          const toDate = new Date(`${customDateRange.to}T23:59:59.999`);
-          if (createdAt > toDate) {
-            return false;
-          }
-        }
-
-        return true;
-      }),
-    [bills, period, customDateRange.from, customDateRange.to]
-  );
   const dateRows = reportOverview.sales?.rows || EMPTY_ARRAY;
   const productRows = useMemo(
     () =>
@@ -160,17 +97,7 @@ export const Reports = () => {
     [reportOverview.profitability?.rows],
   );
   const productTotal = reportOverview.profitability?.summary?.revenue || productRows.reduce((sum, row) => sum + row.rev, 0);
-  const inventoryRows = useMemo(
-    () =>
-      inventory.filter((item) =>
-        (item.avg_daily_consumption || 0) > 0 ||
-        (item.wastage_last_30_days || 0) > 0 ||
-        (item.pilferage_last_30_days || 0) > 0 ||
-        item.expiry_date ||
-        item.days_remaining !== null
-      ),
-    [inventory]
-  );
+  const inventoryRows = inventory;
   const customerSummary = customerAnalytics.summary || EMPTY_OBJECT;
   const customers = customerAnalytics.customers || EMPTY_ARRAY;
   const itemSalesByChannel = customerAnalytics.item_sales_by_channel || EMPTY_ARRAY;
@@ -178,7 +105,7 @@ export const Reports = () => {
   const feedbackItems = feedback.items || EMPTY_ARRAY;
   const feedbackSummary = {
     responses: feedback.summary?.count ?? feedback.summary?.total_feedback ?? feedbackItems.length,
-    average_rating: feedback.summary?.average_rating || 0,
+    average_rating: feedback.summary?.average_rating == null ? "No ratings yet" : Number(feedback.summary.average_rating).toFixed(1),
     five_star: feedback.summary?.five_star ?? feedbackItems.filter((item) => Number(item.rating || 0) >= 5).length,
   };
   const feedbackRows = useMemo(() => {
@@ -203,63 +130,20 @@ export const Reports = () => {
     return customers;
   }, [customers, customerView]);
   const recipeAnalytics = useMemo(() => {
-    const inventoryStockMap = Object.fromEntries((inventory || []).map((item) => [item.id, Number(item.current_stock || 0)]));
-    const recipeProducts = products.filter((product) => (product.recipe_lines || []).length);
-    const productsWithAnyRecipe = products.filter((product) =>
-      (product.recipe_lines || []).length ||
-      (product.variation_options || []).some((option) => (option.recipe_lines || []).length) ||
-      (product.addon_options || []).some((option) => (option.recipe_lines || []).length)
-    );
-    const blockedProducts = products.filter((product) =>
-      (product.recipe_lines || []).some((line) => Number(inventoryStockMap[line.inventory_id] || 0) < Number(line.quantity || 0))
-    );
-    const ingredientDemand = {};
-    filteredBills.forEach((bill) => {
-      (bill.items || []).forEach((billItem) => {
-        const product = products.find((entry) => entry.id === (billItem.productId || billItem.product_id));
-        if (!product) return;
-        const variation = (product.variation_options || []).find((option) => option.name === billItem.variation);
-        const addons = (product.addon_options || []).filter((option) => (billItem.addons || []).includes(option.name));
-        const allRecipeLines = [
-          ...(product.recipe_lines || []),
-          ...(variation?.recipe_lines || []),
-          ...addons.flatMap((option) => option.recipe_lines || []),
-        ];
-        allRecipeLines.forEach((line) => {
-          const current = ingredientDemand[line.ingredient_name] || { ingredient_name: line.ingredient_name, unit: line.unit, quantity: 0 };
-          current.quantity += Number(line.quantity || 0) * Number(billItem.quantity || 0);
-          ingredientDemand[line.ingredient_name] = current;
-        });
-      });
-    });
-
+    const data = reportOverview.recipes || {};
+    const rows = data.products || [];
     return {
-      productsWithRecipes: productsWithAnyRecipe.length,
-      productsWithoutRecipes: products.filter((product) => !(
-        (product.recipe_lines || []).length ||
-        (product.variation_options || []).some((option) => (option.recipe_lines || []).length) ||
-        (product.addon_options || []).some((option) => (option.recipe_lines || []).length)
-      )).length,
-      blockedProducts,
-      recipeProducts: recipeProducts.map((product) => ({
-        id: product.id,
-        name: product.name,
-        category: product.category,
-        auto_recipe_cost: product.auto_recipe_cost || 0,
-        price: product.price || product.base_price || 0,
-        gross_margin: Number(product.price || product.base_price || 0) - Number(product.auto_recipe_cost || 0),
-        base_lines: (product.recipe_lines || []).length,
-        variation_lines: (product.variation_options || []).reduce((sum, option) => sum + ((option.recipe_lines || []).length), 0),
-        addon_lines: (product.addon_options || []).reduce((sum, option) => sum + ((option.recipe_lines || []).length), 0),
+      productsWithRecipes: data.recipe_product_count || 0,
+      productsWithoutRecipes: rows.filter((row) => !row.total_recipe_nodes).length,
+      blockedProducts: rows.filter((row) => row.ingredient_blocked),
+      recipeProducts: rows.filter((row) => row.total_recipe_nodes).map((row) => ({
+        ...row, auto_recipe_cost: row.base_recipe_cost,
+        gross_margin: row.base_recipe_cost == null ? null : row.price - row.base_recipe_cost,
       })),
-      ingredientDemand: Object.values(ingredientDemand).sort((left, right) => right.quantity - left.quantity).slice(0, 20),
-      missingRecipeProducts: products.filter((product) => !(
-        (product.recipe_lines || []).length ||
-        (product.variation_options || []).some((option) => (option.recipe_lines || []).length) ||
-        (product.addon_options || []).some((option) => (option.recipe_lines || []).length)
-      )),
+      ingredientDemand: (data.ingredient_usage || []).map((row) => ({ ...row, quantity: row.quantity_used })),
+      missingRecipeProducts: rows.filter((row) => !row.total_recipe_nodes),
     };
-  }, [filteredBills, inventory, products]);
+  }, [reportOverview.recipes]);
 
   const segmentBadgeClass = (segment) => {
     if (segment === "VIP") {
@@ -284,7 +168,7 @@ export const Reports = () => {
 
   const renderPeriodControls = () => (
     <div className="cf-table-toolbar">
-      <select className="cf-select" onChange={(event) => setPeriod(event.target.value)} style={{ width: 180 }} value={period}>
+      <select aria-label="Report period" className="cf-select" onChange={(event) => { setDateError(""); setPeriod(event.target.value); }} style={{ width: 180 }} value={period}>
         <option value="today">Today</option>
         <option value="week">This Week</option>
         <option value="month">This Month</option>
@@ -296,18 +180,30 @@ export const Reports = () => {
             className="cf-search"
             style={{ width: 155 }}
             type="date"
-            value={customDateRange.from}
-            onChange={(event) => setCustomDateRange((current) => ({ ...current, from: event.target.value }))}
+            aria-label="From date"
+            value={dateDraft.from}
+            onChange={(event) => { setDateError(""); setDateDraft((current) => ({ ...current, from: event.target.value })); }}
           />
           <input
             className="cf-search"
             style={{ width: 155 }}
             type="date"
-            value={customDateRange.to}
-            onChange={(event) => setCustomDateRange((current) => ({ ...current, to: event.target.value }))}
+            aria-label="To date"
+            min={dateDraft.from || undefined}
+            value={dateDraft.to}
+            onChange={(event) => { setDateError(""); setDateDraft((current) => ({ ...current, to: event.target.value })); }}
           />
+          <button type="button" className="cf-btn cf-btn--primary" onClick={() => {
+            if (!dateDraft.from || !dateDraft.to) { setDateError("Choose both a start date and an end date."); return; }
+            if (dateDraft.from > dateDraft.to) { setDateError("End date must be on or after the start date."); return; }
+            setDateError("");
+            if (dateDraft.from === customDateRange.from && dateDraft.to === customDateRange.to) void fetchData();
+            else setCustomDateRange({ ...dateDraft });
+          }}>Apply dates</button>
         </>
       ) : null}
+      <button type="button" className="cf-btn cf-btn--secondary" onClick={() => { setDateError(""); if (period === "today") void fetchData(); else setPeriod("today"); }}>Reset to today</button>
+      {dateError ? <span role="alert" style={{ color: "var(--cf-red)" }}>{dateError}</span> : null}
       <span style={{ color: "var(--cf-text-3)", fontSize: 12 }}>
         Showing: <b style={{ color: "var(--cf-text)" }}>{periodLabel}</b>
       </span>
@@ -317,6 +213,7 @@ export const Reports = () => {
   if (loading) {
     return (
       <Layout title="Reports">
+        <div className="cf-page">{renderPeriodControls()}</div>
         <div className="cf-loading">
           <div className="cf-loading__inner">
             <div className="cf-loading__spinner" />
@@ -327,10 +224,11 @@ export const Reports = () => {
     );
   }
 
-  if (loadError && !bills.length && !products.length && !inventory.length) {
+  if (loadError) {
     return (
       <Layout title="Reports">
         <div className="cf-page">
+          {renderPeriodControls()}
           <ApiErrorPanel error={loadError} onRetry={fetchData} />
         </div>
       </Layout>
@@ -369,8 +267,10 @@ export const Reports = () => {
         </div>
 
         {activeTab === "date" ? (
-          <div className="cf-table-wrap">
+          <>
             {renderPeriodControls()}
+            <SalesVisuals rows={dateRows} hourly={reportOverview.hourly?.rows || []} products={productRows.map((row) => ({ name: row.name, value: row.rev }))} outlets={(reportOverview.outlets?.rows || []).map((row) => ({ name: row.outlet_name || row.name, value: row.sales }))} currency={settings.currency} periodLabel={`${selectedOutlet?.name || "Accessible outlets"} · ${periodLabel} · UTC calendar days`} />
+          <div className="cf-table-wrap">
             <table className="cf-table">
               <thead>
                 <tr>
@@ -378,7 +278,7 @@ export const Reports = () => {
                   <th>Bills</th>
                   <th>Sales</th>
                   <th>Tax Collected</th>
-                  <th>Net Revenue</th>
+                  <th>Sales Excluding Tax</th>
                 </tr>
               </thead>
               <tbody>
@@ -421,6 +321,7 @@ export const Reports = () => {
               </tbody>
             </table>
           </div>
+          </>
         ) : activeTab === "product" ? (
           <div className="cf-table-wrap">
             {renderPeriodControls()}
@@ -471,7 +372,7 @@ export const Reports = () => {
           <div className="cf-table-wrap">
             <div className="cf-table-toolbar">
               <span style={{ color: "var(--cf-text-3)", fontSize: 12 }}>
-                Based on the last 30 days of logged inventory movements. Items without movement or risk signals are hidden here.
+                {reportOverview.inventory_location || "Selected stock location"}: current balances. Usage and forecasts use the last 30 days of logged movements, independently of the sales date filter. Missing outlet balances are not treated as zero. Outlet expiry dates are not tracked here.
               </span>
             </div>
             <table className="cf-table">
@@ -491,12 +392,12 @@ export const Reports = () => {
                   inventoryRows.map((item) => (
                     <tr key={item.id}>
                       <td>{item.name}</td>
-                      <td className="cf-table__mono">{item.current_stock} {item.unit}</td>
-                      <td className="cf-table__mono">{item.avg_daily_consumption || 0} {item.unit}</td>
-                      <td className="cf-table__mono">{item.days_remaining ?? "-"}</td>
+                      <td className="cf-table__mono">{formatQuantity(item.current_stock, item.unit)}</td>
+                      <td className="cf-table__mono">{item.usage_history_available === false ? "No usage history" : formatQuantity(item.avg_daily_consumption, item.unit)}</td>
+                      <td className="cf-table__mono">{item.days_remaining == null ? "No estimate" : formatQuantity(item.days_remaining)}</td>
                       <td className="cf-table__mono">{item.expiry_date ? item.expiry_date.slice(0, 10) : "-"}</td>
-                      <td className="cf-table__mono">{item.wastage_last_30_days || 0}</td>
-                      <td className="cf-table__mono">{item.pilferage_last_30_days || 0}</td>
+                      <td className="cf-table__mono">{formatQuantity(item.wastage_last_30_days, item.unit)}</td>
+                      <td className="cf-table__mono">{formatQuantity(item.pilferage_last_30_days, item.unit)}</td>
                     </tr>
                   ))
                 ) : (
@@ -584,15 +485,15 @@ export const Reports = () => {
                 <div className="cf-metric__sub">Returning guests worth nurturing</div>
               </button>
               <button className="cf-metric cf-metric--button" onClick={() => setCustomerView("loyalty")} type="button">
-                <div className="cf-metric__label">Loyalty Points</div>
-                <div className="cf-metric__value">{customerSummary.loyalty_points_issued || 0}</div>
+                <div className="cf-metric__label">Current points held</div>
+                <div className="cf-metric__value">{customerSummary.loyalty_points_held || 0}</div>
                 <div className="cf-metric__sub">Ready for CRM reward campaigns</div>
               </button>
               <button className="cf-metric cf-metric--button" onClick={() => setCustomerView("value")} type="button">
                 <div className="cf-metric__label">Avg Customer Value</div>
                 <div className="cf-metric__value">{formatCurrency(customerSummary.average_customer_value || 0, settings.currency)}</div>
                 <div className="cf-metric__sub">
-                  Avg feedback: {customerSummary.average_feedback || 0}/5
+                  Avg feedback: {customerSummary.average_feedback == null ? "No ratings yet" : `${Number(customerSummary.average_feedback).toFixed(1)}/5`}
                 </div>
               </button>
             </div>
@@ -784,9 +685,9 @@ export const Reports = () => {
                             <div style={{ fontWeight: 600 }}>{product.name}</div>
                             <div style={{ color: "var(--cf-text-3)", fontSize: 11 }}>{product.category || "Other"}</div>
                           </td>
-                          <td className="cf-table__mono">{formatCurrency(product.auto_recipe_cost, settings.currency)}</td>
+                          <td className="cf-table__mono">{product.auto_recipe_cost == null ? "Needs stock/recipe review" : formatCurrency(product.auto_recipe_cost, settings.currency)}</td>
                           <td className="cf-table__mono">{formatCurrency(product.price, settings.currency)}</td>
-                          <td className="cf-table__mono">{formatCurrency(product.gross_margin, settings.currency)}</td>
+                          <td className="cf-table__mono">{product.gross_margin == null ? "No estimate" : formatCurrency(product.gross_margin, settings.currency)}</td>
                           <td className="cf-table__mono">{product.base_lines} base · {product.variation_lines} variation · {product.addon_lines} add-on</td>
                         </tr>
                       ))
@@ -800,7 +701,7 @@ export const Reports = () => {
               </div>
 
               <div className="cf-table-wrap">
-                <div className="cf-section-title">Ingredient Demand from Billed Recipes</div>
+                <div className="cf-section-title">Recorded ingredient consumption for this period</div>
                 <table className="cf-table">
                   <thead>
                     <tr>

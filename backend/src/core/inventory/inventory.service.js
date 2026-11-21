@@ -1,3 +1,4 @@
+import { readExportPage } from "../../shared/utils/export-cursor.js";
 import prisma from "../../database/prisma/client.js";
 import { moveStock } from "./stock-ledger.service.js";
 import { createHttpError } from "../../shared/utils/http-error.js";
@@ -17,13 +18,13 @@ class InventoryService {
   async listItems({ tenantId, query = {} }) {
     const business = await ensureBusiness({ tenantId });
     const pagination = getPagination(query);
-    const items = await prisma.inventoryItem.findMany({
+    const items = await readExportPage(prisma.inventoryItem, {
       where: { businessId: business.id },
       include: getInventoryInclude(),
       orderBy: { createdAt: "asc" },
       take: pagination.take,
       skip: pagination.skip,
-    });
+    }, query);
 
     return items.map(serializeInventoryItem);
   }

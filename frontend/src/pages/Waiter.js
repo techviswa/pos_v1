@@ -1,4 +1,5 @@
 import React, { useMemo, useState } from "react";
+import { API_URL } from "../lib/apiUrl";
 import axios from "axios";
 import { useNavigate } from "react-router-dom";
 import { Layout } from "../components/Layout";
@@ -10,25 +11,10 @@ import { useUi } from "../contexts/UiContext";
 import { useAuth } from "../contexts/AuthContext";
 import { useAutoRefresh } from "../hooks/useAutoRefresh";
 import { QrInbox } from "../components/QrInbox";
+import { TableAssistanceInbox } from "../components/TableAssistanceInbox";
 import { fulfillmentService } from "../features/billing/fulfillment/services/fulfillment.service";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "../components/ui/dialog";
 
-const API_URL = (() => {
-  const configured = String(process.env.REACT_APP_BACKEND_URL || "").replace(/\/+$/, "");
-  if (typeof window === "undefined") return configured;
-
-  const currentOrigin = window.location.origin.replace(/\/+$/, "");
-  const currentHost = window.location.hostname;
-  if (configured && configured !== currentOrigin && !configured.includes("vercel.app")) {
-    return configured;
-  }
-
-  if (currentHost === "localhost" || currentHost === "127.0.0.1") {
-    return configured || "http://localhost:4001";
-  }
-
-  return "https://pos-v1-fwjm.onrender.com";
-})();
 const ACTIVE_RESERVATION_STATUSES = new Set(["reserved", "occupied"]);
 const toArrayPayload = (payload) => {
   const data = payload?.data ?? payload;
@@ -239,6 +225,7 @@ export const Waiter = () => {
         </div>
 
         <QrInbox currency={settings.currency} />
+        <TableAssistanceInbox />
 
         <section className="cf-card cf-card--padded" aria-label="Kitchen pickup queue">
           <h2>Kitchen orders ready for pickup</h2>

@@ -67,6 +67,7 @@ app.get("/health", (_req, res) => {
       data: {
         app: env.appName,
         status: "ok",
+        revision: process.env.RENDER_GIT_COMMIT || null,
         timestamp: new Date().toISOString(),
       },
     }),

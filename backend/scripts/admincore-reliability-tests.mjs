@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import env from "../src/config/env.js";
 import { admincoreChangeSyncService } from "../src/core/admincore/admincore-change-sync.service.js";
-import { checkAdmincoreHealth } from "../src/core/admincore/admincore.service.js";
+import { checkAdmincoreHealth, getAdmincoreConnection, recordAdmincoreSyncStatus } from "../src/core/admincore/admincore.service.js";
 import { jobQueue } from "../src/services/jobs/job-queue.js";
 import { DurableJobQueue } from "../src/services/jobs/durable-job-queue.js";
 import prisma from "../src/database/prisma/client.js";
@@ -15,6 +15,8 @@ const testQueue = new DurableJobQueue();
 const testType = `test.admincore.${randomUUID()}`;
 testQueue.registerHandler(testType, (event) => admincoreChangeSyncService.deliverChange(event));
 try {
+  recordAdmincoreSyncStatus({ resource: "orders", synced_count: 77 });
+  assert.equal(getAdmincoreConnection().last_sync_status, null, "Public configuration must not expose another business's delivery activity");
   Object.assign(env.admincore, { enabled: true, apiBaseUrl: "https://admincore.invalid", syncWebhookUrl: "" });
   admincoreChangeSyncService.recordDeliveryFailure = async (_event, message) => failures.push(message);
   globalThis.fetch = async () => ({ ok: false, status: 503 });
@@ -56,6 +58,12 @@ try {
   assert.equal(recovered.status, "completed");
   assert.equal(recovered.attempts, 2);
   assert.equal(recoveredDeliveries, 1, "A remaining attempt must still run after recovery");
+  const orphan = await testQueue.enqueue(testType, { business_id: `deleted-fixture-${randomUUID()}`, tenant_id: "deleted" });
+  const valid = await testQueue.enqueue(testType, { resource: "orders" });
+  const next = await testQueue.runNext();
+  assert.equal(next.id, valid.id, "Orphaned jobs must not starve a valid notification");
+  assert.equal((await testQueue.get(orphan.id)).status, "failed");
+  assert.match((await testQueue.get(orphan.id)).error, /business context is invalid/);
   console.log("AdminCore HTTP failure, timeout, retry, exhaustion, and crash recovery checks passed");
 } finally {
   globalThis.fetch = originalFetch;

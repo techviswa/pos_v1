@@ -1,8 +1,12 @@
-import React, { useEffect, useEffectEvent, useMemo, useRef, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
+import { Link, useLocation, useNavigate } from 'react-router-dom';
+import { cartFromBill, configuredPrice } from '../core/billing/utils/reuseBill';
+import { API_URL } from "../lib/apiUrl";
 import axios from "axios";
 import { apiData } from "../lib/apiData";
 import { Layout } from "../components/Layout";
 import { ApiErrorPanel } from "../components/ApiErrorPanel";
+import { QrCheckoutInbox } from "../components/QrCheckoutInbox";
 import { toast } from "sonner";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "../components/ui/dialog";
 import { formatCurrency, hasPermission, newClientKey } from "../lib/pos";
@@ -12,7 +16,6 @@ import { useAutoRefresh } from "../hooks/useAutoRefresh";
 import { formatScheduledSlot, getTrackingLine } from "../core/billing/utils/orderTracking";
 import { OutletOverviewPanel } from "../core/outlets/components/OutletOverviewPanel";
 import { useActiveOutlet } from "../core/outlets/store/ActiveOutletContext";
-import { CashierSettlement } from "../core/billing/components/CashierSettlement";
 import { CheckoutExtras } from "../core/customers/CheckoutExtras";
 import { RazorpayCollect } from "../core/payments/RazorpayCollect";
 import { applyUnsyncedStock, canQueueOffline, isNetworkFailure, queueOfflineBill } from "../core/offline/offlineQueue";
@@ -21,25 +24,12 @@ import { BillingFulfillmentSection } from "../features/billing/fulfillment/pages
 import { fulfillmentService } from "../features/billing/fulfillment/services/fulfillment.service";
 import { useBillingFulfillment } from "../features/billing/fulfillment/store/useBillingFulfillment";
 import {
-  sanitizeTenDigitPhoneInput,
+  validateFulfillment,
+  buildFulfillmentPayload,
+  applyFulfillmentMode,
+  FULFILLMENT_MODES,
 } from "../features/billing/fulfillment/utils/fulfillmentMode";
 
-const API_URL = (() => {
-  const configured = String(process.env.REACT_APP_BACKEND_URL || "").replace(/\/+$/, "");
-  if (typeof window === "undefined") return configured;
-
-  const currentOrigin = window.location.origin.replace(/\/+$/, "");
-  const currentHost = window.location.hostname;
-  if (configured && configured !== currentOrigin && !configured.includes("vercel.app")) {
-    return configured;
-  }
-
-  if (currentHost === "localhost" || currentHost === "127.0.0.1") {
-    return configured || "http://localhost:4001";
-  }
-
-  return "https://pos-v1-fwjm.onrender.com";
-})();
 const LOW_STOCK_THRESHOLD = 3;
 
 const toNumber = (value, fallback = 0) => {
@@ -185,6 +175,10 @@ const summarizeRecipeLines = (recipeLines = [], multiplier = 1) =>
   }, {});
 
 export const Billing = () => {
+  const location = useLocation(), navigate = useNavigate();
+  const [repeating, setRepeating] = useState(false), [repeatError, setRepeatError] = useState('');
+  const repeatGeneration = useRef(0);
+  const repeatBillId = location.state?.repeatBillId;
   const { user } = useAuth();
   const { settings } = useUi();
   const { selectedOutlet, selectedOutletId } = useActiveOutlet();
@@ -195,10 +189,12 @@ export const Billing = () => {
   const [tableReservations, setTableReservations] = useState({ items: [] });
   const [tableBusy, setTableBusy] = useState(false);
   const [inventoryCatalog, setInventoryCatalog] = useState([]);
+  const [ingredientStockKnown, setIngredientStockKnown] = useState(false);
   const [search, setSearch] = useState("");
   const [category, setCategory] = useState("");
   const checkoutKeyRef = useRef({ signature: "", key: "" });
   const [cart, setCart] = useState({});
+  const [allowedModes, setAllowedModes] = useState(null);
   const [payment, setPayment] = useState(settings.paymentMethods[0] || "Cash");
   const [receipt, setReceipt] = useState(null);
   // Set when the menu shown is the copy saved on this device, because the server cannot be reached.
@@ -232,9 +228,21 @@ export const Billing = () => {
     fulfillmentLabel,
     changeFulfillmentMode,
     resetOrderMeta,
-    hydrateFromOrder,
   } = useBillingFulfillment(recentOrders);
+  useEffect(() => {
+    if (!allowedModes || Object.keys(cart).length || allowedModes[orderMeta.fulfillment_mode]) return;
+    const first = FULFILLMENT_MODES.find(mode => allowedModes[mode.key] === true);
+    if (first) {
+      setOrderMeta(current => applyFulfillmentMode(current, first.key, suggestedTokenNumber));
+      setBillingErrors({});
+    }
+  }, [allowedModes, cart, orderMeta.fulfillment_mode, setOrderMeta, suggestedTokenNumber]);
   const menuContextKey = `${menuChannel}|${selectedOutletId || "all-outlets"}`;
+  const activeMenuContextRef = useRef({ key: menuContextKey });
+  if (activeMenuContextRef.current.key !== menuContextKey) {
+    activeMenuContextRef.current = { key: menuContextKey };
+  }
+  useEffect(() => { repeatGeneration.current++; setRepeating(false); setRepeatError(''); }, [selectedOutletId, repeatBillId, user?.id, user?.role]);
   const canManageTables = hasPermission(user, "qr_management") || hasPermission(user, "reservations");
   const customerPhoneDigits = String(orderMeta.customer_phone || "").replace(/\D/g, "");
 
@@ -285,11 +293,14 @@ export const Billing = () => {
   }, []);
 
   const refreshTableData = async () => {
+    const context = activeMenuContextRef.current;
     try {
       const data = await fulfillmentService.fetchTableManagement({ force: true, includeHistory: true });
+      if (activeMenuContextRef.current !== context) return;
       setTableData(data.tables || { items: [], summary: {}, settings: {}, areas: [] });
       setTableReservations(data.reservations || { items: [] });
     } catch (error) {
+      if (activeMenuContextRef.current !== context) return;
       setTableData({ items: [], summary: {}, settings: {}, areas: [] });
       setTableReservations({ items: [] });
       if (error?.response?.status !== 403) {
@@ -299,20 +310,13 @@ export const Billing = () => {
   };
 
   const fetchProducts = async () => {
-    if (!selectedOutletId) {
-      setProducts([]);
-      setRecentOrders([]);
-      setTableData({ items: [], summary: {}, settings: {}, areas: [] });
-      setTableReservations({ items: [] });
-      setInventoryCatalog([]);
-      hasLoadedProductsRef.current = false;
-      lastFetchedMenuContextRef.current = "";
-      setLoading(false);
-      return;
-    }
+    if (!selectedOutletId) return;
+    const context = activeMenuContextRef.current;
+    if (context.key !== menuContextKey) return;
+    const isCurrent = () => activeMenuContextRef.current === context;
 
     try {
-      const [productsResponse, billsResponse, tableResponse] = await Promise.all([
+      const [productsResponse, billsResponse, tableResponse, modesResponse] = await Promise.all([
         axios.get(`${API_URL}/api/products`, {
           withCredentials: true,
           params: {
@@ -320,12 +324,17 @@ export const Billing = () => {
             outlet_id: selectedOutletId,
           },
         }),
-        axios.get(`${API_URL}/api/bills`, {
+        axios.get(`${API_URL}/api/billing`, {
           withCredentials: true,
           params: { limit: 50, outlet_id: selectedOutletId },
         }),
         fulfillmentService.fetchTableManagement({ includeHistory: true }).catch(() => null),
+        axios.get(`${API_URL}/api/billing/fulfillment-modes`, { withCredentials: true, skipCache: true }),
       ]);
+      if (!isCurrent()) return;
+      const policy = modesResponse.data;
+      if (!policy || ["TABLE", "TOKEN", "PICKUP", "DELIVERY"].some(key => typeof policy[key] !== "boolean")) throw new Error("Unable to verify billing mode controls");
+      setAllowedModes(policy);
       setProducts(applyUnsyncedStock(productsResponse.data));
       setRecentOrders(billsResponse.data || []);
       if (tableResponse) {
@@ -333,21 +342,19 @@ export const Billing = () => {
         setTableReservations(tableResponse.reservations || { items: [] });
       }
       setOfflineMenuSavedAt(null);
+      let ingredientSnapshot = null;
       try {
-        const [centralInventoryResponse, outletInventoryResponse] = await Promise.all([
-          axios.get(`${API_URL}/api/inventory`, { withCredentials: true }).catch(() => ({ data: { items: [] } })),
-          axios.get(`${API_URL}/api/outlets/${selectedOutletId}/inventory`, {
-            withCredentials: true,
-          }).catch(() => ({ data: [] })),
-        ]);
-        setInventoryCatalog(
-          mergeInventoryCatalog(
-            centralInventoryResponse.data?.items || [],
-            outletInventoryResponse.data || [],
-          ),
-        );
+        const response = await axios.get(`${API_URL}/api/billing/ingredient-stock`, { withCredentials: true, skipCache: true, params: { outlet_id: selectedOutletId } });
+        if (!isCurrent()) return;
+        const rows = apiData(response);
+        if (!Array.isArray(rows)) throw new Error("Ingredient stock unavailable");
+        ingredientSnapshot = rows;
+        setInventoryCatalog(mergeInventoryCatalog(rows, []));
+        setIngredientStockKnown(true);
       } catch (inventoryError) {
+        if (!isCurrent()) return;
         setInventoryCatalog([]);
+        setIngredientStockKnown(false);
       }
       hasLoadedProductsRef.current = true;
       lastFetchedMenuContextRef.current = menuContextKey;
@@ -356,15 +363,21 @@ export const Billing = () => {
       setOfflineScope(user);
       saveOfflineData(`billing:${selectedOutletId}:${menuChannel}`, {
         products: productsResponse.data,
+        fulfillmentModes: policy,
+        ingredientCatalog: ingredientSnapshot,
         tableData: tableResponse?.tables || null,
         tableReservations: tableResponse?.reservations || null,
       });
     } catch (error) {
+      if (!isCurrent()) return;
       if (!hasLoadedProductsRef.current) {
         setOfflineScope(user);
         const snapshot = isNetworkFailure(error) ? loadOfflineData(`billing:${selectedOutletId}:${menuChannel}`) : null;
         if (snapshot?.data?.products) {
           setProducts(applyUnsyncedStock(snapshot.data.products));
+          setAllowedModes(snapshot.data.fulfillmentModes || null);
+          setInventoryCatalog(Array.isArray(snapshot.data.ingredientCatalog) ? mergeInventoryCatalog(snapshot.data.ingredientCatalog, []) : []);
+          setIngredientStockKnown(Array.isArray(snapshot.data.ingredientCatalog));
           if (snapshot.data.tableData) setTableData(snapshot.data.tableData);
           if (snapshot.data.tableReservations) setTableReservations(snapshot.data.tableReservations);
           setRecentOrders([]);
@@ -378,21 +391,32 @@ export const Billing = () => {
         }
       }
     } finally {
-      setLoading(false);
+      if (isCurrent()) setLoading(false);
     }
   };
 
-  // Another terminal selling the last units changes what can be sold here.
-  useAutoRefresh(fetchProducts, { liveResources: ["products", "inventory", "bills"] });
-
-  const refreshMenuForOrderContext = useEffectEvent(() => {
-    if (loading || !hasLoadedProductsRef.current || lastFetchedMenuContextRef.current === menuContextKey) return;
-    fetchProducts();
-  });
-
   useEffect(() => {
-    refreshMenuForOrderContext();
-  }, [loading, menuContextKey, refreshMenuForOrderContext]);
+    setProducts([]);
+    setIngredientStockKnown(false);
+    setAllowedModes(null);
+    setRecentOrders([]);
+    setTableData({ items: [], summary: {}, settings: {}, areas: [] });
+    setTableReservations({ items: [] });
+    setInventoryCatalog([]);
+    setLoadError(null);
+    setOfflineMenuSavedAt(null);
+    setCategory('');
+    hasLoadedProductsRef.current = false;
+    lastFetchedMenuContextRef.current = '';
+    setLoading(Boolean(selectedOutletId));
+  }, [menuContextKey, selectedOutletId]);
+
+  // Outlet selection, channel changes, and live stock updates all load the
+  // current context without requiring a successful earlier load or navigation.
+  useAutoRefresh(fetchProducts, {
+    enabled: Boolean(selectedOutletId), refreshKey: menuContextKey,
+    liveResources: ["products", "inventory", "bills", "billing_modes"], refreshOnFocus: true,
+  });
 
   useEffect(() => {
     if (!settings.paymentMethods.includes(payment)) {
@@ -460,8 +484,10 @@ export const Billing = () => {
     [cartEntries]
   );
   const getIngredientShortages = (recipeLines = [], multiplier = 1, existingDemand = cartIngredientDemand) => {
+    if (!ingredientStockKnown) return [];
     const demand = summarizeRecipeLines(recipeLines, multiplier);
     return Object.values(demand).filter((line) => {
+      if (!Object.prototype.hasOwnProperty.call(inventoryStockById, line.inventory_id)) return false;
       const availableStock = Number(inventoryStockById[line.inventory_id] || 0);
       const reservedStock = Number(existingDemand[line.inventory_id]?.quantity || 0);
       return availableStock < reservedStock + Number(line.quantity || 0);
@@ -504,7 +530,7 @@ export const Billing = () => {
       ).ingredientShortages || []
     : [];
   const customizationWarningNames = [...new Set(customizationItemWarning.map((line) => line.ingredient_name).filter(Boolean))];
-  const subtotal = cartEntries.reduce((sum, entry) => sum + (entry.unitPrice || entry.product.price) * entry.quantity, 0);
+  const subtotal = cartEntries.reduce((sum, entry) => sum + (entry.unitPrice ?? entry.product.price) * entry.quantity, 0);
   const discountValue = Math.max(0, Number(discount.value || 0));
   const discountAmount = useMemo(() => {
     if (discount.type === "percent") {
@@ -531,7 +557,6 @@ export const Billing = () => {
   const giftAmount = giftPay.card
     ? Math.max(0, Math.round(Math.min(Number(giftPay.amount) || 0, giftPay.card.balance, total) * 100) / 100)
     : 0;
-  const quickOrders = useMemo(() => recentOrders.slice(0, 6), [recentOrders]);
   const canApplyDiscount = user?.role === "Owner" || user?.role === "Manager";
   const printableOfferTitle = String(settings.receiptOfferTitle || "").trim();
   const printableOfferMessage = String(settings.receiptOfferMessage || "").trim();
@@ -554,37 +579,7 @@ export const Billing = () => {
     });
   };
 
-  const getBillingValidationErrors = () => {
-    const nextErrors = {};
-    let shouldShowFormError = false;
-    if (orderMeta.fulfillment_mode === "TABLE" && !orderMeta.table_id) {
-      nextErrors.table_id = "Select a table before billing.";
-      shouldShowFormError = true;
-    }
-    if (!orderMeta.customer_name.trim()) {
-      nextErrors.customer_name = "Enter customer name before billing.";
-      shouldShowFormError = true;
-    }
-    if (!orderMeta.customer_phone.trim()) {
-      nextErrors.customer_phone = "Enter customer phone before billing.";
-      shouldShowFormError = true;
-    } else if (sanitizeTenDigitPhoneInput(orderMeta.customer_phone).length !== 10) {
-      nextErrors.customer_phone = "Customer phone must be exactly 10 digits.";
-      shouldShowFormError = true;
-    }
-    if (orderMeta.fulfillment_mode === "TOKEN" && !String(orderMeta.token_number || "").trim()) {
-      nextErrors.token_number = "Add a token number before billing.";
-      shouldShowFormError = true;
-    }
-    if (orderMeta.fulfillment_mode === "PICKUP" && !pickupSlotValue) {
-      nextErrors.pickup_slot = "Add a valid pickup date and time before billing.";
-      shouldShowFormError = true;
-    }
-    if (shouldShowFormError) {
-      nextErrors.form = "Complete the required order details before generating the bill.";
-    }
-    return nextErrors;
-  };
+  const getBillingValidationErrors = () => validateFulfillment(orderMeta);
 
   const selectTable = (table) => {
     if (!table) {
@@ -725,18 +720,12 @@ export const Billing = () => {
       return false;
     }
 
-    const variationOption = (product.variation_options || []).find((item) => item.name === variationName);
-    const addonOptions = (product.addon_options || []).filter((item) => addonNames.includes(item.name));
     const availability = getConfiguredAvailability(product, variationName, addonNames, removalNames);
     if (availability.blockedReason) {
       toast.error(availability.blockedReason);
       return false;
     }
-    const unitPrice =
-      Number(product.price || 0) +
-      Number(variationOption?.price || 0) +
-      addonOptions.reduce((sum, item) => sum + Number(item.price || 0), 0) +
-      chosenOptions.reduce((sum, item) => sum + Number(item.price || 0), 0);
+    const unitPrice = configuredPrice(product, variationName, addonNames, modifierIds);
     const detailParts = [
       variationName,
       chosenOptions.length ? `(${chosenOptions.map((option) => option.name).join(", ")})` : "",
@@ -843,38 +832,29 @@ export const Billing = () => {
 
   const clearCart = () => setCart({});
 
-  const loadOrder = (order) => {
-    const nextCart = {};
-    (order.items || []).forEach((item) => {
-      const product = products.find((candidate) => candidate.id === item.id) || {
-        id: item.id,
-        name: item.name,
-        price: item.price,
-        category: "Custom",
-        stock: item.quantity,
-      };
-      const addons = item.addons || [];
-      const removals = item.removed_ingredients || [];
-      const variation = item.variation || null;
-      const customNote = item.custom_note || "";
-      const modifiers = (item.modifiers?.options || []).map((option) => option.option_id).filter(Boolean);
-      const key = buildCartKey(item.id, variation, addons, removals, customNote, modifiers);
-      nextCart[key] = {
-        key,
-        product,
-        quantity: item.quantity,
-        unitPrice: item.price,
-        variation,
-        addons,
-        removals,
-        customNote,
-        modifiers,
-        displayName: item.name,
-      };
-    });
-    setCart(nextCart);
-    hydrateFromOrder(order);
-    toast.success(`Loaded order ${order.id}`);
+  const reuseBillItems = async () => {
+    if (repeating || !repeatBillId) return;
+    if (user?.offline) { setRepeatError('Connect before loading a bill from history.'); return; }
+    if (location.state?.repeatOutletId !== selectedOutletId) { setRepeatError('Select the bill’s original outlet before using its items.'); return; }
+    const context = activeMenuContextRef.current, request = ++repeatGeneration.current;
+    setRepeating(true); setRepeatError('');
+    try {
+      const bill = apiData(await axios.get(`${API_URL}/api/billing/${encodeURIComponent(repeatBillId)}`, { withCredentials: true, skipCache: true }));
+      if (activeMenuContextRef.current !== context || repeatGeneration.current !== request) return;
+      if ((bill.outlet_id || bill.metadata?.outlet_id) !== selectedOutletId) throw new Error('This bill belongs to a different outlet.');
+      if (user?.role === 'Waiter' && bill.created_by !== user.id) throw new Error('Use a bill from your own bill history.');
+      const nextCart = cartFromBill(bill, products, { keyFor: buildCartKey, availability: () => ({}),
+        modifierProblem: getModifierProblem, removalOptions: product => getCustomizationProfile(product).removeOptions });
+      const recipes = Object.values(nextCart).flatMap(entry => buildConfiguredRecipeLines(entry.product, entry.variation, entry.addons, entry.removals)
+        .map(line => ({ ...line, quantity: Number(line.quantity || 0) * entry.quantity })));
+      const shortages = getIngredientShortages(recipes, 1, {});
+      if (shortages.length) throw new Error(`Low ingredient stock: ${shortages[0].ingredient_name}`);
+      if (cartEntries.length && !window.confirm('Replace the current cart items? The current service and customer details will stay.')) return;
+      setCart(nextCart);
+      navigate(location.pathname, { replace: true, state: null });
+      toast.success('Items added at current menu prices. Review this new sale before billing.');
+    } catch (error) { if (repeatGeneration.current === request) setRepeatError(getApiErrorMessage(error, error.message || 'Could not load this bill.')); }
+    finally { if (repeatGeneration.current === request) setRepeating(false); }
   };
 
   const normalizePhoneForWhatsApp = (value) => {
@@ -905,6 +885,10 @@ export const Billing = () => {
   };
 
   const generateBill = async () => {
+    if (!allowedModes?.[orderMeta.fulfillment_mode]) {
+      toast.error("Review the available order setup before continuing. Your cart has been kept.");
+      return;
+    }
     if (!cartEntries.length) {
       toast.error("Cart is empty");
       return;
@@ -978,7 +962,7 @@ export const Billing = () => {
         modifiers: modifiers || [],
         name: displayName || product.name,
         quantity,
-        price: unitPrice || product.price,
+        price: unitPrice ?? product.price,
         base_product_name: product.name,
         variation: variation || null,
         addons: addons || [],
@@ -991,18 +975,7 @@ export const Billing = () => {
       payment_type: payment,
       menu_channel: menuChannel,
       outlet_id: selectedOutletId || null,
-      order_type: nextOrderMeta.order_type,
-      service_mode: nextOrderMeta.fulfillment_mode,
-      table_id: nextOrderMeta.fulfillment_mode === "TABLE" ? nextOrderMeta.table_id || null : null,
-      reservation_id: nextOrderMeta.fulfillment_mode === "TABLE" ? nextOrderMeta.reservation_id || null : null,
-      table_label: nextOrderMeta.fulfillment_mode === "TABLE" ? nextOrderMeta.table_label || null : null,
-      token_number: nextOrderMeta.fulfillment_mode === "TOKEN" ? nextOrderMeta.token_number || suggestedTokenNumber : null,
-      pickup_slot: nextOrderMeta.fulfillment_mode === "PICKUP" ? pickupSlotValue || null : null,
-      fulfillment_label:
-        nextOrderMeta.fulfillment_mode === "TABLE"
-          ? `Table ${nextOrderMeta.table_label || ""}`.trim()
-          : fulfillmentLabel,
-      guests_count: nextOrderMeta.fulfillment_mode === "TABLE" ? Number(nextOrderMeta.guests_count || 0) || null : null,
+      ...buildFulfillmentPayload(nextOrderMeta),
       customer_name: nextOrderMeta.customer_name || null,
       customer_phone: nextOrderMeta.customer_phone || null,
       notes: nextOrderMeta.notes || null,
@@ -1020,7 +993,7 @@ export const Billing = () => {
     };
 
     // One key per distinct checkout: a double tap or a retry after a timeout returns the original bill.
-    const checkoutSignature = JSON.stringify([payload.items, payload.discount_type, payload.discount_value, payload.payment_type, payload.outlet_id, payload.table_id, payload.tip_amount, payload.tip_staff_id, payload.loyalty_redeem_points, payload.payments, payload.customer_phone]);
+    const checkoutSignature = JSON.stringify(payload);
     if (checkoutKeyRef.current.signature !== checkoutSignature) checkoutKeyRef.current = { signature: checkoutSignature, key: newClientKey() };
     payload.client_request_id = checkoutKeyRef.current.key;
 
@@ -1082,7 +1055,7 @@ export const Billing = () => {
         tipStaffName: generatedBill.tip_staff_name || "",
         printableOfferTitle,
         printableOfferMessage,
-        orderMeta: nextOrderMeta,
+        orderMeta: { ...nextOrderMeta, ...buildFulfillmentPayload(nextOrderMeta) },
         feedbackLink: generatedBill.feedback_link || `${window.location.origin}/feedback/${generatedBill.feedback_token}`,
         dateLabel: new Date().toLocaleDateString("en-IN"),
         timeLabel: new Date().toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" }),
@@ -1136,7 +1109,7 @@ export const Billing = () => {
         tipStaffName,
         printableOfferTitle,
         printableOfferMessage,
-        orderMeta: nextOrderMeta,
+        orderMeta: { ...nextOrderMeta, ...buildFulfillmentPayload(nextOrderMeta) },
         feedbackLink: "",
         dateLabel: new Date().toLocaleDateString("en-IN"),
         timeLabel: new Date().toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" }),
@@ -1157,7 +1130,7 @@ export const Billing = () => {
     }
   };
 
-  if (loading) {
+  if (loading || (selectedOutletId && !loadError && lastFetchedMenuContextRef.current !== menuContextKey)) {
     return (
       <Layout billingMode title="Billing">
         <div className="cf-loading">
@@ -1200,15 +1173,28 @@ export const Billing = () => {
           {offlineMenuSavedAt ? ` Menu and stock as of ${new Date(offlineMenuSavedAt).toLocaleString("en-IN")}.` : ""}
         </div>
       ) : null}
-      {["Owner", "Manager", "Cashier"].includes(user?.role) && !user?.offline && <CashierSettlement key={selectedOutletId} apiUrl={API_URL} outletId={selectedOutletId} />}
       <div className="cf-billing" data-testid="billing-page">
-        <div className="cf-billing__products">
+        <div className="cf-billing__products" id="billing-products">
+          <nav className="cf-billing__workspace-actions" aria-label="Billing workspaces">
+            {hasPermission(user, 'bills') && <Link className="cf-btn cf-btn--secondary cf-btn--small" to="/bills">Recent bills &amp; history</Link>}
+            {["Owner", "Manager", "Cashier"].includes(user?.role) && <Link className="cf-btn cf-btn--secondary cf-btn--small" to="/cash-drawer">Cash drawer &amp; settlements</Link>}
+            {!user?.offline ? <QrCheckoutInbox compact key={`qr-checkout-${selectedOutletId}`} currency={settings.currency} /> : null}
+            <a className="cf-btn cf-btn--secondary cf-btn--small cf-billing__mobile-link" href="#billing-cart">View cart</a>
+          </nav>
+          {repeatBillId && <section className="cf-card cf-card--padded" aria-label="Use bill items">
+            <p>Use items from bill {repeatBillId} for a new sale. Current prices and availability apply; the original invoice stays unchanged.</p>
+            {repeatError && <p role="alert">{repeatError}</p>}
+            <button className="cf-btn cf-btn--primary" disabled={repeating} onClick={reuseBillItems}>{repeating ? 'Reviewing items…' : 'Use items for this sale'}</button>
+            <button className="cf-btn cf-btn--secondary" onClick={() => navigate(location.pathname, { replace: true, state: null })}>Cancel</button>
+          </section>}
           {user?.assigned_outlets?.length ? (
             <div className="cf-page__overline" style={{ marginBottom: 12 }}>
               Outlet Rights: {user.assigned_outlets.map((outlet) => outlet.name).join(", ")}
             </div>
           ) : null}
           <BillingFulfillmentSection
+            hasCartItems={Object.keys(cart).length > 0}
+            allowedModes={allowedModes}
             billingErrors={billingErrors}
             changeFulfillmentMode={(mode) => {
               clearBillingError("table_id");
@@ -1242,17 +1228,16 @@ export const Billing = () => {
             todayDateValue={todayDateValue}
           />
           <div className="cf-billing__toolbar">
-            <div className="cf-billing__toolbar-title">Select Products</div>
-            <div style={{ display: "flex", gap: 8 }}>
+            <div className="cf-billing__toolbar-title">Products <button type="button" className="cf-btn cf-btn--secondary cf-btn--small" onClick={() => fulfillmentSectionRef.current?.scrollIntoView({ block: "start", behavior: "smooth" })}>Order details</button></div>
+            <div className="cf-billing__search-controls">
               <input
                 className="cf-search"
                 data-testid="product-search-input"
                 onChange={(event) => setSearch(event.target.value)}
                 placeholder="Search..."
-                style={{ width: 160 }}
                 value={search}
               />
-              <select className="cf-select" onChange={(event) => setCategory(event.target.value)} style={{ width: 140 }} value={category}>
+              <select className="cf-select" aria-label="Product category" onChange={(event) => setCategory(event.target.value)} value={category}>
                 <option value="">All</option>
                 {categories.map((item) => (
                   <option key={item} value={item}>
@@ -1262,6 +1247,7 @@ export const Billing = () => {
               </select>
             </div>
           </div>
+          {!ingredientStockKnown && <p className="cf-card__meta" role="status">Ingredient availability is not verified. Stock is checked again when the bill is submitted.</p>}
 
           <div className="cf-product-grid">
             {visibleProducts.map((product) => (
@@ -1304,8 +1290,6 @@ export const Billing = () => {
                     <span className="cf-product-card__count cf-product-card__count--warn">Disabled</span>
                   ) : Number(product.stock || 0) <= Number(cartProductCounts[product.id] || 0) ? (
                     <span className="cf-product-card__count cf-product-card__count--warn">Out of stock</span>
-                  ) : hasLowIngredientWarning ? (
-                    <span className="cf-product-card__count cf-product-card__count--warn">Low ingredients</span>
                   ) : null}
                 </div>
                 <div className="cf-product-card__name">{product.name}</div>
@@ -1343,49 +1327,24 @@ export const Billing = () => {
             ))}
           </div>
 
-          <div className="cf-card cf-card--padded" style={{ marginTop: 24 }}>
-            <div className="cf-card__title">
-              <span>Recent Order Queue</span>
-              <span className="cf-card__meta">Reload a recent order to avoid goof-ups</span>
-            </div>
-            <div className="cf-kitchen-list">
-              {quickOrders.length ? (
-                quickOrders.map((order) => (
-                  <div className="cf-kitchen-list__item" key={order.id}>
-                    <div>
-                      <div className="cf-kitchen-list__title">{order.customer_name || order.id}</div>
-                      <div className="cf-kitchen-list__meta">
-                        {(order.order_type || "Dine-In")} {order.table_label ? `· ${order.table_label}` : ""} · {(order.items || []).map((item) => item.name).join(", ")}
-                      </div>
-                    </div>
-                    <div className="cf-kitchen-list__stats">
-                      <span>{formatCurrency(order.total, settings.currency)}</span>
-                      <button className="cf-btn cf-btn--secondary cf-btn--small" onClick={() => loadOrder(order)} type="button">
-                        Load
-                      </button>
-                    </div>
-                  </div>
-                ))
-              ) : (
-                <div className="cf-empty-state">No recent orders yet.</div>
-              )}
-            </div>
-          </div>
 
         </div>
 
-        <div className="cf-billing__sidebar">
+        <div className="cf-billing__sidebar" id="billing-cart">
           <div className="cf-cart__header">
             <span className="cf-cart__title">Cart</span>
+            <a className="cf-billing__mobile-link" href="#billing-products">Back to products</a>
             <span className="cf-cart__count" id="cart-count">
               {cartEntries.length} item{cartEntries.length !== 1 ? "s" : ""}
             </span>
           </div>
 
+          <div className="cf-cart__body">
           <div className="cf-cart__scroll">
             {!cartEntries.length ? (
               <div className="cf-cart__empty">
                 <span>Cart is empty</span>
+                <span>Add products to start a bill.</span>
               </div>
             ) : (
               cartEntries.map(({ key, product, quantity, unitPrice, displayName, variation, addons }) => (
@@ -1399,26 +1358,28 @@ export const Billing = () => {
                     </div>
                   </div>
                   <div className="cf-cart__qty">
-                    <button className="cf-cart__qty-btn" onClick={() => changeQty(key, -1)} type="button">
+                    <button className="cf-cart__qty-btn" aria-label={`Decrease ${product.name} quantity`} onClick={() => changeQty(key, -1)} type="button">
                       -
                     </button>
                     <span className="cf-cart__qty-num">{quantity}</span>
-                    <button className="cf-cart__qty-btn" onClick={() => changeQty(key, 1)} type="button">
+                    <button className="cf-cart__qty-btn" aria-label={`Increase ${product.name} quantity`} onClick={() => changeQty(key, 1)} type="button">
                       +
                     </button>
                   </div>
-                  <div className="cf-cart__item-total">{formatCurrency((unitPrice || product.price) * quantity, settings.currency)}</div>
+                  <div className="cf-cart__item-total">{formatCurrency((unitPrice ?? product.price) * quantity, settings.currency)}</div>
                 </div>
               ))
             )}
           </div>
 
-          <div className="cf-cart__footer">
+          <div className="cf-cart__footer" hidden={!cartEntries.length}>
             <div className="cf-cart__line">
               <span>Subtotal</span>
               <span id="cart-sub">{formatCurrency(subtotal, settings.currency)}</span>
             </div>
             {canApplyDiscount ? (
+              <details className="cf-cart__options">
+                <summary>Discount / offer{discountAmount > 0 ? ` · ${formatCurrency(discountAmount, settings.currency)}` : ""}</summary>
               <div className="cf-field" style={{ marginTop: 12 }}>
                 <label>Discount / Offer</label>
                 <input
@@ -1457,6 +1418,7 @@ export const Billing = () => {
                   Applied discount: {formatCurrency(discountAmount, settings.currency)}
                 </div>
               </div>
+              </details>
             ) : null}
             {discountAmount > 0 ? (
               <div className="cf-cart__line">
@@ -1474,6 +1436,7 @@ export const Billing = () => {
                 <span>-{formatCurrency(loyaltyDiscount, settings.currency)}</span>
               </div>
             ) : null}
+            <details className="cf-cart__options"><summary>Customer, loyalty &amp; gift card{loyaltyDiscount > 0 || giftAmount > 0 ? " · Applied" : ""}</summary>
             <CheckoutExtras
               apiUrl={API_URL}
               currency={settings.currency}
@@ -1489,6 +1452,8 @@ export const Billing = () => {
               onMarketingOptInChange={setMarketingOptIn}
               onRedeemChange={setRedeem}
             />
+            </details>
+            <details className="cf-cart__options"><summary>Tip{tipAmount > 0 ? ` · ${formatCurrency(tipAmount, settings.currency)}` : ""}</summary>
             <div className="cf-field" data-testid="tip-field">
               <label htmlFor="cart-tip">Tip (not taxed)</label>
               <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
@@ -1529,12 +1494,16 @@ export const Billing = () => {
                 </select>
               </div>
             </div>
+            </details>
             {tipAmount > 0 ? (
               <div className="cf-cart__line">
                 <span>Tip{tipStaffName ? ` for ${tipStaffName}` : " (pool)"}</span>
                 <span>{formatCurrency(tipAmount, settings.currency)}</span>
               </div>
             ) : null}
+          </div>
+          </div>
+          <div className="cf-cart__checkout">
             <div className="cf-cart__line cf-cart__line--total">
               <span>Total</span>
               <strong id="cart-total">{formatCurrency(total, settings.currency)}</strong>
@@ -1547,7 +1516,7 @@ export const Billing = () => {
             ) : null}
             <div className="cf-field">
               <label>Payment Method</label>
-              <select className="cf-select" id="cart-payment" onChange={(event) => setPayment(event.target.value)} value={payment}>
+              <select className="cf-select" id="cart-payment" disabled={!cartEntries.length} onChange={(event) => setPayment(event.target.value)} value={payment}>
                 {settings.paymentMethods.map((method) => (
                   <option key={method} value={method}>
                     {method}
@@ -1555,7 +1524,7 @@ export const Billing = () => {
                 ))}
               </select>
             </div>
-            <button className="cf-btn cf-btn--primary cf-btn--full" onClick={generateBill} type="button">
+            <button className="cf-btn cf-btn--primary cf-btn--full" disabled={!cartEntries.length || !allowedModes?.[orderMeta.fulfillment_mode]} onClick={generateBill} type="button">
               Generate Bill -&gt;
             </button>
           </div>

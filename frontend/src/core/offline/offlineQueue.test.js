@@ -3,6 +3,8 @@ import {
   applyUnsyncedStock,
   discardOfflineBill,
   getOfflineQueue,
+  getOfflineRecoveryCopy,
+  getOfflineStorageError,
   isNetworkFailure,
   queueOfflineBill,
   replayOfflineQueue,
@@ -82,4 +84,80 @@ test("units in unsynced bills are held back from the stock shown", () => {
   queueOfflineBill({ payload: { client_request_id: "k2", items: [{ id: "p1", quantity: 1 }] }, summary: {} });
   const products = applyUnsyncedStock([{ id: "p1", stock: 5 }, { id: "p2", stock: 0 }, { id: "p3", stock: 4 }]);
   expect(products.map((product) => product.stock)).toEqual([2, 0, 4]);
+});
+
+test('capacity refuses a new receipt without dropping any existing receipt', () => {
+  for (let index = 0; index < 300; index++) queueOfflineBill(bill(`capacity-${index}`));
+  expect(() => queueOfflineBill(bill('capacity-overflow'))).toThrow(/300 unsynced/);
+  expect(getOfflineQueue()).toHaveLength(300);
+  expect(getOfflineQueue().some(row => row.id === 'capacity-0')).toBe(true);
+});
+
+test('a receipt added during replay survives the earlier acknowledgement', async () => {
+  queueOfflineBill(bill('first'));
+  let accept;
+  axios.post.mockImplementationOnce(() => new Promise(resolve => { accept = resolve; }));
+  const sending = replayOfflineQueue();
+  queueOfflineBill(bill('new-during-request'));
+  accept({ data: { id: 'recorded' } });
+  await sending;
+  expect(getOfflineQueue().map(row => row.id)).toEqual(['new-during-request']);
+});
+
+test('switching accounts cannot move old receipts into the new queue or send its remaining bills', async () => {
+  queueOfflineBill(bill('first')); queueOfflineBill(bill('second'));
+  let accept;
+  axios.post.mockImplementationOnce(() => new Promise(resolve => { accept = resolve; }));
+  const sending = replayOfflineQueue();
+  setOfflineOwner({ id: 'other', business_id: 'other-business' });
+  queueOfflineBill(bill('other-account'));
+  accept({ data: { id: 'recorded' } });
+  await sending;
+  expect(getOfflineQueue().map(row => row.id)).toEqual(['other-account']);
+  expect(axios.post).toHaveBeenCalledTimes(1);
+  setOfflineOwner({ id: 'u1', business_id: 'b1' });
+  expect(getOfflineQueue().map(row => row.id)).toEqual(['second']);
+});
+
+test('corrupt legacy data stays untouched and can be recovered rather than overwritten', () => {
+  localStorage.setItem('cashflow-offline-bills:b1:u1', '{broken saved receipt');
+  expect(() => queueOfflineBill(bill('new'))).toThrow(/cannot be read/);
+  expect(localStorage.getItem('cashflow-offline-bills:b1:u1')).toBe('{broken saved receipt');
+  expect(getOfflineStorageError()).toMatch(/cannot be read/);
+  expect(getOfflineRecoveryCopy()).toContain('broken saved receipt');
+});
+
+test('storage exhaustion cannot report successful capture', () => {
+  const write = jest.spyOn(Storage.prototype, 'setItem').mockImplementation(() => { throw new Error('quota'); });
+  try { expect(() => queueOfflineBill(bill('unsaved'))).toThrow(/could not save/); }
+  finally { write.mockRestore(); }
+  expect(getOfflineQueue()).toHaveLength(0);
+});
+
+test('legacy receipts replay safely and terminal markers prevent resurrection', async () => {
+  const old = { ...bill('legacy'), id: 'legacy', status: 'pending', queued_at: new Date().toISOString(), attempts: 0 };
+  localStorage.setItem('cashflow-offline-bills:b1:u1', JSON.stringify([old]));
+  axios.post.mockResolvedValue({ data: {} });
+  await replayOfflineQueue();
+  expect(getOfflineQueue()).toHaveLength(0);
+  await replayOfflineQueue();
+  expect(axios.post).toHaveBeenCalledTimes(1);
+});
+
+test('failure to save a server acknowledgement retains the receipt for idempotent recovery', async () => {
+  queueOfflineBill(bill('ack-storage-failure'));
+  axios.post.mockResolvedValue({ data: { id: 'recorded-on-server' } });
+  const write = jest.spyOn(Storage.prototype, 'setItem').mockImplementation(() => { throw new Error('quota'); });
+  try { await expect(replayOfflineQueue()).rejects.toThrow(/could not save/); }
+  finally { write.mockRestore(); }
+  expect(getOfflineQueue()[0]).toMatchObject({ id: 'ack-storage-failure', status: 'pending' });
+  await replayOfflineQueue();
+  expect(axios.post.mock.calls.every(call => call[1].client_request_id === 'ack-storage-failure')).toBe(true);
+  expect(getOfflineQueue()).toHaveLength(0);
+});
+
+test('the same checkout ID cannot silently discard a changed payload', () => {
+  queueOfflineBill(bill('same-checkout'));
+  expect(() => queueOfflineBill({ ...bill('same-checkout'), payload: { ...bill('same-checkout').payload, items: [{ id: 'p1', quantity: 2 }] } })).toThrow(/different saved receipt/);
+  expect(getOfflineQueue()[0].payload.items[0].quantity).toBe(1);
 });

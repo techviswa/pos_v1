@@ -1,4 +1,5 @@
-import React, { useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
+import { API_URL } from "../lib/apiUrl";
 import axios from "axios";
 import { useNavigate } from "react-router-dom";
 import { Layout } from "../components/Layout";
@@ -7,57 +8,52 @@ import { formatCurrency } from "../lib/pos";
 import { useUi } from "../contexts/UiContext";
 import { useAutoRefresh } from "../hooks/useAutoRefresh";
 import { QrInbox } from "../components/QrInbox";
+import { TableAssistanceInbox } from "../components/TableAssistanceInbox";
+import { QrCheckoutInbox } from "../components/QrCheckoutInbox";
+import { useActiveOutlet } from "../core/outlets/store/ActiveOutletContext";
+import { apiData } from "../lib/apiData";
 
-const API_URL = (() => {
-  const configured = String(process.env.REACT_APP_BACKEND_URL || "").replace(/\/+$/, "");
-  if (typeof window === "undefined") return configured;
-
-  const currentOrigin = window.location.origin.replace(/\/+$/, "");
-  const currentHost = window.location.hostname;
-  if (configured && configured !== currentOrigin && !configured.includes("vercel.app")) {
-    return configured;
-  }
-
-  if (currentHost === "localhost" || currentHost === "127.0.0.1") {
-    return configured || "http://localhost:4001";
-  }
-
-  return "https://pos-v1-fwjm.onrender.com";
-})();
 
 export const Manager = () => {
   const navigate = useNavigate();
   const { settings } = useUi();
+  const { selectedOutletId } = useActiveOutlet();
+  const requestSequence = useRef(0);
   const [loading, setLoading] = useState(true);
   const [stats, setStats] = useState(null);
   const [feedback, setFeedback] = useState({ items: [], summary: {} });
   const [inventory, setInventory] = useState({ items: [], at_risk_items: [] });
   const [swapRequests, setSwapRequests] = useState([]);
   const [loadErrorShown, setLoadErrorShown] = useState(false);
+  const [failedSections, setFailedSections] = useState([]);
+  useEffect(() => { setLoading(true); setStats(null); setFeedback({ items: [], summary: {} }); setInventory({ items: [], at_risk_items: [] }); setSwapRequests([]); setFailedSections([]); }, [selectedOutletId]);
 
   const fetchData = async () => {
+    const sequence = ++requestSequence.current;
     try {
-      const [statsRes, feedbackRes, inventoryRes, swapRes] = await Promise.all([
-        axios.get(`${API_URL}/api/dashboard/stats`, { withCredentials: true }).catch(() => ({ data: {} })),
-        axios.get(`${API_URL}/api/feedback`, { withCredentials: true }).catch(() => ({ data: { items: [], summary: {} } })),
-        axios.get(`${API_URL}/api/inventory`, { withCredentials: true }).catch(() => ({ data: { items: [], at_risk_items: [] } })),
-        axios.get(`${API_URL}/api/shift-swaps`, { withCredentials: true }).catch(() => ({ data: [] })),
+      const options = { withCredentials: true, skipCache: true, params: selectedOutletId ? { outlet_id: selectedOutletId } : {} };
+      const results = await Promise.allSettled([
+        axios.get(`${API_URL}/api/dashboard/stats`, options),
+        axios.get(`${API_URL}/api/feedback`, options),
+        axios.get(`${API_URL}/api/central-kitchen`, options),
+        axios.get(`${API_URL}/api/shift-swaps`, options),
       ]);
-      setStats(statsRes.data || {});
-      setFeedback(feedbackRes.data || { items: [], summary: {} });
-      setInventory(inventoryRes.data || { items: [], at_risk_items: [] });
-      setSwapRequests(swapRes.data || []);
+      if (sequence !== requestSequence.current) return;
+      const setters = [setStats, setFeedback, (data) => setInventory({ items: data.central_inventory || [], at_risk_items: data.low_stock_items || [] }), setSwapRequests];
+      const names = ["Sales", "Feedback", "Inventory", "Shift swaps"];
+      results.forEach((result, index) => { if (result.status === "fulfilled") setters[index](apiData(result.value)); });
+      setFailedSections(results.flatMap((result, index) => result.status === "rejected" ? [names[index]] : []));
     } catch (error) {
       if (!loadErrorShown) {
         toast.error("Manager screen loaded with partial data");
         setLoadErrorShown(true);
       }
     } finally {
-      setLoading(false);
+      if (sequence === requestSequence.current) setLoading(false);
     }
   };
 
-  useAutoRefresh(fetchData, { liveResources: ["bills", "orders", "inventory", "products"], refreshOnFocus: true });
+  useAutoRefresh(fetchData, { refreshKey: selectedOutletId, liveResources: ["bills", "orders", "inventory", "products"], refreshOnFocus: true, intervalMs: 30000 });
 
   if (loading) {
     return (
@@ -91,6 +87,7 @@ export const Manager = () => {
   return (
     <Layout title="Manager Screen">
       <div className="cf-page">
+        {failedSections.length ? <p role="alert">Unable to refresh: {failedSections.join(", ")}. Last loaded values may be outdated. <button className="cf-btn cf-btn--small" onClick={fetchData}>Retry</button></p> : null}
         <div className="cf-page__header">
           <div>
             <h1>Manager Operations</h1>
@@ -104,6 +101,8 @@ export const Manager = () => {
         </div>
 
         <QrInbox currency={settings.currency} />
+        <TableAssistanceInbox />
+        <QrCheckoutInbox />
 
         <div className="cf-metrics">
           <button className="cf-metric cf-metric--button" onClick={() => navigate("/manager/sales")} type="button">
@@ -113,7 +112,7 @@ export const Manager = () => {
           </button>
           <button className="cf-metric cf-metric--button" onClick={() => navigate("/manager/rating")} type="button">
             <div className="cf-metric__label">Customer Rating</div>
-            <div className="cf-metric__value">{feedback.summary?.average_rating || 0}</div>
+            <div className="cf-metric__value">{feedback.summary?.average_rating == null ? "No ratings yet" : Number(feedback.summary.average_rating).toFixed(1)}</div>
             <div className="cf-metric__sub">{feedback.summary?.count || 0} responses collected</div>
           </button>
           <button className="cf-metric cf-metric--button" onClick={() => navigate("/manager/inventory")} type="button">

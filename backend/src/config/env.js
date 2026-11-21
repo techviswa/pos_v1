@@ -55,9 +55,11 @@ export const env = {
     adminPassword: process.env.ADMIN_PASSWORD || "admin123",
   },
   database: {
+    systemUrl: process.env.SYSTEM_DATABASE_URL || "",
+    tenantUrl: process.env.TENANT_DATABASE_URL || "",
     provider: process.env.DATABASE_PROVIDER || "postgresql",
     url:
-      process.env.DATABASE_URL ||
+      process.env.SYSTEM_DATABASE_URL || process.env.DATABASE_URL ||
       "postgresql://postgres:postgres@localhost:5432/pos_saas?schema=public",
     name: process.env.DATABASE_NAME || process.env.DB_NAME || "pos_saas",
   },
@@ -84,6 +86,10 @@ export const env = {
 export const getProductionConfigIssues = (config = env) => {
   if (config.nodeEnv !== "production") return [];
   const issues = [];
+  if (!config.database.tenantUrl) issues.push("TENANT_DATABASE_URL must point to the restricted RLS runtime role");
+  if (!config.database.systemUrl) issues.push("SYSTEM_DATABASE_URL must use a separate non-owner system runtime role");
+  if (config.database.tenantUrl && config.database.tenantUrl === config.database.url) issues.push("TENANT_DATABASE_URL must be separate from the system/migration connection");
+  if (String(config.auth.jwtSecret || "").length < 32) issues.push("JWT_SECRET must be at least 32 characters in production");
   if (config.auth.adminPassword === "admin123") issues.push("ADMIN_PASSWORD is the public default; the bootstrap owner would have a known password");
   if (config.auth.adminEmail === "owner@pos.com") issues.push("ADMIN_EMAIL is the public default owner address");
   if (config.corsOrigins === "*") issues.push("CORS_ORIGINS is unset or '*'; restrict it to the real frontend origin(s)");

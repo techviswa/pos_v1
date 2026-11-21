@@ -39,3 +39,19 @@ await new Promise(setImmediate);
 assert.equal(stopped, true);
 assert.equal(marketingStopped, true, "the marketing sender stops during shutdown");
 console.log("Startup retries a temporary database failure and stops jobs and the marketing sender during shutdown");
+let listened = false, startedWorkers = false, exitCode;
+const rejected = vm.createContext({
+  ...context,
+  env: { port: 4001, appName: "test", nodeEnv: "production" },
+  app: { listen() { listened = true; return { on() {} }; } },
+  connectDatabase: async () => { throw new Error("Unsafe RLS database role"); },
+  jobQueue: { start() { startedWorkers = true; }, stop() {} },
+  startMarketingWorker: () => { startedWorkers = true; },
+  process: { on() {}, exit(code) { exitCode = code; } },
+});
+vm.runInContext(source, rejected);
+await new Promise(setImmediate);
+assert.equal(exitCode, 1);
+assert.equal(listened, false, "unsafe production database must not open the HTTP listener");
+assert.equal(startedWorkers, false, "unsafe production database must not start workers");
+console.log("Production fails closed before HTTP or workers when database security preflight fails");

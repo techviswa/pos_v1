@@ -12,6 +12,8 @@ import { ModuleGate } from './core/modules/components/ModuleGate';
 import { FeatureGate } from './core/platform/components/FeatureGate';
 import { getDefaultRouteForUser } from './core/navigation/utils/defaultRoute';
 import './App.css';
+import { PublicQrRoutes } from './components/PublicQrRoutes';
+import { preloadRoutePages } from './lib/routePreload';
 
 const lazyPage = (loader, exportName) => {
   const Component = lazy(() => loader().then((module) => ({ default: module[exportName] })));
@@ -46,6 +48,7 @@ const Payroll = lazyPage(() => import('./pages/Payroll'), 'Payroll');
 const PayslipView = lazyPage(() => import('./pages/PayslipView'), 'PayslipView');
 const Marketing = lazyPage(() => import('./pages/Marketing'), 'Marketing');
 const PlanBilling = lazyPage(() => import('./pages/PlanBilling'), 'PlanBilling');
+const CashDrawer = lazyPage(() => import('./pages/CashDrawer'), 'CashDrawer');
 const QrManagement = lazyPage(() => import('./pages/QrManagement'), 'QrManagement');
 const ReservationPlanner = lazyPage(() => import('./pages/ReservationPlanner'), 'ReservationPlanner');
 const RestaurantBillsPage = lazyPage(() => import('./modules/restaurant/pages/RestaurantBillsPage'), 'RestaurantBillsPage');
@@ -55,8 +58,6 @@ const StaffSummaryPage = lazyPage(() => import('./pages/StaffSummaryPage'), 'Sta
 const OutletDetailPage = lazyPage(() => import('./pages/OutletDetailPage'), 'OutletDetailPage');
 const Settings = lazyPage(() => import('./pages/Settings'), 'Settings');
 const FeedbackForm = lazyPage(() => import('./pages/FeedbackForm'), 'FeedbackForm');
-const QrOrdering = lazyPage(() => import('./pages/QrOrdering'), 'QrOrdering');
-const QrOrderTracking = lazyPage(() => import('./pages/QrOrdering'), 'QrOrderTracking');
 const ProfileSetup = lazyPage(() => import('./pages/ProfileSetup'), 'ProfileSetup');
 const KiranaPlaceholderPage = lazyPage(() => import('./modules/kirana/pages/KiranaPlaceholderPage'), 'KiranaPlaceholderPage');
 const BakeryPlaceholderPage = lazyPage(() => import('./modules/bakery/pages/BakeryPlaceholderPage'), 'BakeryPlaceholderPage');
@@ -111,9 +112,7 @@ const AppRoutes = () => {
     }
 
     const preload = () => {
-      preloadedRoutePages.forEach((Page) => {
-        Page.preload?.();
-      });
+      void preloadRoutePages(preloadedRoutePages);
     };
 
     if ("requestIdleCallback" in window) {
@@ -132,9 +131,8 @@ const AppRoutes = () => {
   return (
     <Suspense fallback={<AppShellLoader />}>
       <Routes>
+        <Route path="/cash-drawer" element={<ProtectedRoute requirePermission="billing" requireRoles={['Owner', 'Manager', 'Cashier']}><RestaurantFeatureRoute featureKey="billing"><CashDrawer /></RestaurantFeatureRoute></ProtectedRoute>} />
         <Route path="/feedback/:token" element={<FeedbackForm />} />
-        <Route path="/qr/orders/:trackingToken" element={<QrOrderTracking />} />
-        <Route path="/qr/:token" element={<QrOrdering />} />
         <Route path="/login" element={<Login />} />
         <Route path="/forgot-password" element={<ForgotPassword />} />
         <Route path="/reset-password" element={<ResetPassword />} />
@@ -480,22 +478,32 @@ function RouteErrorBoundary({ children }) {
   return <AppErrorBoundary resetKey={location.pathname}>{children}</AppErrorBoundary>;
 }
 
-function App() {
+function StaffApp() {
   return (
     <AuthProvider>
       <ActiveOutletProvider>
         <UiProvider>
-          <BrowserRouter>
+          <>
             <RouteErrorBoundary>
               <AppRoutes />
             </RouteErrorBoundary>
             <GlobalErrorHandlers />
             <OfflineStatus />
             <Toaster position="top-right" />
-          </BrowserRouter>
+          </>
         </UiProvider>
       </ActiveOutletProvider>
     </AuthProvider>
+  );
+}
+
+function App() {
+  return (
+    <BrowserRouter>
+      <RouteErrorBoundary>
+        <PublicQrRoutes><StaffApp /></PublicQrRoutes>
+      </RouteErrorBoundary>
+    </BrowserRouter>
   );
 }
 

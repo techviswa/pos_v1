@@ -25,13 +25,15 @@ assert.equal(safeEqual("", ""), false, "empty keys never authenticate");
 
 const base = {
   nodeEnv: "production",
-  auth: { adminEmail: "ops@example.com", adminPassword: "x".repeat(20) },
+  auth: { adminEmail: "ops@example.com", adminPassword: "x".repeat(20), jwtSecret: "j".repeat(40) },
   corsOrigins: ["https://pos.example.com"],
   admincore: { enabled: true, apiKey: "k".repeat(40), posBaseUrl: "https://api.example.com" },
-  database: { url: "postgresql://u:p@db.example.com/pos" },
+  database: { url: "postgresql://u:p@db.example.com/pos", systemUrl: "postgresql://system:p@db.example.com/pos", tenantUrl: "postgresql://runtime:p@db.example.com/pos" },
 };
 assert.deepEqual(getProductionConfigIssues(base), []);
+assert.ok(getProductionConfigIssues({ ...base, database: { ...base.database, tenantUrl: "" } }).some((issue) => issue.includes("TENANT_DATABASE_URL")));
 assert.ok(getProductionConfigIssues({ ...base, corsOrigins: "*" }).length >= 1);
+assert.ok(getProductionConfigIssues({ ...base, auth: { ...base.auth, jwtSecret: "short" } }).some((issue) => issue.includes("JWT_SECRET")));
 assert.ok(getProductionConfigIssues({ ...base, auth: { ...base.auth, adminPassword: "admin123" } }).length >= 1);
 assert.deepEqual(getProductionConfigIssues({ ...base, nodeEnv: "development", corsOrigins: "*" }), []);
 assert.deepEqual(getProductionConfigIssues({ ...base, marketing: { encryptionKey: "m".repeat(40) } }), []);

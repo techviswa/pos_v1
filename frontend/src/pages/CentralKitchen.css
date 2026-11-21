@@ -1,0 +1,5 @@
+.cf-kitchen-grid { align-items: start; }
+.cf-kitchen-list { max-height: 370px; overflow-y: auto; margin-top: 12px; }
+.cf-kitchen-list__item { padding: 12px; gap: 12px; }
+.cf-kitchen-list__stats { font-size: 12px; }
+.cf-kitchen-list__meta { overflow-wrap: anywhere; }

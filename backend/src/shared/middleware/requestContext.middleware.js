@@ -1,5 +1,6 @@
 import { randomUUID } from "crypto";
 import env from "../../config/env.js";
+import { startTenantRequest } from "../../database/prisma/tenant-context.js";
 
 export const requestContextMiddleware = (req, res, next) => {
   // Client-supplied ids end up in logs and response headers: keep them short and plain.
@@ -7,11 +8,11 @@ export const requestContextMiddleware = (req, res, next) => {
   const requestId = supplied || randomUUID();
 
   req.context = {
-    tenantId: req.headers["x-tenant-id"] || env.defaultTenantId,
-    businessId: req.headers.business_id || env.defaultBusinessId,
+    tenantId: env.defaultTenantId,
+    businessId: env.defaultBusinessId,
     requestId,
   };
 
   res.setHeader("x-request-id", requestId);
-  next();
+  startTenantRequest(next);
 };

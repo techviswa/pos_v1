@@ -1,0 +1,116 @@
+import assert from "node:assert/strict";
+import http from "node:http";
+import { randomUUID } from "node:crypto";
+import app from "../src/app.js";
+import prisma from "../src/database/prisma/client.js";
+import env from "../src/config/env.js";
+import { connectDatabase } from "../src/config/db.js";
+import { saasService } from "../src/core/saas/saas.service.js";
+import { usersService } from "../src/core/users/users.service.js";
+import { tableManagementService } from "../src/features/sales-extensions/table-management/table-management.service.js";
+import { qrOrderingService } from "../src/features/sales-extensions/qr-ordering/qr-ordering.service.js";
+import { stopRealtime } from "../src/services/realtime/realtime.service.js";
+
+const suffix = randomUUID(), a = `help-a-${suffix}`, b = `help-b-${suffix}`, password = randomUUID();
+const scope = (id) => ({ businessId: id, tenantId: `tenant-${id}` });
+const server = http.createServer(app);
+const previous = env.admincore.enabled;
+let base, checks = 0;
+const eq = (actual, expected) => { assert.deepEqual(actual, expected); checks++; };
+const call = async (method, path, session, body) => {
+  const response = await fetch(base + "/api/public/qr" + path, { method, headers: { "content-type": "application/json", ...(session ? { "x-cf-session-id": session } : {}) }, ...(body ? { body: JSON.stringify(body) } : {}) });
+  return { status: response.status, data: (await response.json()).data };
+};
+const login = async (user) => {
+  const response = await fetch(base + "/api/auth/login", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ email: user.email, password }) });
+  eq(response.status, 200); return (await response.json()).data.session_id;
+};
+try {
+  env.admincore.enabled = false; await connectDatabase();
+  for (const id of [a, b]) {
+    await prisma.business.create({ data: { id, tenantId: scope(id).tenantId, name: id } });
+    await saasService.updateSubscription({ businessId: id, payload: { plan: "growth", subscription_status: "active" } });
+    await prisma.tableManagementSettings.create({ data: { businessId: id, capabilities: { qrOrderingEnabled: true } } });
+  }
+  const make = (role, name, businessId = a, assigned = []) => usersService.createUser({ ...scope(businessId), payload: { role, name, email: `${name}-${suffix}@example.invalid`, password, profile_required: false, assigned_outlet_ids: assigned } });
+  const oa = await prisma.outlet.create({ data: { businessId: a, name: "Main", code: "MAIN" } });
+  const ox = await prisma.outlet.create({ data: { businessId: a, name: "Other", code: "OTHER" } });
+  const [owner, waiter, second, chef, outsider, wrongOutlet] = await Promise.all([
+    make("Owner", "Owner"), make("Waiter", "Waiter", a, [oa.id]), make("Waiter", "Second", a, [oa.id]), make("Chef", "Chef"), make("Owner", "Outsider", b), make("Waiter", "WrongOutlet", a, [ox.id]),
+  ]);
+  const table = await prisma.diningTable.create({ data: { businessId: a, name: "S1", meta: { outlet_id: oa.id } } });
+  const another = await prisma.diningTable.create({ data: { businessId: a, name: "S2", meta: { outlet_id: ox.id } } });
+  const qr = await tableManagementService.upsertTableQrCode({ ...scope(a), tableId: table.id });
+  const qr2 = await tableManagementService.upsertTableQrCode({ ...scope(a), tableId: another.id });
+  const session = (await qrOrderingService.getSession({ token: qr.token })).table_session;
+  const session2 = (await qrOrderingService.getSession({ token: qr2.token })).table_session;
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  base = `http://127.0.0.1:${server.address().port}`;
+  const [ownerS, waiterS, secondS, chefS, outsiderS, wrongS] = await Promise.all([owner, waiter, second, chef, outsider, wrongOutlet].map(login));
+  const guest = (kind, extra = {}) => call("POST", `/${qr.token}/assistance`, null, { kind, session_key: session.session_key, ...extra });
+  eq((await call("GET", "/assistance/inbox")).status, 401);
+  eq((await call("GET", "/assistance/inbox", chefS)).status, 403);
+  eq((await guest("not-real")).status, 400);
+  eq((await guest(["water"])).status, 400);
+  eq((await guest("other")).status, 400);
+  eq((await guest("bill", { payment_method: "crypto" })).status, 400);
+  eq((await guest("water", { note: "x".repeat(201) })).status, 400);
+  eq((await guest("water", { session_key: session2.session_key })).status, 409);
+  const raced = await Promise.all(Array.from({ length: 6 }, () => guest("waiter")));
+  eq(raced.filter((item) => item.status === 201).length, 1);
+  eq(new Set(raced.map((item) => item.data.request.id)).size, 1);
+  const request = raced[0].data.request;
+  eq((await call("GET", `/assistance/inbox?outlet_id=${oa.id}`, waiterS)).data.items.length, 1);
+  eq((await call("GET", "/assistance/inbox", wrongS)).data.items.length, 0);
+  eq((await call("GET", "/assistance/inbox", outsiderS)).data.items.length, 0);
+  eq((await call("POST", `/assistance/${request.id}/accept`, outsiderS, {})).status, 404);
+  eq((await call("POST", `/assistance/${request.id}/accept`, wrongS, {})).status, 404);
+  eq((await call("POST", `/assistance/${request.id}/assign`, waiterS, { assignee_id: second.id })).status, 403);
+  eq((await call("POST", `/assistance/${request.id}/assign`, ownerS, { assignee_id: outsider.id })).status, 400);
+  eq((await call("POST", `/assistance/${request.id}/assign`, ownerS, { assignee_id: wrongOutlet.id })).status, 400);
+  eq((await call("POST", `/assistance/${request.id}/accept`, waiterS, {})).data.status, "accepted");
+  eq((await call("POST", `/assistance/${request.id}/accept`, secondS, {})).status, 409);
+  eq((await call("POST", `/assistance/${request.id}/resolve`, secondS, {})).status, 403);
+  const guestRows = (await call("GET", `/${qr.token}/assistance?session_key=${encodeURIComponent(session.session_key)}`)).data;
+  eq(guestRows[0].status, "accepted");
+  eq(Object.hasOwn(guestRows[0], "assignee_id"), false);
+  eq(Object.hasOwn(guestRows[0], "history"), false);
+  eq((await call("POST", `/assistance/${request.id}/assign`, ownerS, { assignee_id: second.id })).data.assignee_id, second.id);
+  eq((await call("POST", `/assistance/${request.id}/resolve`, secondS, {})).data.status, "resolved");
+  eq((await call("POST", `/assistance/${request.id}/resolve`, secondS, {})).data.history.length, 4);
+  eq((await guest("waiter")).status, 429);
+  eq((await call("GET", "/assistance/inbox", ownerS)).data.items.length, 0);
+  eq((await call("GET", "/assistance/inbox?history=true", ownerS)).data.items.length, 1);
+  const bill = await guest("bill", { payment_method: "upi", note: "Please bring the bill" });
+  eq(bill.status, 201);
+  const billKey = `assistance:${a}:${bill.data.request.id}`;
+  const saved = await prisma.stateDocument.findUnique({ where: { key: billKey } });
+  eq(saved.data.payment_method, "upi");
+  eq(await prisma.bill.count({ where: { businessId: a } }), 0);
+  await prisma.tableSession.update({ where: { id: session.id }, data: { openedAt: new Date(Date.now() - 10 * 60000) } });
+  await prisma.stateDocument.update({ where: { key: billKey }, data: { data: { ...saved.data, created_at: new Date(Date.now() - 3 * 60000).toISOString() } } });
+  eq((await call("GET", "/assistance/inbox", ownerS)).data.items[0].needs_attention, true);
+  await prisma.tableSession.update({ where: { id: session.id }, data: { status: "closed", closedAt: new Date() } });
+  eq((await guest("water")).status, 409);
+  eq((await call("POST", `/assistance/${bill.data.request.id}/accept`, ownerS, {})).status, 409);
+  eq((await call("GET", "/assistance/inbox", ownerS)).data.items.length, 0);
+  await qrOrderingService.getSession({ token: qr.token });
+  eq((await call("GET", `/${qr.token}/assistance?session_key=${encodeURIComponent(session.session_key)}`)).data.length, 0);
+  eq((await call("GET", "/assistance/inbox?history=true", ownerS)).data.items.some((row) => row.status === "expired"), true);
+  const repeat = await guest("water"); eq(repeat.status, 201);
+  const foreignOutlet = await prisma.outlet.create({ data: { businessId: b, name: "Foreign", code: "FOREIGN" } });
+  await prisma.diningTable.update({ where: { id: table.id }, data: { meta: { outlet_id: foreignOutlet.id } } });
+  eq((await guest("cutlery")).status, 409);
+  await prisma.diningTable.update({ where: { id: table.id }, data: { meta: { outlet_id: oa.id } } });
+  await tableManagementService.deleteTableQrCode({ ...scope(a), tableId: table.id });
+  eq((await guest("cutlery")).status, 404);
+  console.log(`Table assistance passed: ${checks} HTTP checks covering guest requests, simultaneous taps, staff assignment, permissions, outlet/tenant boundaries, status/history, cooldown, manager attention, ended sessions and revoked QR codes`);
+} finally {
+  env.admincore.enabled = previous;
+  if (server.listening) await new Promise((resolve) => server.close(resolve));
+  const users = await prisma.user.findMany({ where: { businessId: { in: [a, b] } }, select: { id: true } });
+  await prisma.authSession.deleteMany({ where: { userId: { in: users.map((user) => user.id) } } });
+  await prisma.business.deleteMany({ where: { id: { in: [a, b] } } });
+  await prisma.stateDocument.deleteMany({ where: { key: { contains: suffix } } });
+  await stopRealtime(); await prisma.$disconnect();
+}

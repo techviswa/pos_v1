@@ -1,4 +1,5 @@
 import prisma from "../../database/prisma/client.js";
+import { operationalWrite } from "../../shared/utils/operational-write.js";
 import { createHash } from "node:crypto";
 import { moveStock } from "./stock-ledger.service.js";
 import { reportsService } from "../reports/reports.service.js";
@@ -311,7 +312,15 @@ class InventoryOperationsService {
       await this.resolveOutletId({ businessId: business.id, outletId: sourceLocation });
       if (sourceLocation === destinationOutletId) throw createHttpError({ statusCode: 400, message: "Source and destination outlets must differ" });
     }
-    return prisma.$transaction(async (tx) => {
+    return operationalWrite({ businessId: business.id, kind: "stock-transfer", payload }, async (tx) => {
+    const transferItems = [];
+    for (const line of payload.items) {
+      const inventoryId = line?.inventory_id || line?.inventoryItemId;
+      if (typeof inventoryId !== "string" || !inventoryId) throw createHttpError({ statusCode: 400, message: "Select an existing ingredient for each transfer line" });
+      const ingredient = await tx.inventoryItem.findFirst({ where: { id: inventoryId, businessId: business.id } });
+      if (!ingredient) throw createHttpError({ statusCode: 404, message: "Transfer ingredient not found for this business" });
+      transferItems.push({ inventory_id: ingredient.id, inventory_name: ingredient.name, unit: ingredient.unit, requested_quantity: this.transferQuantity(line.requested_quantity ?? line.quantity) });
+    }
     const allocation = await tx.allocation.create({
       data: {
         businessId: business.id,
@@ -320,12 +329,7 @@ class InventoryOperationsService {
         routePlanId: null,
         sourceLocation,
         status: "pending_approval",
-        items: (payload.items || []).map((item) => ({
-          inventory_id: item.inventory_id || item.inventoryItemId || null,
-          inventory_name: item.inventory_name || item.name || item.ingredient_name || null,
-          unit: item.unit || "unit",
-          requested_quantity: this.transferQuantity(item.requested_quantity ?? item.quantity),
-        })),
+        items: transferItems,
       },
     });
 

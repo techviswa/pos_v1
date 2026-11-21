@@ -42,6 +42,7 @@ export default createFeatureRouter({
       handler: tableManagementController.upsertTableQrCode,
     },
     { method: "get", path: "/", handler: tableManagementController.listTables },
+    { method: "delete", path: "/:tableId/qr", middleware: manage, handler: tableManagementController.deleteTableQrCode },
     { method: "post", path: "/", middleware: manage, handler: tableManagementController.createTable },
     { method: "put", path: "/:tableId", middleware: [requireAuth, limitStaffTableEdits], handler: tableManagementController.updateTable },
     { method: "delete", path: "/:tableId", middleware: manage, handler: tableManagementController.deleteTable },

@@ -6,23 +6,9 @@ import { ApiErrorPanel } from "../components/ApiErrorPanel";
 import { toast } from "sonner";
 import { useAutoRefresh } from "../hooks/useAutoRefresh";
 import { getApiErrorMessage } from "../lib/apiErrors";
+import { API_URL } from "../contexts/AuthContext";
+import { useActiveOutlet } from "../core/outlets/store/ActiveOutletContext";
 
-const API_URL = (() => {
-  const configured = String(process.env.REACT_APP_BACKEND_URL || "").replace(/\/+$/, "");
-  if (typeof window === "undefined") return configured;
-
-  const currentOrigin = window.location.origin.replace(/\/+$/, "");
-  const currentHost = window.location.hostname;
-  if (configured && configured !== currentOrigin && !configured.includes("vercel.app")) {
-    return configured;
-  }
-
-  if (currentHost === "localhost" || currentHost === "127.0.0.1") {
-    return configured || "http://localhost:4001";
-  }
-
-  return "https://pos-v1-fwjm.onrender.com";
-})();
 const toArrayPayload = (payload) => {
   const data = payload?.data ?? payload;
   if (Array.isArray(data)) return data;
@@ -38,6 +24,7 @@ const statusBadgeClass = (status = "pending") => {
 };
 
 export const Chef = () => {
+  const { selectedOutletId } = useActiveOutlet();
   const navigate = useNavigate();
   const [loading, setLoading] = useState(true);
   const [tickets, setTickets] = useState([]);
@@ -52,7 +39,8 @@ export const Chef = () => {
     try {
       const response = await axios.get(`${API_URL}/api/kot`, {
         withCredentials: true,
-        params: { limit: 50 },
+        skipCache: true,
+        params: { active: true, ...(selectedOutletId ? { outlet_id: selectedOutletId } : {}) },
       });
       setTickets(toArrayPayload(response.data));
       setStations((response.data?.data ?? response.data)?.stations || []);
@@ -64,7 +52,7 @@ export const Chef = () => {
     }
   };
 
-  useAutoRefresh(fetchTickets, { liveResources: ["kot"], refreshOnFocus: true });
+  useAutoRefresh(fetchTickets, { refreshKey: selectedOutletId, liveResources: ["kot", "orders", "bills"], refreshOnFocus: true, refreshOnVisibility: true, intervalMs: 15000, focusThrottleMs: 10000 });
 
   const kitchenTickets = useMemo(
     () => tickets.filter((ticket) => !["served", "completed", "rejected"].includes(ticket.kitchen_status || ticket.status)
@@ -147,6 +135,7 @@ export const Chef = () => {
                   const next = { pending: "accepted", accepted: "preparing", preparing: "ready" }[item.status];
                   return <div key={item.item_id} style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 8, padding: "8px 0" }}>
                     <span>{item.name} ×{item.quantity} · {item.station_name} · {item.status}</span>
+                    {item.kitchen_note ? <strong style={{ width: "100%" }}>Kitchen request: {item.kitchen_note}</strong> : null}
                     {next && <button type="button" className="cf-btn cf-btn--secondary" style={{ minHeight: 44 }} disabled={busy[ticket.id]}
                       onClick={() => updateItem(ticket, item, next)}>{({ accepted: "Accept item", preparing: "Prepare item", ready: "Item ready" })[next]}</button>}
                   </div>;

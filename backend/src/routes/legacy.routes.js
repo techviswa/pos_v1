@@ -1,11 +1,17 @@
 import { randomUUID } from "crypto";
 import { Router } from "express";
+import { buildSalesCharts } from "../core/dashboard/sales-charts.js";
+import { reportOutlets } from '../core/dashboard/outlet-report-policy.js';
+import { recipeAnalytics } from "../core/dashboard/recipe-analytics.js";
+import { reportsService } from "../core/reports/reports.service.js";
+import { customerInsights } from "../core/reports/customer-insights.js";
 
 import prisma from "../database/prisma/client.js";
 import { readState, writeState } from "../database/prisma/state-store.js";
 import { billingService } from "../core/billing/billing.service.js";
 import { inventoryOperationsService } from "../core/inventory/inventory-operations.service.js";
 import { inventoryService } from "../core/inventory/inventory.service.js";
+import { centralKitchenService } from "../core/central-kitchen/central-kitchen.service.js";
 import { moveStock } from "../core/inventory/stock-ledger.service.js";
 import { admincoreChangeSyncService } from "../core/admincore/admincore-change-sync.service.js";
 import { normalizeLegacyBillRecord, toLegacyBillRecord } from "../core/billing/billing-legacy.serializer.js";
@@ -99,11 +105,8 @@ const buildProductCostMap = async (tenantId) => {
       [product.id, toNumber(product.costPrice, 0)],
       [product.name, toNumber(product.costPrice, 0)],
     ]));
-  } catch {
-    return new Map(productSeedData.flatMap((product) => [
-      [product.id, toNumber(product.cost_price ?? product.costPrice, 0)],
-      [product.name, toNumber(product.cost_price ?? product.costPrice, 0)],
-    ]));
+  } catch (error) {
+    throw error;
   }
 };
 
@@ -184,7 +187,8 @@ const normalizeInventoryItem = (item) => {
     conversion_cost: toNumber(item.conversion_cost, 0),
     avg_daily_consumption: avgDailyConsumption,
     days_remaining:
-      avgDailyConsumption > 0 ? Math.floor(currentStock / Math.max(avgDailyConsumption, 1)) : null,
+      avgDailyConsumption > 0 ? Math.round(currentStock / avgDailyConsumption * 10) / 10 : null,
+    usage_history_available: avgDailyConsumption > 0,
     wastage_last_30_days: toNumber(item.wastage_last_30_days, 0),
     pilferage_last_30_days: toNumber(item.pilferage_last_30_days, 0),
     ingredient_name: item.ingredient_name || item.name || "Unnamed Item",
@@ -285,7 +289,7 @@ const getInventoryItems = async (tenantId) => {
       last30DaysStart.setDate(last30DaysStart.getDate() - 30);
       last30DaysStart.setHours(0, 0, 0, 0);
 
-      const recentMovements = (item.movements || []).filter((movement) => movement.createdAt >= last30DaysStart);
+      const recentMovements = (item.movements || []).filter((movement) => movement.createdAt >= last30DaysStart && movement.outletId == null);
       const consumptionIn30Days = recentMovements
         .filter((movement) => ["consumption", "bill_deduction"].includes(movement.movementType))
         .reduce((sum, movement) => sum + Math.abs(toNumber(movement.quantity, 0)), 0);
@@ -312,8 +316,8 @@ const getInventoryItems = async (tenantId) => {
         pilferage_last_30_days: pilferageIn30Days,
       });
     });
-  } catch {
-    return legacyInventoryItems.map((item) => normalizeInventoryItem(item));
+  } catch (error) {
+    throw error;
   }
 };
 
@@ -334,8 +338,8 @@ const getOutlets = async (tenantId) => {
         status: outlet.status,
       }),
     );
-  } catch {
-    return [];
+  } catch (error) {
+    throw error;
   }
 };
 
@@ -355,7 +359,7 @@ const tenantScopedRoutePlans = (rows, outletIds, businessId) =>
 
 const getInventorySummary = async (tenantId) => {
   const items = await getInventoryItems(tenantId);
-  const atRiskItems = items.filter((item) => item.current_stock <= Math.max(item.reorder_level, 10));
+  const atRiskItems = items.filter((item) => item.current_stock <= item.reorder_level);
   const expiryAlerts = items.filter((item) => {
     const daysLeft = daysBetween(item.expiry_date);
     return daysLeft != null && daysLeft <= 14;
@@ -371,19 +375,13 @@ const getInventorySummary = async (tenantId) => {
   };
 };
 
-const getBills = async (tenantId, limit, outletId = null) => {
+const getBills = async (tenantId, limit, outletId = null, query = {}) => {
   try {
-    const data = await billingService.listInvoices({ tenantId, limit });
+    const data = await billingService.listInvoices({ tenantId, limit, page: query.page, offset: query.offset, from: query.from, to: query.to, outletIds: outletId ? [outletId] : query.outletIds || null });
     const bills = data.map((bill) => toLegacyBillRecord(bill));
     return outletId ? bills.filter((bill) => getBillOutletId(bill) === outletId) : bills;
-  } catch {
-    const bills = billingSeedData.map((bill) =>
-      normalizeLegacyBillRecord({
-        ...bill,
-        customer_name: bill.customerName,
-      }),
-    );
-    return outletId ? bills.filter((bill) => getBillOutletId(bill) === outletId) : bills;
+  } catch (error) {
+    throw error;
   }
 };
 
@@ -403,8 +401,9 @@ const getAllRevenueBills = async (tenantId, outletId = null) => {
       });
     });
     return outletId ? bills.filter((bill) => getBillOutletId(bill) === outletId) : bills;
-  } catch {
-    return getBills(tenantId, 250, outletId);
+  } catch (error) {
+    // A failed sales query must never turn sample or truncated data into owner metrics.
+    throw error;
   }
 };
 
@@ -416,8 +415,14 @@ const getDashboardStats = async (tenantId, outletId = null, period = "all") => {
   const allTimeRevenueDetail = period === "all"
     ? revenueDetail
     : await buildRevenueAnalytics({ tenantId, bills, period: "all" });
-  const inventorySummary = await getInventorySummary(tenantId);
-  const lowStockProducts = productSeedData.filter((product) => toNumber(product.stock, 0) <= 10);
+  const kitchen = await getCentralKitchenSnapshot(tenantId, outletId ? [outletId] : null);
+  const inventorySummary = { at_risk_items: kitchen.low_stock_items, expiry_alerts: kitchen.central_inventory.filter((row) => row.expiry_date && daysBetween(row.expiry_date) <= 14), total_wastage_last_30_days: kitchen.central_inventory.reduce((sum, row) => sum + row.wastage_last_30_days, 0) };
+  const business = await ensureBusiness({ tenantId });
+  const lowStockProducts = await prisma.product.findMany({ where: { businessId: business.id, active: true, stock: { lte: 10 }, ...(outletId ? { outletLinks: { some: { outletId, enabled: true } } } : {}) } });
+  const [recipes, cashierCount] = await Promise.all([
+    recipeAnalytics({ businessId: business.id, outletId, bills: bills.filter(isRevenueBill), period: getPeriodRange(period) }),
+    prisma.user.count({ where: { businessId: business.id, active: true, role: { name: { equals: "Cashier", mode: "insensitive" } }, ...(outletId ? { OR: [{ outletAssignments: { none: {} } }, { outletAssignments: { some: { outletId } } }] } : {}) } }),
+  ]);
   const todayStart = new Date();
   todayStart.setHours(0, 0, 0, 0);
   const revenueBills = bills.filter(isRevenueBill);
@@ -431,18 +436,23 @@ const getDashboardStats = async (tenantId, outletId = null, period = "all") => {
       topSellingMap.set(item.name, current);
     });
   });
-  const salesByOutlet = outlets.map((outlet) => {
+  // Keep closed outlets with revenue history, including fully refunded sales.
+  // Empty inactive outlets do not belong in an operational sales ranking.
+  const historicalOutletIds = new Set(bills.map(getBillOutletId));
+  const salesByOutlet = reportOutlets(outlets, historicalOutletIds, outletId).map((outlet) => {
     const outletBills = revenueBills.filter((bill) => getBillOutletId(bill) === outlet.id);
     return {
       outlet_id: outlet.id,
       outlet_name: outlet.name,
       bills: outletBills.length,
+      status: outlet.status || 'active',
       sales: outletBills.reduce((sum, bill) => sum + getBillNetRevenue(bill), 0),
     };
   });
 
   return {
     total_sales_today: todayBills.reduce((sum, bill) => sum + getBillNetRevenue(bill), 0),
+    sales_charts: buildSalesCharts(bills),
     bills_count_today: todayBills.length,
     online_orders_count: onlineOrders.length,
     online_sales: onlineOrders.reduce((sum, bill) => sum + getBillNetRevenue(bill), 0),
@@ -452,8 +462,8 @@ const getDashboardStats = async (tenantId, outletId = null, period = "all") => {
     recent_online_orders: onlineOrders.slice(0, 8),
     sales_by_outlet: salesByOutlet,
     low_stock_products: lowStockProducts,
-    top_selling: Array.from(topSellingMap.values()).sort((left, right) => right.quantity - left.quantity).slice(0, 6),
-    cashier_count: 1,
+    top_selling: Array.from(topSellingMap.values()).sort((left, right) => right.quantity - left.quantity),
+    cashier_count: cashierCount,
     total_revenue: allTimeRevenueDetail.revenue,
     revenue_summary: {
       goods_cost: allTimeRevenueDetail.goods_cost,
@@ -468,48 +478,13 @@ const getDashboardStats = async (tenantId, outletId = null, period = "all") => {
       at_risk_items: inventorySummary.at_risk_items,
       expiry_alerts: inventorySummary.expiry_alerts,
     },
-    recipe_analytics: {
-      recipe_product_count: 0,
-      blocked_product_count: 0,
-      recipe_coverage_percent: 0,
-      top_recipe_cost_products: [],
-      top_ingredient_usage: [],
-      most_ordered_recipe_products: [],
-    },
-    central_kitchen: await getCentralKitchenSnapshot(tenantId),
+    recipe_analytics: recipes,
+    central_kitchen: kitchen,
   };
 };
 
-const getCentralKitchenSnapshot = async (tenantId) => {
-  const inventorySummary = await getInventorySummary(tenantId);
-  const outlets = await getOutlets(tenantId);
-  const outletIds = new Set(outlets.map((outlet) => outlet.id));
-  const { id: businessId } = await ensureBusiness({ tenantId });
-  const purchaseOrders = tenantScopedLegacyRows(legacyPurchaseOrders, outletIds, businessId);
-  const routePlans = tenantScopedRoutePlans(legacyRoutePlans, outletIds, businessId);
-  const outletInventory = tenantScopedLegacyRows(legacyOutletInventory, outletIds, businessId);
-  const restockLogs = tenantScopedLegacyRows(legacyRestockLogs, outletIds, businessId);
 
-  return {
-    overview: {
-      total_outlets: outlets.length,
-      open_purchase_orders: purchaseOrders.filter((item) => item.status !== "completed").length,
-      scheduled_routes: routePlans.filter((item) => item.status !== "completed").length,
-      central_inventory_value: inventorySummary.items.reduce(
-        (sum, item) => sum + toNumber(item.current_stock, 0) * toNumber(item.conversion_cost, 0),
-        0,
-      ),
-      restocks_this_week: restockLogs.length,
-    },
-    outlets,
-    central_inventory: inventorySummary.items,
-    low_stock_items: inventorySummary.at_risk_items,
-    purchase_orders: purchaseOrders,
-    route_plans: routePlans,
-    outlet_inventory: outletInventory,
-    restock_logs: restockLogs,
-  };
-};
+const getCentralKitchenSnapshot = (tenantId, outletIds = null) => centralKitchenService.snapshot({ tenantId, outletIds });
 
 router.get("/dashboard/stats", requirePermission("dashboard"), scopeOutletQuery, async (req, res, next) => {
   try {
@@ -525,7 +500,7 @@ router.get("/bills", requireAnyPermission("billing", "bills", "reports"), async 
   try {
     res
       .status(200)
-      .json(filterByOutletScope(req, await getBills(req.context.tenantId, req.query?.limit, req.query?.outlet_id || null), (bill) => getBillOutletId(bill)));
+      .json(await getBills(req.context.tenantId, req.query?.limit, req.query?.outlet_id || null, { ...req.query, outletIds: req.context.outletScope }));
   } catch (error) {
     next(error);
   }
@@ -1030,157 +1005,31 @@ router.put("/shift-swaps/:requestId", requireAuth, async (req, res, next) => {
 
 router.get("/central-kitchen", requireAnyPermission("central_kitchen", "inventory", "reports"), async (req, res, next) => {
   try {
-    res.status(200).json(await getCentralKitchenSnapshot(req.context.tenantId));
+    res.set("Cache-Control", "private, no-store");
+    res.status(200).json(await getCentralKitchenSnapshot(req.context.tenantId, req.query.outlet_id ? [req.query.outlet_id] : req.context.outletScope));
   } catch (error) {
     next(error);
   }
 });
 
-router.get("/customer-analytics", requireAnyPermission("reports", "dashboard"), async (req, res, next) => {
+router.get("/customer-analytics", requireAnyPermission("reports", "dashboard"), scopeOutletQuery, async (req, res, next) => {
   try {
-    const bills = filterByOutletScope(req, await getBills(req.context.tenantId), (bill) => getBillOutletId(bill));
-    const customersMap = new Map();
-    const itemSalesMap = new Map();
-
-    bills.forEach((bill) => {
-      const customerKey =
-        String(bill.customer_phone || "").trim() ||
-        String(bill.customer_name || "").trim().toLowerCase() ||
-        `walkin-${bill.id}`;
-      const currentCustomer = customersMap.get(customerKey) || {
-        customer_key: customerKey,
-        customer_name: bill.customer_name || "Walk-in",
-        customer_phone: bill.customer_phone || "",
-        visits: 0,
-        total_spent: 0,
-        loyalty_points: 0,
-        favorite_item: "-",
-        favorite_category: "-",
-        preferred_channel: bill.order_type || "Dine-In",
-        segment: "New",
-        _itemCounts: new Map(),
-      };
-
-      currentCustomer.visits += 1;
-      currentCustomer.total_spent += toNumber(bill.total, 0);
-      currentCustomer.loyalty_points += Math.floor(toNumber(bill.total, 0) / 10);
-
-      (bill.items || []).forEach((item) => {
-        const itemName = item.name || "Item";
-        currentCustomer._itemCounts.set(itemName, (currentCustomer._itemCounts.get(itemName) || 0) + toNumber(item.quantity, 0));
-
-        const salesKey = itemName;
-        const currentItem = itemSalesMap.get(salesKey) || {
-          item_name: itemName,
-          category: "-",
-          inhouse_qty: 0,
-          inhouse_revenue: 0,
-          online_qty: 0,
-          online_revenue: 0,
-          total_qty: 0,
-          total_revenue: 0,
-        };
-        const qty = toNumber(item.quantity, 0);
-        const revenue = toNumber(item.price, 0) * qty;
-        const isOnline = (bill.order_type || "").toLowerCase().includes("online") || (bill.order_type || "").toLowerCase().includes("delivery");
-
-        if (isOnline) {
-          currentItem.online_qty += qty;
-          currentItem.online_revenue += revenue;
-        } else {
-          currentItem.inhouse_qty += qty;
-          currentItem.inhouse_revenue += revenue;
-        }
-        currentItem.total_qty += qty;
-        currentItem.total_revenue += revenue;
-        itemSalesMap.set(salesKey, currentItem);
-      });
-
-      customersMap.set(customerKey, currentCustomer);
-    });
-
-    const customers = Array.from(customersMap.values()).map((customer) => {
-      const favorite = Array.from(customer._itemCounts.entries()).sort((left, right) => right[1] - left[1])[0];
-      const visits = customer.visits;
-      return {
-        customer_key: customer.customer_key,
-        customer_name: customer.customer_name,
-        customer_phone: customer.customer_phone,
-        visits,
-        total_spent: customer.total_spent,
-        loyalty_points: customer.loyalty_points,
-        favorite_item: favorite?.[0] || "-",
-        favorite_category: "-",
-        preferred_channel: customer.preferred_channel,
-        segment: visits >= 5 ? "VIP" : visits >= 2 ? "Regular" : "New",
-      };
-    });
-
-    const totalCustomers = customers.length;
-    const repeatCustomers = customers.filter((customer) => customer.visits >= 2).length;
-    const averageCustomerValue =
-      totalCustomers > 0
-        ? customers.reduce((sum, customer) => sum + toNumber(customer.total_spent, 0), 0) / totalCustomers
-        : 0;
-
-    res.status(200).json({
-      summary: {
-        total_customers: totalCustomers,
-        repeat_customers: repeatCustomers,
-        loyalty_points_issued: customers.reduce((sum, customer) => sum + toNumber(customer.loyalty_points, 0), 0),
-        average_customer_value: averageCustomerValue,
-        average_feedback: 0,
-      },
-      customers,
-      item_sales_by_channel: Array.from(itemSalesMap.values()),
-      campaign_suggestions: customers
-        .filter((customer) => customer.customer_name && customer.customer_name !== "Walk-in")
-        .slice(0, 6)
-        .map((customer) => ({
-          customer_name: customer.customer_name,
-          customer_phone: customer.customer_phone,
-          segment: customer.segment,
-          favorite_item: customer.favorite_item,
-          offer:
-            customer.segment === "VIP"
-              ? `Priority offer on ${customer.favorite_item}`
-              : customer.segment === "Regular"
-                ? `Come-back offer for ${customer.favorite_item}`
-                : `First-repeat discount on ${customer.favorite_item}`,
-        })),
-    });
-  } catch (error) {
-    next(error);
-  }
+    const context = await reportsService.getReportContext({ tenantId: req.context.tenantId, from: req.query.from, to: req.query.to, outletId: req.query.outlet_id || null });
+    const profiles = await prisma.customer.findMany({ where: { businessId: context.business.id, anonymizedAt: null }, select: { phone: true, loyaltyPoints: true } });
+    res.status(200).json(customerInsights(context.bills, profiles, context.feedback));
+  } catch (error) { next(error); }
 });
 
-router.post("/central-kitchen/outlets", requireRole("Owner", "Manager"), (req, res) => {
-  const outlet = normalizeOutlet({
-    ...req.body,
-    id: randomUUID(),
-  });
-  legacyOutlets = [...legacyOutlets, { ...outlet, business_id: req.context.businessId }];
-  res.status(201).json(outlet);
+router.post("/central-kitchen/outlets", requireRole("Owner", "Manager"), requirePermission("central_kitchen"), async (req, res, next) => {
+  try {
+    if (!String(req.body?.name || "").trim()) throw createHttpError({ statusCode: 400, message: "Enter an outlet name" });
+    res.status(201).json(await centralKitchenService.outlet({ tenantId: req.context.tenantId, payload: req.body }));
+  } catch (error) { next(error); }
 });
 
-router.post("/central-kitchen/purchase-orders", requireRole("Owner", "Manager"), async (req, res, next) => {
+router.post("/central-kitchen/purchase-orders", requireRole("Owner", "Manager"), requirePermission("central_kitchen"), async (req, res, next) => {
   try {
-  // The outlet must be one of this business's own real outlets, never an arbitrary id.
-  const [ownedOutletId] = await assertOwnedIds({ kind: "outlet", ids: [req.body?.outlet_id], businessId: req.context.businessId });
-  const outlet = ownedOutletId ? await prisma.outlet.findUnique({ where: { id: ownedOutletId }, select: { name: true } }) : null;
-  const order = {
-    id: randomUUID(),
-    business_id: req.context.businessId,
-    outlet_id: ownedOutletId || null,
-    outlet_name: outlet?.name || "Outlet",
-    priority: req.body.priority || "Medium",
-    status: "pending",
-    required_by: req.body.required_by || null,
-    notes: req.body.notes || "",
-    items: Array.isArray(req.body.items) ? req.body.items : [],
-  };
-  legacyPurchaseOrders = [order, ...legacyPurchaseOrders];
-  res.status(201).json(order);
+  res.status(201).json(await centralKitchenService.purchaseOrder({ tenantId: req.context.tenantId, user: req.user, payload: req.body }));
   } catch (error) {
     next(error);
   }
@@ -1189,32 +1038,14 @@ router.post("/central-kitchen/purchase-orders", requireRole("Owner", "Manager"),
 router.post("/central-kitchen/restocks", requireRole("Owner", "Manager"), requirePermission("inventory"), async (req, res, next) => {
   try {
     const transfer = await inventoryOperationsService.createTransferRequest({ tenantId: req.context.tenantId, user: req.user,
-      payload: { destination_outlet_id: req.body.outlet_id, items: [{ inventory_id: req.body.inventory_id, quantity: req.body.quantity }] } });
+      payload: { request_id: req.body.request_id, destination_outlet_id: req.body.outlet_id, items: [{ inventory_id: req.body.inventory_id, quantity: req.body.quantity }] } });
     res.status(201).json({ ...transfer, message: "Transfer requested. Manager approval and outlet receipt are required before stock is available." });
   } catch (error) { next(error); }
 });
 
-router.post("/central-kitchen/routes", requireRole("Owner", "Manager"), async (req, res, next) => {
+router.post("/central-kitchen/routes", requireRole("Owner", "Manager"), requirePermission("central_kitchen"), async (req, res, next) => {
   try {
-  const stopOutletIds = await assertOwnedIds({ kind: "outlet", ids: (req.body?.stops || []).map((stop) => stop.outlet_id), businessId: req.context.businessId });
-  const outletNames = new Map((await prisma.outlet.findMany({ where: { id: { in: stopOutletIds } }, select: { id: true, name: true } })).map((row) => [row.id, row.name]));
-  const route = {
-    id: randomUUID(),
-    business_id: req.context.businessId,
-    route_name: req.body.route_name || "Route",
-    dispatch_date: req.body.dispatch_date || todayDate(),
-    driver_name: req.body.driver_name || "",
-    vehicle_number: req.body.vehicle_number || "",
-    status: req.body.status || "Scheduled",
-    stops:
-      (req.body.stops || []).map((stop) => ({
-        outlet_id: stop.outlet_id,
-        outlet_name: outletNames.get(stop.outlet_id) || "Outlet",
-        eta: stop.eta || "",
-      })) || [],
-  };
-  legacyRoutePlans = [route, ...legacyRoutePlans];
-  res.status(201).json(route);
+  res.status(201).json(await centralKitchenService.route({ tenantId: req.context.tenantId, payload: req.body }));
   } catch (error) {
     next(error);
   }

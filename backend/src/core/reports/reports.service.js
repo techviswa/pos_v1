@@ -1,4 +1,5 @@
-import { mkdir, readFile, writeFile } from "fs/promises";
+import { readFile } from "fs/promises";
+import { randomUUID } from "node:crypto";
 import path from "path";
 import { fileURLToPath } from "url";
 
@@ -6,6 +7,9 @@ import prisma from "../../database/prisma/client.js";
 import { createHttpError } from "../../shared/utils/http-error.js";
 import { ensureBusiness } from "../../database/prisma/helpers.js";
 import { normalizeBillingMetadata } from "../billing/billing-metadata.utils.js";
+import { centralKitchenService } from "../central-kitchen/central-kitchen.service.js";
+import { recipeAnalytics } from "../dashboard/recipe-analytics.js";
+import { customerInsights, reportCustomerKey } from "./customer-insights.js";
 import {
   getAllocatedLineRevenue,
   getBillLineCost,
@@ -52,6 +56,7 @@ const normalizeBill = (bill) => ({
   ...normalizeBillingMetadata(bill.metadata || {}),
   metadata: bill.metadata || {},
   id: bill.id,
+  invoice_number: bill.invoiceNumber,
   customer_name: bill.customerName,
   subtotal: bill.subtotal,
   tax: bill.tax,
@@ -64,7 +69,8 @@ const normalizeBill = (bill) => ({
 });
 
 class ReportsService {
-  async getReportContext({ tenantId, from, to, outletId = null }) {
+  async getReportContext({ tenantId, from, to, outletId = null, context = null }) {
+    if (context) return context;
     for (const date of [from, to]) {
       if (date != null && (typeof date !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(date) || !Number.isFinite(Date.parse(date)) || new Date(date).toISOString().slice(0, 10) !== date)) throw createHttpError({ statusCode: 400, message: "Report dates must be valid YYYY-MM-DD dates" });
     }
@@ -72,14 +78,14 @@ class ReportsService {
     const business = await ensureBusiness({ tenantId });
     const [bills, products, outlets, users, feedback] = await Promise.all([
       prisma.bill.findMany({
-        where: { businessId: business.id },
+        where: { businessId: business.id, ...((from || to) ? { createdAt: { ...(from ? { gte: new Date(`${from}T00:00:00Z`) } : {}), ...(to ? { lt: new Date(Date.parse(`${to}T00:00:00Z`) + 86400000) } : {}) } } : {}) },
         include: { items: true, order: { select: { outletId: true } } },
         orderBy: { createdAt: "desc" },
       }),
       prisma.product.findMany({ where: { businessId: business.id } }),
       prisma.outlet.findMany({ where: { businessId: business.id } }),
       prisma.user.findMany({ where: { businessId: business.id }, include: { role: true } }),
-      prisma.feedback.findMany({ where: { businessId: business.id } }),
+      prisma.feedback.findMany({ where: { businessId: business.id }, include: { bill: { select: { metadata: true, order: { select: { outletId: true } } } } } }),
     ]);
 
     return {
@@ -91,7 +97,7 @@ class ReportsService {
       products,
       outlets,
       users,
-      feedback,
+      feedback: feedback.filter((row) => inRange(row.createdAt, { from, to }) && (!outletId || (row.bill && getBillOutletId(row.bill) === outletId))),
     };
   }
 
@@ -227,7 +233,7 @@ class ReportsService {
     }));
 
     bills.filter(isRevenueBill).forEach((bill) => {
-      const hour = new Date(bill.created_at).getHours();
+      const hour = new Date(bill.created_at).getUTCHours();
       rows[hour].bills += 1;
       rows[hour].sales += getBillRevenue(bill);
       rows[hour].tax += getBillTax(bill);
@@ -298,9 +304,10 @@ class ReportsService {
 
   async customerAnalytics(input) {
     const { business, bills, feedback } = await this.getReportContext(input);
+    const customerForBill = new Map(bills.map((bill) => [bill.id, reportCustomerKey(bill)]));
     const rowsByCustomer = new Map();
     bills.filter(isRevenueBill).forEach((bill) => {
-      const key = bill.customer_phone || String(bill.customer_name || bill.customerName || "Walk-in").toLowerCase();
+      const key = reportCustomerKey(bill);
       const row = rowsByCustomer.get(key) || {
         customer_key: key,
         customer_name: bill.customer_name || bill.customerName || "Walk-in",
@@ -311,7 +318,8 @@ class ReportsService {
         last_visit: null,
         preferred_channel: getBillChannel(bill) === "online" ? "Online" : "Dine-In",
         feedback_count: 0,
-        average_rating: 0,
+        average_rating: null,
+        rated_feedback: 0,
       };
       row.visits += 1;
       row.total_spent += getBillRevenue(bill);
@@ -321,12 +329,14 @@ class ReportsService {
     });
 
     feedback.forEach((item) => {
-      const key = item.customerName ? String(item.customerName).toLowerCase() : null;
+      const key = customerForBill.get(item.billId);
       if (!key || !rowsByCustomer.has(key)) return;
       const row = rowsByCustomer.get(key);
       row.feedback_count += 1;
-      row.average_rating =
-        (row.average_rating * (row.feedback_count - 1) + toAnalyticsNumber(item.rating, 0)) / row.feedback_count;
+      if (Number.isInteger(item.rating) && item.rating >= 1 && item.rating <= 5) {
+        row.average_rating = ((row.average_rating || 0) * row.rated_feedback + item.rating) / (row.rated_feedback + 1);
+        row.rated_feedback += 1;
+      }
     });
 
     const rows = Array.from(rowsByCustomer.values()).sort((a, b) => b.total_spent - a.total_spent);
@@ -345,17 +355,25 @@ class ReportsService {
   }
 
   async getDashboard(input) {
+    const context = await this.getReportContext(input);
+    const scoped = { ...input, context };
     const [sales, gst, profitability, hourly, staff, outlets, customers] = await Promise.all([
-      this.salesByDate(input),
-      this.gstTaxReport(input),
-      this.productProfitability(input),
-      this.hourlySales(input),
-      this.staffPerformance(input),
-      this.outletComparison(input),
-      this.customerAnalytics(input),
+      this.salesByDate(scoped),
+      this.gstTaxReport(scoped),
+      this.productProfitability(scoped),
+      this.hourlySales(scoped),
+      this.staffPerformance(scoped),
+      this.outletComparison(scoped),
+      this.customerAnalytics(scoped),
     ]);
-
-    return { sales, gst, profitability, hourly, staff, outlets, customers };
+    const [kitchen, recipes, profiles] = await Promise.all([
+      centralKitchenService.snapshot({ tenantId: input.tenantId, outletIds: input.outletId ? [input.outletId] : null }),
+      recipeAnalytics({ businessId: context.business.id, outletId: input.outletId, bills: context.bills.filter(isRevenueBill), period: { ...(input.from ? { start: new Date(`${input.from}T00:00:00Z`) } : {}), ...(input.to ? { end: new Date(Date.parse(`${input.to}T00:00:00Z`) + 86400000) } : {}) } }),
+      prisma.customer.findMany({ where: { businessId: context.business.id, anonymizedAt: null }, select: { phone: true, loyaltyPoints: true } }),
+    ]);
+    const rated = context.feedback.filter((row) => Number.isInteger(row.rating) && row.rating >= 1 && row.rating <= 5);
+    const feedback = { items: context.feedback.map((row) => ({ id: row.id, customer_name: row.customerName || "Guest", rating: row.rating, comment: row.comment || "", created_at: row.createdAt.toISOString() })), summary: { total_feedback: context.feedback.length, rated_feedback: rated.length, average_rating: rated.length ? rated.reduce((sum, row) => sum + row.rating, 0) / rated.length : null, five_star: rated.filter((row) => row.rating === 5).length } };
+    return { sales, gst, profitability, hourly, staff, outlets, customers, inventory: kitchen.central_inventory, inventory_location: kitchen.stock_location, recipes, feedback, customer_insights: customerInsights(context.bills, profiles, context.feedback), scope: { from: input.from || null, to: input.to || null, outlet_id: input.outletId || null, timezone: "UTC", inventory: "Current balances; forecast uses last 30 days", loyalty: "Current points held by guests appearing in this period" } };
   }
 
   async getReportByKey(key, input) {
@@ -406,19 +424,17 @@ class ReportsService {
     }
   }
 
-  async writeSchedules(items) {
-    await mkdir(DATA_DIR, { recursive: true });
-    await writeFile(SCHEDULE_FILE, JSON.stringify(items, null, 2));
-  }
-
   async listSchedules({ businessId }) {
-    return (await this.readSchedules()).filter((item) => item.business_id === businessId);
+    if (!businessId) throw createHttpError({ statusCode: 400, message: "A business is required" });
+    const legacy = (await this.readSchedules()).filter((item) => item.business_id === businessId);
+    const stored = await prisma.stateDocument.findMany({ where: { key: { startsWith: `report-schedule:${businessId}:` } } });
+    return [...new Map([...legacy, ...stored.map((row) => row.data)].map((item) => [item.id, item])).values()];
   }
 
   async createSchedule({ businessId, payload, user }) {
-    const schedules = await this.readSchedules();
+    if (!businessId) throw createHttpError({ statusCode: 400, message: "A business is required" });
     const item = {
-      id: `sch_${Date.now()}`,
+      id: `sch_${randomUUID()}`,
       business_id: businessId,
       report_key: payload.report_key || "gst",
       format: payload.format || "csv",
@@ -430,13 +446,12 @@ class ReportsService {
       created_at: new Date().toISOString(),
       last_run_at: null,
     };
-    schedules.unshift(item);
-    await this.writeSchedules(schedules);
+    await prisma.stateDocument.create({ data: { key: `report-schedule:${businessId}:${item.id}`, data: item } });
     return item;
   }
 
   async runSchedule({ tenantId, businessId, scheduleId }) {
-    const schedules = await this.readSchedules();
+    const schedules = await this.listSchedules({ businessId });
     const schedule = schedules.find((item) => item.id === scheduleId && item.business_id === businessId);
     if (!schedule) return null;
     const exportPayload = await this.exportReport({
@@ -449,7 +464,8 @@ class ReportsService {
       filename: exportPayload.filename,
       content_type: exportPayload.content_type,
     };
-    await this.writeSchedules(schedules);
+    const key = `report-schedule:${businessId}:${schedule.id}`;
+    await prisma.stateDocument.upsert({ where: { key }, create: { key, data: schedule }, update: { data: schedule } });
     return { schedule, export: exportPayload };
   }
 }

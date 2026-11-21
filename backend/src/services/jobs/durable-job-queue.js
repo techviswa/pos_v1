@@ -1,5 +1,7 @@
 import { randomUUID } from "node:crypto";
 import prisma from "../../database/prisma/client.js";
+import { Prisma } from "@prisma/client";
+import { runTenantScope } from "../../database/prisma/tenant-context.js";
 import { errorMonitor } from "../../shared/utils/error-monitor.js";
 
 const serialize = (job) => job && ({
@@ -32,6 +34,13 @@ export class DurableJobQueue {
     try {
       const token = randomUUID();
       const job = await this.client.$transaction(async (tx) => {
+        // Deleted fixture/business contexts cannot recover through retries. Reject
+        // them in a batch so they never block genuine business notifications.
+        await tx.$executeRaw(Prisma.sql`UPDATE "BackgroundJob" j SET status='failed', error='Job business context is invalid', "leaseUntil"=NULL, "leaseToken"=NULL, "updatedAt"=NOW()
+          WHERE j.type IN (${Prisma.join([...this.handlers.keys()])}) AND j.status IN ('queued','retrying')
+          AND COALESCE(j.payload->>'business_id',j.payload->>'businessId') IS NOT NULL
+          AND NOT EXISTS (SELECT 1 FROM "Business" b WHERE b.id=COALESCE(j.payload->>'business_id',j.payload->>'businessId')
+            AND b."tenantId"=COALESCE(NULLIF(j.payload->>'tenant_id',''),NULLIF(j.payload->>'tenantId',''),b."tenantId"))`);
         const now = new Date();
         const candidate = await tx.backgroundJob.findFirst({
           where: { type: { in: [...this.handlers.keys()] }, OR: [
@@ -56,7 +65,11 @@ export class DurableJobQueue {
         if (job.attempts > job.maxAttempts) {
           throw new Error("Job retry limit reached after worker restart");
         }
-        const result = await this.handlers.get(job.type)(job.payload, serialize(job));
+        const businessId = job.payload?.business_id || job.payload?.businessId;
+        const tenantId = job.payload?.tenant_id || job.payload?.tenantId;
+        const business = businessId ? await this.client.business.findFirst({ where: { id: businessId, ...(tenantId ? { tenantId } : {}) }, select: { id: true, tenantId: true } }) : null;
+        if (businessId && !business) throw new Error("Job business context is invalid");
+        const result = await runTenantScope(business ? { businessId: business.id, tenantId: business.tenantId } : {}, () => this.handlers.get(job.type)(job.payload, serialize(job)));
         await this.client.backgroundJob.updateMany({ where: { id: job.id, leaseToken: token }, data: {
           status: "completed", result: JSON.parse(JSON.stringify(result ?? {})), error: null, leaseUntil: null, leaseToken: null,
         } });
@@ -73,8 +86,27 @@ export class DurableJobQueue {
   start({ intervalMs = 5000 } = {}) {
     if (this.running) return;
     this.running = true;
-    this.timer = setInterval(() => void this.runNext().catch((error) => errorMonitor.captureException(error, { lifecycle: "job_worker" })), intervalMs);
+    this.timer = setInterval(() => this.wake(), intervalMs);
     this.timer.unref?.();
+    this.wake();
+  }
+  wake() {
+    if (!this.running) return;
+    this.wakeRequested = true;
+    if (this.draining) return;
+    this.draining = true;
+    void (async () => {
+      try {
+        for (let count = 0; count < 50 && this.running; count++) {
+          this.wakeRequested = false;
+          if (!await this.runNext() && !this.wakeRequested) break;
+        }
+      } catch (error) { errorMonitor.captureException(error, { lifecycle: 'job_worker' }); }
+      finally {
+        this.draining = false;
+        if (this.wakeRequested && this.running) queueMicrotask(() => this.wake());
+      }
+    })();
   }
   stop() { clearInterval(this.timer); this.running = false; }
   async health() {

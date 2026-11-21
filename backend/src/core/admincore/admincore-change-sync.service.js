@@ -8,6 +8,7 @@ import { publishChange } from "../../services/realtime/realtime.service.js";
 const JOB_TYPE = "admincore.notify-change";
 const NOTIFY_TIMEOUT_MS = 5000;
 const SUPPORTED_RESOURCES = new Set([
+  'privacy-erasures',
   "businesses",
   "outlets",
   "products",
@@ -149,6 +150,7 @@ class AdmincoreChangeSyncService {
       if (!response.ok) {
         throw new Error(`AdminCore webhook returned ${response.status}`);
       }
+      const acknowledgement = typeof response.json === "function" ? await response.json().catch(() => null) : null;
 
       await recordAdminCoreSyncLog({
         tenant_id: event.tenant_id,
@@ -171,7 +173,9 @@ class AdmincoreChangeSyncService {
         synced_at: nowIso(),
       });
 
-      return { delivered: true, webhook_url: webhookUrl };
+      return { delivered: true, remote_job_id: acknowledgement?.accepted === true ? acknowledgement.result?.id || null : null,
+        remote_business_id: acknowledgement?.accepted === true ? acknowledgement.business_id || null : null,
+        import_verified: false };
     } catch (error) {
       const message = error.name === "AbortError" ? "AdminCore sync notification timed out" : error.message;
       await this.recordDeliveryFailure(event, message);

@@ -1,0 +1,107 @@
+import assert from "node:assert/strict";
+import http from "node:http";
+import { randomUUID } from "node:crypto";
+import app from "../src/app.js";
+import prisma from "../src/database/prisma/client.js";
+import env from "../src/config/env.js";
+import { connectDatabase } from "../src/config/db.js";
+import { usersService } from "../src/core/users/users.service.js";
+import { saasService } from "../src/core/saas/saas.service.js";
+import { inventoryForecast } from "../src/core/inventory/inventory-forecast.js";
+import { stopRealtime } from "../src/services/realtime/realtime.service.js";
+
+const suffix = randomUUID(), a = `central-a-${suffix}`, b = `central-b-${suffix}`, password = randomUUID();
+const scope = (businessId) => ({ businessId, tenantId: `tenant-${businessId}` });
+const api = http.createServer(app); let base, checks = 0;
+const old = env.admincore.enabled;
+const eq = (actual, expected) => { assert.deepEqual(actual, expected); checks++; };
+const call = async (method, path, body, session) => {
+  const response = await fetch(base + path, { method, headers: { "content-type": "application/json", ...(session ? { "x-cf-session-id": session } : {}) }, ...(body ? { body: JSON.stringify(body) } : {}) });
+  return { status: response.status, data: await response.json() };
+};
+try {
+  env.admincore.enabled = false;
+  await connectDatabase();
+  eq(inventoryForecast({ stock: 5, reorderLevel: 1, consumed: 3, movementCount: 1 }).days_remaining, 50);
+  eq(inventoryForecast({ stock: 5, reorderLevel: 1 }).low_stock, false);
+  eq(inventoryForecast({ stock: 5, reorderLevel: 1 }).days_remaining, null);
+  for (const id of [a, b]) {
+    await prisma.business.create({ data: { id, tenantId: scope(id).tenantId, name: "Central fixture" } });
+    await saasService.updateSubscription({ businessId: id, payload: { plan: "growth", subscription_status: "active" } });
+  }
+  const outletA = await prisma.outlet.create({ data: { businessId: a, name: "Outlet A", code: "A", status: "active" } });
+  const outletB = await prisma.outlet.create({ data: { businessId: a, name: "Outlet B", code: "B", status: "active" } });
+  const inactive = await prisma.outlet.create({ data: { businessId: a, name: "Inactive test", code: "OLD", status: "inactive" } });
+  const foreign = await prisma.outlet.create({ data: { businessId: b, name: "Foreign", code: "F", status: "active" } });
+  const ingredient = await prisma.inventoryItem.create({ data: { businessId: a, name: "Flour", unit: "kg", stock: 5, reorderLevel: 1, conversionCost: 10 } });
+  const untracked = await prisma.inventoryItem.create({ data: { businessId: a, name: "ZZ untracked", unit: "kg", stock: 10, reorderLevel: 1 } });
+  for (const [outletId, stock, quantity] of [[null, 5, -3], [outletA.id, 2, -6], [outletB.id, 9, -9]]) {
+    if (outletId) await prisma.outletInventory.create({ data: { outletId, inventoryItemId: ingredient.id, stock, reorderLevel: 1, unitCost: 10 } });
+    await prisma.inventoryMovement.create({ data: { businessId: a, inventoryItemId: ingredient.id, outletId, movementType: "consumption", quantity } });
+  }
+  const make = (role, businessId = a, permissions, outlets) => usersService.createUser({ ...scope(businessId), payload: { name: role, role, email: `${role}-${businessId}@example.invalid`, password, profile_required: false, permissions, assigned_outlet_ids: outlets } });
+  const owner = await make("Owner"), staff = await make("Cashier", a, ["central_kitchen", "inventory", "reports"], [outletA.id]), outsider = await make("Owner", b);
+  await new Promise((resolve) => api.listen(0, "127.0.0.1", resolve)); base = `http://127.0.0.1:${api.address().port}`;
+  const login = async (user) => (await call("POST", "/api/auth/login", { email: user.email, password })).data.data.session_id;
+  const [ownerS, staffS, outsiderS] = await Promise.all([owner, staff, outsider].map(login));
+  eq((await call("GET", "/api/central-kitchen")).status, 401);
+  const all = await call("GET", "/api/central-kitchen", null, ownerS);
+  eq(all.status, 200); eq(all.data.outlets.some((row) => row.id === inactive.id), false);
+  eq(all.data.central_inventory[0].current_stock, 5); eq(all.data.central_inventory[0].days_remaining, 50);
+  eq(all.data.low_stock_items.length, 0); eq(all.data.outlet_inventory.length, 2);
+  const restricted = await call("GET", "/api/central-kitchen", null, staffS);
+  eq(restricted.status, 200); eq(restricted.data.outlets.map((row) => row.id), [outletA.id]);
+  eq(restricted.data.central_inventory[0].current_stock, 2); eq(restricted.data.central_inventory[0].days_remaining, 10);
+  eq(restricted.data.central_inventory.find((row) => row.id === untracked.id).current_stock, null);
+  eq(restricted.data.low_stock_items.some((row) => row.id === untracked.id), false);
+  eq(restricted.data.outlet_inventory.some((row) => row.outlet_id === outletB.id), false);
+  eq((await call("GET", `/api/central-kitchen?outlet_id=${outletB.id}`, null, staffS)).status, 403);
+  eq((await call("GET", `/api/central-kitchen?outlet_id=${foreign.id}`, null, ownerS)).status, 404);
+  eq((await call("GET", "/api/central-kitchen", null, outsiderS)).data.central_inventory.length, 0);
+  const dashboard = await call("GET", "/api/dashboard/stats", null, ownerS);
+  eq(dashboard.status, 200); eq(dashboard.data.cashier_count, 1);
+  const orderBody = { request_id: `po_${suffix}`, outlet_id: outletA.id, priority: "High", items: [{ inventory_id: ingredient.id, requested_quantity: 2 }] };
+  eq((await call("POST", "/api/central-kitchen/purchase-orders", { ...orderBody, outlet_id: foreign.id }, ownerS)).status, 404);
+  eq((await call("POST", "/api/central-kitchen/purchase-orders", { ...orderBody, items: [{ requested_quantity: 2 }] }, ownerS)).status, 400);
+  eq((await call("POST", "/api/central-kitchen/purchase-orders", { ...orderBody, items: [{ inventory_id: ingredient.id, requested_quantity: -2 }] }, ownerS)).status, 400);
+  const po = await call("POST", "/api/central-kitchen/purchase-orders", orderBody, ownerS);
+  eq(po.status, 201); eq((await prisma.purchaseOrder.findUnique({ where: { id: po.data.id } })).items[0].inventory_id, ingredient.id);
+  const retries = await Promise.all([1, 2].map(() => call("POST", "/api/central-kitchen/purchase-orders", orderBody, ownerS)));
+  retries.forEach((retry) => { eq(retry.status, 201); eq(retry.data.id, po.data.id); });
+  eq(await prisma.purchaseOrder.count({ where: { businessId: a } }), 1);
+  eq((await call("POST", "/api/central-kitchen/purchase-orders", { ...orderBody, priority: "Low" }, ownerS)).status, 409);
+  eq((await call("POST", "/api/central-kitchen/purchase-orders", { ...orderBody, request_id: `bad_${suffix}`, priority: "Critical" }, ownerS)).status, 400);
+  const route = await call("POST", "/api/central-kitchen/routes", { route_name: "Morning", stops: [{ outlet_id: outletA.id }, { outlet_id: outletB.id }] }, ownerS);
+  eq(route.status, 201); eq(await prisma.routeStop.count({ where: { routePlanId: route.data.id } }), 2);
+  const ownRoute = (await call("GET", "/api/central-kitchen", null, staffS)).data.route_plans.find((row) => row.id === route.data.id);
+  eq(ownRoute.stops.map((row) => row.outlet_id), [outletA.id]);
+  eq((await call("POST", "/api/central-kitchen/routes", { route_name: "Bad", stops: [{ outlet_id: foreign.id }] }, ownerS)).status, 404);
+  const created = await call("POST", "/api/central-kitchen/outlets", { name: "Created through kitchen", code: "NEW", status: "active", delivery_window: "08:00–10:00", notes: "Fixture note" }, ownerS);
+  eq(created.status, 201); eq(Boolean(await prisma.outlet.findFirst({ where: { businessId: a, name: "Created through kitchen" } })), true);
+  const transferBody = { request_id: `transfer_${suffix}`, outlet_id: outletA.id, inventory_id: ingredient.id, quantity: 1 };
+  const transfer = await call("POST", "/api/central-kitchen/restocks", transferBody, ownerS);
+  eq(transfer.status, 201);
+  eq((await call("POST", "/api/central-kitchen/restocks", transferBody, ownerS)).data.id, transfer.data.id);
+  eq(await prisma.allocation.count({ where: { businessId: a } }), 1);
+  const snapshot = (await call("GET", "/api/central-kitchen", null, ownerS)).data;
+  eq(snapshot.restock_logs.some((row) => row.id === transfer.data.id && row.status === "pending_approval"), true);
+  eq(snapshot.restock_logs.find((row) => row.id === transfer.data.id).items[0].unit, "kg");
+  eq(snapshot.outlets.find((row) => row.id === created.data.id).delivery_window, "08:00–10:00");
+  eq(snapshot.overview.restocks_this_week, 0);
+  await prisma.allocation.create({ data: { businessId: a, outletId: outletA.id, status: "received", sourceLocation: "central-store", items: [], updatedAt: new Date() } });
+  await prisma.allocation.create({ data: { businessId: a, outletId: outletA.id, status: "received", sourceLocation: "central-store", items: [], updatedAt: new Date("2020-01-01T00:00:00Z") } });
+  eq((await call("GET", "/api/central-kitchen", null, ownerS)).data.overview.restocks_this_week, 1);
+  eq(snapshot.purchase_orders.some((row) => row.id === po.data.id), true);
+  eq((await prisma.inventoryItem.findUnique({ where: { id: ingredient.id } })).stock, 5);
+  console.log(`Central kitchen repair passed: ${checks} checks for outlet/tenant scope, durable writes, matched-location forecasts, ledger stock and honest pending transfers.`);
+} finally {
+  env.admincore.enabled = old;
+  if (api.listening) await new Promise((resolve) => api.close(resolve));
+  const ids = [a, b];
+  await prisma.routeStop.deleteMany({ where: { routePlan: { businessId: { in: ids } } } });
+  const users = await prisma.user.findMany({ where: { businessId: { in: ids } }, select: { id: true } });
+  await prisma.authSession.deleteMany({ where: { userId: { in: users.map((row) => row.id) } } });
+  await prisma.business.deleteMany({ where: { id: { in: ids } } });
+  await prisma.stateDocument.deleteMany({ where: { key: { contains: suffix } } });
+  await stopRealtime(); await prisma.$disconnect();
+}

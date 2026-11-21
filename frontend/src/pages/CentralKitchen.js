@@ -1,27 +1,18 @@
-import React, { useRef, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import axios from "axios";
 import { useNavigate } from "react-router-dom";
 import { Layout } from "../components/Layout";
 import { toast } from "sonner";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "../components/ui/dialog";
 import { useAutoRefresh } from "../hooks/useAutoRefresh";
-
-const API_URL = (() => {
-  const configured = String(process.env.REACT_APP_BACKEND_URL || "").replace(/\/+$/, "");
-  if (typeof window === "undefined") return configured;
-
-  const currentOrigin = window.location.origin.replace(/\/+$/, "");
-  const currentHost = window.location.hostname;
-  if (configured && configured !== currentOrigin && !configured.includes("vercel.app")) {
-    return configured;
-  }
-
-  if (currentHost === "localhost" || currentHost === "127.0.0.1") {
-    return configured || "http://localhost:4001";
-  }
-
-  return "https://pos-v1-fwjm.onrender.com";
-})();
+import { useActiveOutlet } from "../core/outlets/store/ActiveOutletContext";
+import { API_URL } from "../lib/apiUrl";
+import { apiData } from "../lib/apiData";
+import { formatQuantity } from "../lib/quantity";
+import { formatCurrency, hasPermission } from "../lib/pos";
+import { useAuth } from "../contexts/AuthContext";
+import "./CentralKitchen.css";
+import { getApiErrorMessage } from "../lib/apiErrors";
 
 const defaultOutletForm = {
   name: "",
@@ -46,9 +37,6 @@ const defaultRestockForm = {
   outlet_id: "",
   inventory_id: "",
   quantity: "",
-  route_name: "",
-  eta: "",
-  note: "",
 };
 
 const defaultRouteForm = {
@@ -61,6 +49,21 @@ const defaultRouteForm = {
 };
 
 export const CentralKitchen = () => {
+  const { user } = useAuth();
+  const canManage = ["owner", "manager"].includes(String(user?.role || "").toLowerCase()) && hasPermission(user, "central_kitchen");
+  const canInventory = hasPermission(user, "inventory");
+  const { selectedOutletId } = useActiveOutlet();
+  const scopeRef = useRef(selectedOutletId); scopeRef.current = selectedOutletId;
+  const dirtyCosts = useRef(new Set());
+  const requestSequence = useRef(0);
+  const submittedRequests = useRef({});
+  const savingRef = useRef(false);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+  const [outletSearch, setOutletSearch] = useState("");
+  const [transferBusy, setTransferBusy] = useState(null);
+  const [limits, setLimits] = useState({ balances: 10, transfers: 10, orders: 8, routes: 8 });
+  const moreRows = (name, rows) => <div style={{ padding: 12 }}><small>Showing {Math.min(limits[name], rows.length)} of {rows.length}</small>{rows.length > limits[name] ? <button className="cf-btn cf-btn--secondary cf-btn--small" onClick={() => setLimits((current) => ({ ...current, [name]: current[name] + 10 }))}>Show more</button> : null}</div>;
   const navigate = useNavigate();
   const [loading, setLoading] = useState(true);
   const [snapshot, setSnapshot] = useState({
@@ -83,46 +86,58 @@ export const CentralKitchen = () => {
   const [restockForm, setRestockForm] = useState(defaultRestockForm);
   const [routeForm, setRouteForm] = useState(defaultRouteForm);
   const hasLoadedSnapshotRef = useRef(false);
+  useEffect(() => {
+    setLoading(true); setError(""); hasLoadedSnapshotRef.current = false;
+    setSnapshot({ overview: {}, outlets: [], central_inventory: [], low_stock_items: [], purchase_orders: [], route_plans: [], outlet_inventory: [], restock_logs: [] });
+  }, [selectedOutletId]);
 
   const fetchSnapshot = async () => {
+    const sequence = ++requestSequence.current;
     try {
-      const response = await axios.get(`${API_URL}/api/central-kitchen`, { withCredentials: true });
-      setSnapshot(response.data);
-      setCostDrafts(
-        Object.fromEntries((response.data.central_inventory || []).map((item) => [item.id, item.conversion_cost ?? 0]))
-      );
+      const response = await axios.get(`${API_URL}/api/central-kitchen`, { withCredentials: true, skipCache: true, params: selectedOutletId ? { outlet_id: selectedOutletId } : {} });
+      if (scopeRef.current !== selectedOutletId || sequence !== requestSequence.current) return;
+      const data = apiData(response);
+      setSnapshot(data); setError("");
+      setCostDrafts((current) => Object.fromEntries((data.central_inventory || []).map((item) => [item.id, dirtyCosts.current.has(item.id) ? current[item.id] : item.conversion_cost ?? 0])));
       hasLoadedSnapshotRef.current = true;
     } catch (error) {
-      if (!hasLoadedSnapshotRef.current) {
-        toast.error(error.response?.data?.detail || "Failed to load central kitchen");
-      }
+      if (scopeRef.current === selectedOutletId && sequence === requestSequence.current) setError(getApiErrorMessage(error, "Failed to load central kitchen"));
     } finally {
-      setLoading(false);
+      if (sequence === requestSequence.current) setLoading(false);
     }
   };
 
-  useAutoRefresh(fetchSnapshot);
+  useAutoRefresh(fetchSnapshot, { refreshKey: selectedOutletId, intervalMs: 30000, refreshOnFocus: true, liveResources: ["inventory", "outlets", "purchase_orders", "routes"] });
 
   const inventoryOptions = snapshot.central_inventory || [];
+  const submit = async (kind, payload) => {
+    const fingerprint = JSON.stringify(payload);
+    if (submittedRequests.current[kind]?.fingerprint !== fingerprint) submittedRequests.current[kind] = { fingerprint, id: `request_${Date.now()}_${Math.random().toString(36).slice(2)}` };
+    return axios.post(`${API_URL}/api/central-kitchen/${kind}`, { ...payload, request_id: submittedRequests.current[kind].id }, { withCredentials: true });
+  };
+  const beginSave = () => { if (savingRef.current) return false; savingRef.current = true; setSaving(true); return true; };
+  const endSave = () => { savingRef.current = false; setSaving(false); };
 
   const createOutlet = async (event) => {
     event.preventDefault();
+    if (!beginSave()) return;
     try {
-      await axios.post(`${API_URL}/api/central-kitchen/outlets`, outletForm, { withCredentials: true });
+      await submit("outlets", outletForm);
+      delete submittedRequests.current.outlets;
       toast.success("Outlet added to central kitchen");
       setShowOutletDialog(false);
       setOutletForm(defaultOutletForm);
       fetchSnapshot();
     } catch (error) {
-      toast.error(error.response?.data?.detail || "Unable to create outlet");
-    }
+      toast.error(getApiErrorMessage(error, "Unable to create outlet"));
+    } finally { endSave(); }
   };
 
   const createPurchaseOrder = async (event) => {
     event.preventDefault();
+    if (!beginSave()) return;
     try {
-      await axios.post(
-        `${API_URL}/api/central-kitchen/purchase-orders`,
+      await submit("purchase-orders",
         {
           ...purchaseOrderForm,
           items: purchaseOrderForm.items
@@ -131,53 +146,50 @@ export const CentralKitchen = () => {
               inventory_id: item.inventory_id,
               requested_quantity: Number(item.requested_quantity),
             })),
-        },
-        { withCredentials: true }
+        }
       );
+      delete submittedRequests.current["purchase-orders"];
       toast.success("Purchase order raised");
       setShowPurchaseDialog(false);
       setPurchaseOrderForm(defaultPurchaseOrderForm);
       fetchSnapshot();
     } catch (error) {
-      toast.error(error.response?.data?.detail || "Unable to create purchase order");
-    }
+      toast.error(getApiErrorMessage(error, "Unable to create purchase order"));
+    } finally { endSave(); }
   };
 
   const createRestock = async (event) => {
     event.preventDefault();
+    if (!beginSave()) return;
     try {
-      await axios.post(
-        `${API_URL}/api/central-kitchen/restocks`,
-        { ...restockForm, quantity: Number(restockForm.quantity) },
-        { withCredentials: true }
-      );
-      toast.success("Outlet restocked from central kitchen");
+      await submit("restocks", { ...restockForm, quantity: Number(restockForm.quantity) });
+      delete submittedRequests.current.restocks;
+      toast.success("Transfer requested. Stock becomes available after approval and receipt.");
       setShowRestockDialog(false);
       setRestockForm(defaultRestockForm);
       fetchSnapshot();
     } catch (error) {
-      toast.error(error.response?.data?.detail || "Unable to restock outlet");
-    }
+      toast.error(getApiErrorMessage(error, "Unable to request stock transfer"));
+    } finally { endSave(); }
   };
 
   const createRoute = async (event) => {
     event.preventDefault();
+    if (!beginSave()) return;
     try {
-      await axios.post(
-        `${API_URL}/api/central-kitchen/routes`,
-        { ...routeForm, stops: routeForm.stops.filter((stop) => stop.outlet_id) },
-        { withCredentials: true }
-      );
+      await submit("routes", { ...routeForm, stops: routeForm.stops.filter((stop) => stop.outlet_id) });
+      delete submittedRequests.current.routes;
       toast.success("Delivery route planned");
       setShowRouteDialog(false);
       setRouteForm(defaultRouteForm);
       fetchSnapshot();
     } catch (error) {
-      toast.error(error.response?.data?.detail || "Unable to save route plan");
-    }
+      toast.error(getApiErrorMessage(error, "Unable to save route plan"));
+    } finally { endSave(); }
   };
 
   const saveConversionCost = async (inventoryId) => {
+    if (costDrafts[inventoryId] === "" || !Number.isFinite(Number(costDrafts[inventoryId])) || Number(costDrafts[inventoryId]) < 0) { toast.error("Enter a non-negative unit cost"); return; }
     try {
       await axios.put(
         `${API_URL}/api/inventory/${inventoryId}`,
@@ -185,10 +197,18 @@ export const CentralKitchen = () => {
         { withCredentials: true }
       );
       toast.success("Conversion cost updated");
+      dirtyCosts.current.delete(inventoryId);
       fetchSnapshot();
     } catch (error) {
       toast.error(error.response?.data?.detail || "Unable to update conversion cost");
     }
+  };
+
+  const updateTransfer = async (id, action) => {
+    setTransferBusy(id);
+    try { await axios.post(`${API_URL}/api/inventory/transfers/${id}/${action}`, {}, { withCredentials: true }); toast.success(action === "approve" ? "Dispatched from the source store. Awaiting outlet receipt." : "Receipt confirmed. Outlet stock updated."); await fetchSnapshot(); }
+    catch (failure) { toast.error(getApiErrorMessage(failure, "Unable to update transfer")); }
+    finally { setTransferBusy(null); }
   };
 
   const updatePoItem = (index, key, value) => {
@@ -225,21 +245,24 @@ export const CentralKitchen = () => {
             <p>Manage outlets, raw material stock, purchase orders, conversion costs, and delivery routes from one screen</p>
           </div>
           <div className="cf-page__header-actions">
-            <button className="cf-btn cf-btn--secondary" onClick={() => setShowOutletDialog(true)}>
+            <button className="cf-btn cf-btn--secondary" onClick={fetchSnapshot}>Refresh</button>
+            {canManage && <button className="cf-btn cf-btn--secondary" onClick={() => setShowOutletDialog(true)}>
               + Add Outlet
-            </button>
-            <button className="cf-btn cf-btn--secondary" onClick={() => setShowPurchaseDialog(true)}>
+            </button>}
+            {canManage && <button className="cf-btn cf-btn--secondary" onClick={() => setShowPurchaseDialog(true)}>
               + Purchase Order
-            </button>
-            <button className="cf-btn cf-btn--secondary" onClick={() => setShowRouteDialog(true)}>
+            </button>}
+            {canManage && <button className="cf-btn cf-btn--secondary" onClick={() => setShowRouteDialog(true)}>
               + Route Plan
-            </button>
-            <button className="cf-btn cf-btn--primary" onClick={() => setShowRestockDialog(true)}>
-              + Restock Outlet
-            </button>
+            </button>}
+            {canManage && canInventory && <button className="cf-btn cf-btn--primary" onClick={() => setShowRestockDialog(true)}>
+              + Request stock transfer
+            </button>}
           </div>
         </div>
 
+        {error ? <p role="alert">{error} {hasLoadedSnapshotRef.current ? "Showing the last loaded snapshot." : ""} <button className="cf-btn" onClick={fetchSnapshot}>Retry</button></p> : null}
+        <p className="cf-card__meta">Stock location: {snapshot.stock_location || "Loading"}. Usage is based on recorded consumption over the last 30 days.</p>
         <div className="cf-metrics">
           <button className="cf-metric cf-metric--button" onClick={() => navigate("/central-kitchen/outlets")} type="button">
             <div className="cf-metric__label">Outlets</div>
@@ -257,9 +280,9 @@ export const CentralKitchen = () => {
             <div className="cf-metric__sub">Delivery plans ready for dispatch</div>
           </button>
           <button className="cf-metric cf-metric--button" onClick={() => navigate("/central-kitchen/stock-value")} type="button">
-            <div className="cf-metric__label">Kitchen Stock Value</div>
-            <div className="cf-metric__value">₹{snapshot.overview.central_inventory_value || 0}</div>
-            <div className="cf-metric__sub">Based on central conversion cost</div>
+            <div className="cf-metric__label">{selectedOutletId ? "Outlet stock value" : "Central stock value"}</div>
+            <div className="cf-metric__value">{formatCurrency(snapshot.overview.central_inventory_value || 0)}</div>
+            <div className="cf-metric__sub">Tracked quantity × location unit cost</div>
           </button>
         </div>
 
@@ -274,7 +297,7 @@ export const CentralKitchen = () => {
           <div className="cf-kitchen-hero__meta">
             <button onClick={() => navigate("/central-kitchen/risks")} style={{ background: "transparent", border: 0, padding: 0, textAlign: "left" }} type="button">
               <strong>{snapshot.low_stock_items.length}</strong>
-              <span>ingredients at risk</span>
+              <span>below reorder level</span>
             </button>
             <button onClick={() => navigate("/central-kitchen/restocks")} style={{ background: "transparent", border: 0, padding: 0, textAlign: "left" }} type="button">
               <strong>{snapshot.overview.restocks_this_week || 0}</strong>
@@ -285,19 +308,20 @@ export const CentralKitchen = () => {
 
         <div className="cf-kitchen-grid">
           <div className="cf-card cf-card--padded">
-            <div className="cf-section-title">Outlet Control Tower</div>
+            <div className="cf-section-title">Active outlets</div>
+            <input className="cf-input" aria-label="Find outlet" placeholder="Find an outlet" value={outletSearch} onChange={(event) => setOutletSearch(event.target.value)} />
             <div className="cf-kitchen-list">
-                {(snapshot.outlets || []).map((outlet) => (
+                {(snapshot.outlets || []).filter((outlet) => `${outlet.name} ${outlet.code}`.toLowerCase().includes(outletSearch.toLowerCase())).map((outlet) => (
                   <div className="cf-kitchen-list__item" key={outlet.id}>
                     <div>
                     <div className="cf-kitchen-list__title">{outlet.name}</div>
                     <div className="cf-kitchen-list__meta">
-                      {outlet.code} · {outlet.location} · {outlet.delivery_window || "Window not set"}
+                      {[outlet.code, outlet.location, outlet.delivery_window].filter(Boolean).join(" · ")}
                     </div>
                     </div>
                     <div className="cf-kitchen-list__stats">
-                      <span>{outlet.inventory_lines || 0} stock lines</span>
-                      <span>{outlet.open_purchase_orders || 0} open PO</span>
+                      <span>{outlet.inventory_lines || 0} tracked ingredients</span>
+                      <span>{outlet.open_purchase_orders || 0} open purchase orders</span>
                       <button
                         className="cf-btn cf-btn--secondary cf-btn--small"
                         onClick={() => navigate(`/outlets/${outlet.id}`)}
@@ -313,7 +337,8 @@ export const CentralKitchen = () => {
           </div>
 
           <div className="cf-card cf-card--padded">
-            <div className="cf-section-title">Run-Out Forecast</div>
+            <div className="cf-section-title">Below reorder level ({snapshot.low_stock_items.length})</div>
+            <p className="cf-card__meta">Alerts use each ingredient's reorder level. A run-out estimate needs recorded usage at the same stock location.</p>
             <table className="cf-table">
               <thead>
                 <tr>
@@ -324,17 +349,17 @@ export const CentralKitchen = () => {
                 </tr>
               </thead>
               <tbody>
-                {(snapshot.low_stock_items || []).slice(0, 6).map((item) => (
+                {(snapshot.low_stock_items || []).map((item) => (
                   <tr key={item.id}>
                     <td>{item.name}</td>
-                    <td className="cf-table__mono">{item.current_stock} {item.unit}</td>
-                    <td className="cf-table__mono">{item.avg_daily_consumption || 0} {item.unit}</td>
-                    <td className="cf-table__mono">{item.days_remaining ?? "-"}</td>
+                    <td className="cf-table__mono">{formatQuantity(item.current_stock, item.unit)}</td>
+                    <td className="cf-table__mono">{item.usage_history_available ? formatQuantity(item.avg_daily_consumption, item.unit) : "No usage history"}</td>
+                    <td className="cf-table__mono">{item.days_remaining == null ? "No estimate" : `${formatQuantity(item.days_remaining)} days`}</td>
                   </tr>
                 ))}
                 {!snapshot.low_stock_items.length ? (
                   <tr>
-                    <td colSpan="4" style={{ color: "var(--cf-text-3)" }}>Kitchen stock is healthy right now.</td>
+                    <td colSpan="4" style={{ color: "var(--cf-text-3)" }}>No reorder alerts among tracked ingredients. Untracked ingredients still need stock setup.</td>
                   </tr>
                 ) : null}
               </tbody>
@@ -343,40 +368,42 @@ export const CentralKitchen = () => {
         </div>
 
         <div className="cf-table-wrap" style={{ marginTop: 24 }}>
-          <div className="cf-section-title">Central Raw Material Stock and Conversion Cost</div>
+          <div className="cf-section-title">{snapshot.stock_location || "Stock"} inventory and unit cost</div>
           <table className="cf-table">
             <thead>
               <tr>
                 <th>Item</th>
                 <th>Stock</th>
                 <th>Reorder</th>
-                <th>Conversion Cost</th>
+                <th>Unit cost</th>
                 <th>Vendor</th>
-                <th>Action</th>
+                {canInventory && snapshot.stock_location === "Central store" ? <th>Action</th> : null}
               </tr>
             </thead>
             <tbody>
               {inventoryOptions.map((item) => (
                 <tr key={item.id}>
                   <td>{item.name}</td>
-                  <td className="cf-table__mono">{item.current_stock} {item.unit}</td>
-                  <td className="cf-table__mono">{item.reorder_level} {item.unit}</td>
+                  <td className="cf-table__mono">{item.stock_configured === false ? "Not tracked here" : formatQuantity(item.current_stock, item.unit)}</td>
+                  <td className="cf-table__mono">{formatQuantity(item.reorder_level, item.unit)}</td>
                   <td>
-                    <input
+                    {snapshot.stock_location !== "Central store" || !canInventory ? <span>{item.conversion_cost == null ? "Not available" : formatCurrency(item.conversion_cost)}</span> : <input
                       className="cf-input"
                       style={{ minWidth: 120 }}
                       type="number"
+                      min="0"
                       step="0.01"
-                      value={costDrafts[item.id] ?? 0}
-                      onChange={(event) => setCostDrafts((current) => ({ ...current, [item.id]: event.target.value }))}
-                    />
+                      disabled={!canInventory || snapshot.stock_location !== "Central store"}
+                      value={snapshot.stock_location === "Central store" ? costDrafts[item.id] ?? 0 : item.conversion_cost ?? 0}
+                      onChange={(event) => { dirtyCosts.current.add(item.id); setCostDrafts((current) => ({ ...current, [item.id]: event.target.value })); }}
+                    />}
                   </td>
                   <td>{item.vendor || "-"}</td>
-                  <td>
-                    <button className="cf-btn cf-btn--secondary cf-btn--small" onClick={() => saveConversionCost(item.id)}>
+                  {canInventory && snapshot.stock_location === "Central store" ? <td>
+                    <button disabled={!dirtyCosts.current.has(item.id)} className="cf-btn cf-btn--secondary cf-btn--small" onClick={() => saveConversionCost(item.id)}>
                       Save Cost
                     </button>
-                  </td>
+                  </td> : null}
                 </tr>
               ))}
               {!inventoryOptions.length ? (
@@ -401,11 +428,11 @@ export const CentralKitchen = () => {
                 </tr>
               </thead>
               <tbody>
-                {(snapshot.outlet_inventory || []).slice(0, 10).map((line) => (
+                {(snapshot.outlet_inventory || []).slice(0, limits.balances).map((line) => (
                   <tr key={line.id}>
                     <td>{line.outlet_name}</td>
                     <td>{line.inventory_name}</td>
-                    <td className="cf-table__mono">{line.quantity} {line.unit}</td>
+                    <td className="cf-table__mono">{formatQuantity(line.current_stock, line.unit)}</td>
                     <td>{line.route_name || "-"}</td>
                   </tr>
                 ))}
@@ -416,35 +443,37 @@ export const CentralKitchen = () => {
                 ) : null}
               </tbody>
             </table>
+            {moreRows("balances", snapshot.outlet_inventory || [])}
           </div>
 
           <div className="cf-table-wrap">
-            <div className="cf-section-title">Recent Restocks</div>
+            <div className="cf-section-title">Stock transfers</div>
             <table className="cf-table">
               <thead>
                 <tr>
                   <th>Outlet</th>
-                  <th>Item</th>
-                  <th>Qty</th>
-                  <th>ETA</th>
+                  <th>Items</th>
+                  <th>Status</th>
+                  <th>Next step</th>
                 </tr>
               </thead>
               <tbody>
-                {(snapshot.restock_logs || []).slice(0, 10).map((log) => (
+                {(snapshot.restock_logs || []).slice(0, limits.transfers).map((log) => (
                   <tr key={log.id}>
                     <td>{log.outlet_name}</td>
-                    <td>{log.inventory_name}</td>
-                    <td className="cf-table__mono">{log.quantity} {log.unit}</td>
-                    <td>{log.eta || "-"}</td>
+                    <td>{(log.items || []).map((item, index) => <div key={index}>{item.inventory_name || "Ingredient"}: {formatQuantity(item.received_quantity ?? item.approved_quantity ?? item.requested_quantity, item.unit)}</div>)}</td>
+                    <td>{({ pending_approval: "Awaiting approval", approved: "Dispatched — awaiting receipt", received: "Received" })[log.status] || log.status}</td>
+                    <td>{canInventory && log.status === "pending_approval" ? <button className="cf-btn cf-btn--small" disabled={Boolean(transferBusy)} onClick={() => updateTransfer(log.id, "approve")}>Approve dispatch</button> : canInventory && log.status === "approved" ? <button className="cf-btn cf-btn--small" disabled={Boolean(transferBusy)} onClick={() => updateTransfer(log.id, "receive")}>Confirm received</button> : log.status === "received" ? "Complete" : "Awaiting authorised staff"}</td>
                   </tr>
                 ))}
                 {!snapshot.restock_logs.length ? (
                   <tr>
-                    <td colSpan="4" style={{ color: "var(--cf-text-3)" }}>No restocks recorded yet.</td>
+                    <td colSpan="4" style={{ color: "var(--cf-text-3)" }}>No stock transfers recorded yet.</td>
                   </tr>
                 ) : null}
               </tbody>
             </table>
+            {moreRows("transfers", snapshot.restock_logs || [])}
           </div>
         </div>
 
@@ -490,7 +519,7 @@ export const CentralKitchen = () => {
               </div>
               <DialogFooter className="cf-dialog-actions">
                 <button type="button" className="cf-btn cf-btn--secondary" onClick={() => setShowOutletDialog(false)}>Cancel</button>
-                <button type="submit" className="cf-btn cf-btn--primary">Save Outlet</button>
+                <button type="submit" disabled={saving} className="cf-btn cf-btn--primary">Save Outlet</button>
               </DialogFooter>
             </form>
           </DialogContent>
@@ -518,7 +547,7 @@ export const CentralKitchen = () => {
                     <option value="Low">Low</option>
                     <option value="Medium">Medium</option>
                     <option value="High">High</option>
-                    <option value="Critical">Critical</option>
+                    <option value="Urgent">Urgent</option>
                   </select>
                 </div>
               </div>
@@ -556,7 +585,7 @@ export const CentralKitchen = () => {
               </div>
               <DialogFooter className="cf-dialog-actions">
                 <button type="button" className="cf-btn cf-btn--secondary" onClick={() => setShowPurchaseDialog(false)}>Cancel</button>
-                <button type="submit" className="cf-btn cf-btn--primary">Create PO</button>
+                <button type="submit" disabled={saving} className="cf-btn cf-btn--primary">Create PO</button>
               </DialogFooter>
             </form>
           </DialogContent>
@@ -575,7 +604,7 @@ export const CentralKitchen = () => {
                 </tr>
               </thead>
               <tbody>
-                {(snapshot.purchase_orders || []).slice(0, 8).map((order) => (
+                {(snapshot.purchase_orders || []).slice(0, limits.orders).map((order) => (
                   <tr key={order.id}>
                     <td>{order.outlet_name}</td>
                     <td>{order.priority}</td>
@@ -590,6 +619,7 @@ export const CentralKitchen = () => {
                 ) : null}
               </tbody>
             </table>
+            {moreRows("orders", snapshot.purchase_orders || [])}
           </div>
 
           <div className="cf-table-wrap">
@@ -604,7 +634,7 @@ export const CentralKitchen = () => {
                 </tr>
               </thead>
               <tbody>
-                {(snapshot.route_plans || []).slice(0, 8).map((route) => (
+                {(snapshot.route_plans || []).slice(0, limits.routes).map((route) => (
                   <tr key={route.id}>
                     <td>{route.route_name}</td>
                     <td>{route.dispatch_date || "-"}</td>
@@ -619,13 +649,14 @@ export const CentralKitchen = () => {
                 ) : null}
               </tbody>
             </table>
+            {moreRows("routes", snapshot.route_plans || [])}
           </div>
         </div>
 
         <Dialog open={showRestockDialog} onOpenChange={setShowRestockDialog}>
           <DialogContent className="bg-white">
             <DialogHeader>
-              <DialogTitle className="cf-dialog__title">Restock Outlet from Central Kitchen</DialogTitle>
+              <DialogTitle className="cf-dialog__title">Request stock from central store</DialogTitle>
             </DialogHeader>
             <form onSubmit={createRestock}>
               <div className="cf-grid-2">
@@ -653,24 +684,11 @@ export const CentralKitchen = () => {
                   <label>Quantity</label>
                   <input className="cf-input" type="number" min="0.01" step="0.01" required value={restockForm.quantity} onChange={(event) => setRestockForm({ ...restockForm, quantity: event.target.value })} />
                 </div>
-                <div className="cf-field">
-                  <label>ETA</label>
-                  <input className="cf-input" value={restockForm.eta} onChange={(event) => setRestockForm({ ...restockForm, eta: event.target.value })} placeholder="11:30 AM / today evening" />
-                </div>
               </div>
-              <div className="cf-grid-2">
-                <div className="cf-field">
-                  <label>Route Name</label>
-                  <input className="cf-input" value={restockForm.route_name} onChange={(event) => setRestockForm({ ...restockForm, route_name: event.target.value })} />
-                </div>
-                <div className="cf-field">
-                  <label>Dispatch Note</label>
-                  <input className="cf-input" value={restockForm.note} onChange={(event) => setRestockForm({ ...restockForm, note: event.target.value })} />
-                </div>
-              </div>
+              <p>Creates a pending transfer. Approve dispatch, then confirm outlet receipt. Plan delivery stops separately under Route Plan.</p>
               <DialogFooter className="cf-dialog-actions">
                 <button type="button" className="cf-btn cf-btn--secondary" onClick={() => setShowRestockDialog(false)}>Cancel</button>
-                <button type="submit" className="cf-btn cf-btn--primary">Confirm Restock</button>
+                <button type="submit" disabled={saving} className="cf-btn cf-btn--primary">Request transfer</button>
               </DialogFooter>
             </form>
           </DialogContent>
@@ -728,7 +746,7 @@ export const CentralKitchen = () => {
               </button>
               <DialogFooter className="cf-dialog-actions">
                 <button type="button" className="cf-btn cf-btn--secondary" onClick={() => setShowRouteDialog(false)}>Cancel</button>
-                <button type="submit" className="cf-btn cf-btn--primary">Save Route</button>
+                <button type="submit" disabled={saving} className="cf-btn cf-btn--primary">Save Route</button>
               </DialogFooter>
             </form>
           </DialogContent>

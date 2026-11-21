@@ -1,9 +1,10 @@
-import { useEffect, useEffectEvent, useRef } from "react";
+import { useCallback, useEffect, useRef } from "react";
 import { subscribeLiveUpdates } from "../lib/liveUpdates";
 
 export const useAutoRefresh = (refreshFn, options = {}) => {
   const {
     enabled = true,
+    refreshKey = '',
     intervalMs = 0,
     focusThrottleMs = 30000,
     refreshOnFocus = false,
@@ -14,11 +15,16 @@ export const useAutoRefresh = (refreshFn, options = {}) => {
   } = options;
   const inFlightRef = useRef(false);
   const pendingRef = useRef(false);
+  const generationRef = useRef(0);
   const liveKey = [...liveResources].sort().join(",");
   const lastRefreshAtRef = useRef(0);
+  const refreshFnRef = useRef(refreshFn);
+  const enabledRef = useRef(enabled);
+  refreshFnRef.current = refreshFn;
+  enabledRef.current = enabled;
 
-  const runRefresh = useEffectEvent((queueIfBusy = false) => {
-    if (!enabled) {
+  const runRefresh = useCallback((queueIfBusy = false) => {
+    if (!enabledRef.current) {
       return;
     }
     if (inFlightRef.current) {
@@ -29,28 +35,34 @@ export const useAutoRefresh = (refreshFn, options = {}) => {
     }
 
     inFlightRef.current = true;
+    const generation = generationRef.current;
     lastRefreshAtRef.current = Date.now();
 
-    Promise.resolve(refreshFn())
+    Promise.resolve().then(() => generation === generationRef.current ? refreshFnRef.current() : undefined)
       .catch((error) => {
         // Prevent background refresh failures from surfacing as uncaught runtime errors.
         console.error("Auto refresh failed:", error);
       })
       .finally(() => {
+        if (generation !== generationRef.current) return;
         inFlightRef.current = false;
         if (pendingRef.current) {
           pendingRef.current = false;
           runRefresh();
         }
       });
-  });
+  }, []);
 
-  // The live subscription reads the latest refresh function through a ref, so it is created once per screen
-  // instead of being torn down and re-opened on every render.
-  const runRefreshRef = useRef(runRefresh);
+  // An outlet/channel change starts immediately, even if an older request is
+  // still pending. Its completion cannot release or replay the new request.
   useEffect(() => {
-    runRefreshRef.current = runRefresh;
-  });
+    if (enabled) runRefresh();
+    return () => {
+      generationRef.current += 1;
+      inFlightRef.current = false;
+      pendingRef.current = false;
+    };
+  }, [enabled, refreshKey, runRefresh]);
 
   useEffect(() => {
     if (!enabled || !liveKey) {
@@ -62,20 +74,18 @@ export const useAutoRefresh = (refreshFn, options = {}) => {
       if (event?.resource !== "*" && !wanted.has(event?.resource)) return;
       window.clearTimeout(debounce);
       // Bursts (e.g. a bill that also moves stock and the kitchen) collapse into one refresh.
-      debounce = window.setTimeout(() => runRefreshRef.current(true), 250);
+      debounce = window.setTimeout(() => runRefresh(true), 250);
     });
     return () => {
       window.clearTimeout(debounce);
       unsubscribe();
     };
-  }, [enabled, liveKey]);
+  }, [enabled, liveKey, runRefresh]);
 
   useEffect(() => {
     if (!enabled) {
       return undefined;
     }
-
-    runRefresh();
 
     const safeRefresh = () => {
       if (pauseWhenHidden && document.visibilityState !== "visible") {

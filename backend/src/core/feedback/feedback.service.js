@@ -1,6 +1,7 @@
 import prisma from "../../database/prisma/client.js";
 import { createHttpError, createNotFoundError } from "../../shared/utils/http-error.js";
 import { verifyFeedbackToken } from "./feedback-token.js";
+import { bindTenantScope } from "../../database/prisma/tenant-context.js";
 
 const MAX_COMMENT_LENGTH = 1000;
 const MAX_NAME_LENGTH = 100;
@@ -9,14 +10,18 @@ const invalidLink = () => createNotFoundError("Feedback link");
 
 class FeedbackService {
   /** Feedback belongs to the signed-in business only. */
-  async listFeedback({ businessId }) {
-    const items = await prisma.feedback.findMany({
-      where: { businessId },
+  async listFeedback({ businessId, outletIds = null, from, to }) {
+    for (const value of [from, to]) if (value && (typeof value !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(value) || !Number.isFinite(Date.parse(value)) || new Date(value).toISOString().slice(0, 10) !== value)) throw createHttpError({ statusCode: 400, message: "Use valid feedback dates (YYYY-MM-DD)" });
+    if (from && to && from > to) throw createHttpError({ statusCode: 400, message: "Start date must not follow end date" });
+    const where = { businessId,
+      ...((from || to) ? { createdAt: { ...(from ? { gte: new Date(`${from}T00:00:00Z`) } : {}), ...(to ? { lt: new Date(Date.parse(`${to}T00:00:00Z`) + 86400000) } : {}) } } : {}),
+      ...(outletIds ? { bill: { OR: [{ order: { outletId: { in: outletIds } } }, ...outletIds.map((id) => ({ metadata: { path: ["outlet_id"], equals: id } }))] } } : {}),
+    };
+    const [items, total, ratings] = await Promise.all([prisma.feedback.findMany({
+      where,
       orderBy: { createdAt: "desc" },
       take: 500,
-    });
-
-    const totalRating = items.reduce((sum, item) => sum + Number(item.rating || 0), 0);
+    }), prisma.feedback.count({ where }), prisma.feedback.aggregate({ where: { ...where, rating: { gte: 1, lte: 5 } }, _avg: { rating: true }, _count: { rating: true } })]);
 
     return {
       items: items.map((item) => ({
@@ -27,8 +32,11 @@ class FeedbackService {
         created_at: item.createdAt.toISOString(),
       })),
       summary: {
-        total_feedback: items.length,
-        average_rating: items.length ? totalRating / items.length : 0,
+        total_feedback: total,
+        rated_feedback: ratings._count.rating,
+        average_rating: ratings._avg.rating,
+        displayed_feedback: items.length,
+        has_more: total > items.length,
       },
     };
   }
@@ -38,9 +46,10 @@ class FeedbackService {
     if (!billId) throw invalidLink();
     const bill = await prisma.bill.findUnique({
       where: { id: billId },
-      select: { id: true, businessId: true, business: { select: { name: true } } },
+      select: { id: true, businessId: true, business: { select: { name: true, tenantId: true } } },
     });
     if (!bill) throw invalidLink();
+    bindTenantScope({ businessId: bill.businessId, tenantId: bill.business.tenantId });
     return bill;
   }
 

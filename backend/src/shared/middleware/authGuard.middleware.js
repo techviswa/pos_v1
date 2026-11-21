@@ -7,6 +7,7 @@ import prisma from "../../database/prisma/client.js";
 import { getSessionIdFromRequest } from "../../core/auth/auth-session.js";
 import { ROLE_DEFAULT_PERMISSIONS } from "../constants/access.constants.js";
 import { createHttpError } from "../utils/http-error.js";
+import { bindTenantScope } from "../../database/prisma/tenant-context.js";
 
 const normalizeAccessValue = (value) =>
   String(value || "")
@@ -134,6 +135,8 @@ export const assertTenantAccess = async ({ user, businessId, method, url }) => {
 
 const bindRequestContextToUser = async (req, user) => {
   const scopedContext = await resolveRequestContext(req, user);
+  bindTenantScope(scopedContext);
+  req.res?.setHeader("Cache-Control", "private, no-store");
   await assertTenantAccess({ user, businessId: scopedContext.businessId, method: req.method, url: req.originalUrl });
   req.user = user;
   req.context = {

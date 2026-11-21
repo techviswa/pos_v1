@@ -44,11 +44,11 @@ class FeatureToggleService {
     const business = await findBusinessById(normalizedBusinessId);
     const targetBusinessId = business?.id || normalizedBusinessId;
     const toggles = await prisma.featureToggle.findMany({
-      where: { businessId: targetBusinessId, enabled: true },
+      where: { businessId: targetBusinessId },
     });
 
     if (toggles.length) {
-      return toggles.map((toggle) => toggle.featureKey);
+      return toggles.filter((toggle) => toggle.enabled).map((toggle) => toggle.featureKey);
     }
 
     return (
@@ -71,22 +71,18 @@ class FeatureToggleService {
     const business = await findBusinessById(normalizedBusinessId);
     if (!business) throw new Error("Business must be provisioned before assigning features");
 
-    await prisma.$transaction([
-      prisma.featureToggle.deleteMany({
+    await prisma.$transaction(async (tx) => {
+      await tx.featureToggle.deleteMany({
         where: { businessId: normalizedBusinessId },
-      }),
-      ...(normalizedFeatures.length
-        ? [
-            prisma.featureToggle.createMany({
-              data: normalizedFeatures.map((featureKey) => ({
-                businessId: normalizedBusinessId,
-                featureKey,
-                enabled: true,
-              })),
-            }),
-          ]
-        : []),
-    ]);
+      });
+      await tx.featureToggle.createMany({
+        data: this.getDefaultFeatureKeys().map((featureKey) => ({
+          businessId: normalizedBusinessId,
+          featureKey,
+          enabled: normalizedFeatures.includes(featureKey),
+        })),
+      });
+    });
 
     return normalizedFeatures;
   }

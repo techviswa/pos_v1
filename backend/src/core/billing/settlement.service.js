@@ -3,6 +3,7 @@ import prisma from "../../database/prisma/client.js";
 import { readState, writeState } from "../../database/prisma/state-store.js";
 import { createHttpError } from "../../shared/utils/http-error.js";
 import { roundMoney } from "./billing-depth.utils.js";
+import { getPagination, getPaginationMeta } from "../../shared/utils/pagination.js";
 
 const keyFor = (businessId, outletId) => `shift:${businessId}:${outletId || "all"}`;
 const fail = (statusCode, message) => { throw createHttpError({ statusCode, message }); };
@@ -124,14 +125,22 @@ export const settlementService = {
       return closed;
     });
   },
-  async history({ businessId, outletId = null }) {
+  async history({ businessId, outletId = null, outletIds = null, query = {} }) {
     await verifyOutlet(prisma, businessId, outletId);
+    const pagination = getPagination(query, { defaultLimit: 10 });
+    const paged = query.page !== undefined || query.limit !== undefined;
+    const search = String(query.search || "").trim().slice(0, 120);
+    const where = { key: { startsWith: "shift-history:" }, AND: [
+      { data: { path: ["business_id"], equals: businessId } },
+      ...(outletId ? [{ data: { path: ["outlet_id"], equals: outletId } }] : []),
+      ...(outletIds ? [{ OR: outletIds.map(id => ({ data: { path: ["outlet_id"], equals: id } })) }] : []),
+      ...(search ? [{ OR: ["closed_by_name", "opened_by_name", "id"].map(key => ({ data: { path: [key], string_contains: search, mode: "insensitive" } })) }] : []),
+    ] };
     const rows = await prisma.stateDocument.findMany({
-      where: { key: { startsWith: "shift-history:" }, AND: [
-        { data: { path: ["business_id"], equals: businessId } },
-        ...(outletId ? [{ data: { path: ["outlet_id"], equals: outletId } }] : []),
-      ] }, orderBy: { updatedAt: "desc" }, take: 100,
+      where, orderBy: [{ updatedAt: "desc" }, { key: "asc" }],
+      take: paged ? pagination.take : 100, skip: paged ? pagination.skip : 0,
     });
-    return rows.map((row) => row.data);
+    const items = rows.map((row) => row.data);
+    return paged ? { items, pagination: getPaginationMeta({ ...pagination, total: await prisma.stateDocument.count({ where }) }) } : items;
   },
 };

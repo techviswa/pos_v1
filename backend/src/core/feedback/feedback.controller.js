@@ -3,7 +3,7 @@ import { feedbackService } from "./feedback.service.js";
 
 class FeedbackController {
   async list(req, res) {
-    const data = await feedbackService.listFeedback({ businessId: req.context.businessId });
+    const data = await feedbackService.listFeedback({ businessId: req.context.businessId, outletIds: req.query.outlet_id ? [req.query.outlet_id] : req.context.outletScope, from: req.query.from, to: req.query.to });
     res.status(200).json(apiResponse({ message: "Feedback fetched successfully", data }));
   }
 

@@ -5,6 +5,7 @@ import pg from "pg";
 import env from "../../config/env.js";
 import prisma from "../../database/prisma/client.js";
 import { logger } from "../../shared/utils/logger.js";
+import { queueOperationalSnapshot } from "../../core/sync/operational-notifications.js";
 
 /**
  * Live "something changed" signals for staff screens (kitchen, waiter, billing, QR inbox, tables).
@@ -106,11 +107,15 @@ export const publishChange = async ({ businessId, resource, action = "updated", 
     at: new Date().toISOString(),
   });
   if (tx) {
+    await queueOperationalSnapshot(tx, { businessId, resource, action, recordId, outletId }, env.admincore.enabled && Boolean(env.admincore.apiBaseUrl));
     await tx.$executeRaw`SELECT pg_notify(${CHANNEL}, ${payload})`;
     return;
   }
   try {
-    await prisma.$executeRaw`SELECT pg_notify(${CHANNEL}, ${payload})`;
+    await prisma.$transaction(async client => {
+      await queueOperationalSnapshot(client, { businessId, resource, action, recordId, outletId }, env.admincore.enabled && Boolean(env.admincore.apiBaseUrl));
+      await client.$executeRaw`SELECT pg_notify(${CHANNEL}, ${payload})`;
+    });
   } catch (error) {
     logger.warn(`Realtime publish failed: ${error.message}`);
   }

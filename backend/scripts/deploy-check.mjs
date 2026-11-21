@@ -1,5 +1,6 @@
 import { spawn } from "child_process";
 import { fileURLToPath } from "url";
+import "../src/config/env.js";
 
 const backendDirectory = fileURLToPath(new URL("../", import.meta.url));
 
@@ -14,6 +15,25 @@ const commands = [
   "npm run prisma:validate",
   "node scripts/permission-revocation-tests.mjs",
   "node scripts/bridge-context-tests.mjs",
+  ...(process.env.TENANT_DATABASE_URL ? ["node scripts/rls-database-tests.mjs"] : []),
+  "node scripts/tenant-boundary-tests.mjs",
+  "node scripts/tenant-integrity-audit.mjs",
+  "node scripts/central-kitchen-repair-tests.mjs",
+  "node scripts/report-consistency-tests.mjs",
+  "node scripts/sales-charts-tests.mjs",
+  "node src/core/dashboard/outlet-report-policy.test.mjs",
+  "node scripts/dashboard-quality-tests.mjs",
+  "node scripts/bill-serialization-tests.mjs",
+  "node scripts/fulfillment-policy-tests.mjs",
+  "node scripts/qr-connection-tests.mjs",
+  "node scripts/qr-media-tests.mjs",
+  "node scripts/table-assistance-tests.mjs",
+    "node scripts/qr-progress-tests.mjs",
+    "node scripts/qr-menu-details-tests.mjs",
+    "node scripts/qr-checkout-tests.mjs",
+    "node scripts/qr-experience-tests.mjs",
+  "node scripts/customer-qr-sync-tests.mjs",
+  "node scripts/database-error-tests.mjs",
   "node scripts/auth-token-security-tests.mjs",
   "node scripts/auth-mail-tests.mjs",
   "node scripts/invite-security-tests.mjs",
@@ -32,6 +52,10 @@ const commands = [
   "node scripts/access-control-tests.mjs",
   "node scripts/production-flow-tests.mjs",
   "node scripts/admincore-reliability-tests.mjs",
+  "node --test scripts/operational-export-tests.mjs",
+  "node --test scripts/export-cursor-tests.mjs",
+  "node scripts/export-cursor-database-tests.mjs",
+  "node scripts/sync-reconciliation-tests.mjs",
   "node scripts/payment-isolation-tests.mjs",
   "node scripts/submitted-payment-tests.mjs",
   "node scripts/report-export-security-tests.mjs",

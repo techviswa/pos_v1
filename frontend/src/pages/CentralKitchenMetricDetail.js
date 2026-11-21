@@ -1,26 +1,16 @@
-import React, { useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
+import { API_URL } from "../lib/apiUrl";
 import axios from "axios";
 import { useNavigate, useParams } from "react-router-dom";
 import { Layout } from "../components/Layout";
 import { useAutoRefresh } from "../hooks/useAutoRefresh";
 import { toast } from "sonner";
+import { useActiveOutlet } from "../core/outlets/store/ActiveOutletContext";
+import { apiData } from "../lib/apiData";
+import { getApiErrorMessage } from "../lib/apiErrors";
+import { formatQuantity } from "../lib/quantity";
+import { formatCurrency } from "../lib/pos";
 
-const API_URL = (() => {
-  const configured = String(process.env.REACT_APP_BACKEND_URL || "").replace(/\/+$/, "");
-  if (typeof window === "undefined") return configured;
-
-  const currentOrigin = window.location.origin.replace(/\/+$/, "");
-  const currentHost = window.location.hostname;
-  if (configured && configured !== currentOrigin && !configured.includes("vercel.app")) {
-    return configured;
-  }
-
-  if (currentHost === "localhost" || currentHost === "127.0.0.1") {
-    return configured || "http://localhost:4001";
-  }
-
-  return "https://pos-v1-fwjm.onrender.com";
-})();
 
 const METRIC_META = {
   outlets: {
@@ -61,31 +51,37 @@ const EMPTY_SNAPSHOT = {
 };
 
 export const CentralKitchenMetricDetail = () => {
+  const { selectedOutletId } = useActiveOutlet();
+  const scopeRef = useRef(selectedOutletId); scopeRef.current = selectedOutletId;
+  const sequenceRef = useRef(0);
   const { metric } = useParams();
   const navigate = useNavigate();
   const [loading, setLoading] = useState(true);
   const [snapshot, setSnapshot] = useState(EMPTY_SNAPSHOT);
   const [loadErrorShown, setLoadErrorShown] = useState(false);
+  useEffect(() => { setLoading(true); setSnapshot(EMPTY_SNAPSHOT); setLoadErrorShown(false); }, [selectedOutletId]);
 
   const fetchSnapshot = async () => {
+    const sequence = ++sequenceRef.current;
     try {
-      const response = await axios.get(`${API_URL}/api/central-kitchen`, { withCredentials: true }).catch(() => ({
-        data: EMPTY_SNAPSHOT,
-      }));
-      setSnapshot(response.data || EMPTY_SNAPSHOT);
+      const response = await axios.get(`${API_URL}/api/central-kitchen`, { withCredentials: true, skipCache: true, params: selectedOutletId ? { outlet_id: selectedOutletId } : {} });
+      if (scopeRef.current === selectedOutletId && sequence === sequenceRef.current) { setSnapshot(apiData(response)); setLoadErrorShown(false); }
     } catch (error) {
-      if (!loadErrorShown) {
-        toast.error("Central kitchen details loaded with partial data");
+      if (scopeRef.current === selectedOutletId && sequence === sequenceRef.current && !loadErrorShown) {
+        toast.error(getApiErrorMessage(error, "Unable to refresh kitchen details. Last loaded data is retained."));
         setLoadErrorShown(true);
       }
     } finally {
-      setLoading(false);
+      if (sequence === sequenceRef.current) setLoading(false);
     }
   };
 
-  useAutoRefresh(fetchSnapshot);
+  useAutoRefresh(fetchSnapshot, { refreshKey: selectedOutletId, refreshOnFocus: true, intervalMs: 30000, liveResources: ["inventory", "outlets"] });
 
   const meta = METRIC_META[metric] || METRIC_META.outlets;
+  const orders = snapshot.purchase_orders.filter((row) => ["pending", "approved", "pending_approval", "dispatched", "in_transit"].includes(row.status));
+  const routes = snapshot.route_plans.filter((row) => ["scheduled", "Scheduled", "dispatched", "In Transit"].includes(row.status));
+  const restocks = snapshot.restock_logs.filter((row) => ["received", "completed"].includes(row.status) && row.updated_at >= snapshot.week_start);
 
   const renderContent = () => {
     if (metric === "purchase-orders") {
@@ -102,8 +98,8 @@ export const CentralKitchenMetricDetail = () => {
               </tr>
             </thead>
             <tbody>
-              {(snapshot.purchase_orders || []).length ? (
-                snapshot.purchase_orders.map((order) => (
+              {orders.length ? (
+                orders.map((order) => (
                   <tr key={order.id}>
                     <td>{order.outlet_name}</td>
                     <td>{order.priority}</td>
@@ -134,8 +130,8 @@ export const CentralKitchenMetricDetail = () => {
               </tr>
             </thead>
             <tbody>
-              {(snapshot.route_plans || []).length ? (
-                snapshot.route_plans.map((route) => (
+              {routes.length ? (
+                routes.map((route) => (
                   <tr key={route.id}>
                     <td>{route.route_name}</td>
                     <td>{route.dispatch_date || "-"}</td>
@@ -170,9 +166,9 @@ export const CentralKitchenMetricDetail = () => {
                 snapshot.central_inventory.map((item) => (
                   <tr key={item.id}>
                     <td>{item.name}</td>
-                    <td className="cf-table__mono">{item.current_stock} {item.unit}</td>
-                    <td className="cf-table__mono">{item.conversion_cost || 0}</td>
-                    <td className="cf-table__mono">{Number(item.current_stock || 0) * Number(item.conversion_cost || 0)}</td>
+                    <td className="cf-table__mono">{formatQuantity(item.current_stock, item.unit)}</td>
+                    <td className="cf-table__mono">{item.conversion_cost == null ? "Not tracked" : formatCurrency(item.conversion_cost)}</td>
+                    <td className="cf-table__mono">{item.current_stock == null ? "Not tracked" : formatCurrency(item.current_stock * item.conversion_cost)}</td>
                   </tr>
                 ))
               ) : (
@@ -202,13 +198,13 @@ export const CentralKitchenMetricDetail = () => {
                 snapshot.low_stock_items.map((item) => (
                   <tr key={item.id}>
                     <td>{item.name}</td>
-                    <td className="cf-table__mono">{item.current_stock} {item.unit}</td>
-                    <td className="cf-table__mono">{item.avg_daily_consumption || 0} {item.unit}</td>
-                    <td className="cf-table__mono">{item.days_remaining ?? "-"}</td>
+                    <td className="cf-table__mono">{formatQuantity(item.current_stock, item.unit)}</td>
+                    <td className="cf-table__mono">{item.usage_history_available ? formatQuantity(item.avg_daily_consumption, item.unit) : "No usage history"}</td>
+                    <td className="cf-table__mono">{item.days_remaining == null ? "No estimate" : formatQuantity(item.days_remaining, "days")}</td>
                   </tr>
                 ))
               ) : (
-                <tr><td colSpan="4" style={{ color: "var(--cf-text-3)" }}>Kitchen stock is healthy right now.</td></tr>
+                <tr><td colSpan="4" style={{ color: "var(--cf-text-3)" }}>No reorder alerts among tracked ingredients. Untracked stock still needs setup.</td></tr>
               )}
             </tbody>
           </table>
@@ -219,24 +215,24 @@ export const CentralKitchenMetricDetail = () => {
     if (metric === "restocks") {
       return (
         <div className="cf-table-wrap">
-          <div className="cf-section-title">Recent Restocks</div>
+          <div className="cf-section-title">Received transfers since Monday (UTC)</div>
           <table className="cf-table">
             <thead>
               <tr>
                 <th>Outlet</th>
-                <th>Item</th>
-                <th>Qty</th>
-                <th>ETA</th>
+                <th>Items</th>
+                <th>Status</th>
+                <th>Updated</th>
               </tr>
             </thead>
             <tbody>
-              {(snapshot.restock_logs || []).length ? (
-                snapshot.restock_logs.map((log) => (
+              {restocks.length ? (
+                restocks.map((log) => (
                   <tr key={log.id}>
                     <td>{log.outlet_name}</td>
-                    <td>{log.inventory_name}</td>
-                    <td className="cf-table__mono">{log.quantity} {log.unit}</td>
-                    <td>{log.eta || "-"}</td>
+                    <td>{(log.items || []).map((item) => `${item.inventory_name || "Ingredient"}: ${formatQuantity(item.received_quantity ?? item.approved_quantity ?? item.requested_quantity, item.unit)}`).join(", ")}</td>
+                    <td>{log.status.replaceAll("_", " ")}</td>
+                    <td>{new Date(log.updated_at).toLocaleString()}</td>
                   </tr>
                 ))
               ) : (

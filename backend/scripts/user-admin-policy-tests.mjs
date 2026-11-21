@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import prisma from "../src/database/prisma/client.js";
 import { usersService } from "../src/core/users/users.service.js";
+import { admincoreChangeSyncService } from "../src/core/admincore/admincore-change-sync.service.js";
 
 const businessId = `users-policy-${randomUUID()}`;
 const otherBusinessId = `users-policy-other-${randomUUID()}`;
@@ -21,6 +22,34 @@ try {
   const waiter = await usersService.createUser({ ...scope(businessId), payload: { email: "waiter@t.test", password: "password-1234", role: "Waiter", name: "Waiter" } });
   const ownerActor = asActor(owner), managerActor = asActor(manager), waiterActor = asActor(waiter);
   assert.equal(owner.role, "Owner");
+
+  // A credential edit cannot partially reset a password before reporting an email conflict.
+  const beforeConflict = await prisma.user.findUniqueOrThrow({ where: { id: waiter.id } });
+  assert.equal(await fails(usersService.updateUser({ ...scope(businessId), userId: waiter.id, payload: {
+    email: "  MGR@T.TEST  ", password: "must-not-be-applied", name: "Must not be applied",
+  } })), "409:EMAIL_EXISTS");
+  const afterConflict = await prisma.user.findUniqueOrThrow({ where: { id: waiter.id } });
+  assert.equal(afterConflict.email, beforeConflict.email);
+  assert.equal(afterConflict.passwordHash, beforeConflict.passwordHash);
+  assert.equal(afterConflict.name, beforeConflict.name);
+
+  // Outbox failure must not leave a changed password or revoke the old session.
+  const sessionHash = randomUUID();
+  await prisma.authSession.create({ data: { tokenHash: sessionHash, userId: waiter.id, expiresAt: new Date(Date.now() + 60000) } });
+  const notify = admincoreChangeSyncService.notifyChange;
+  admincoreChangeSyncService.notifyChange = async (_event, options) => {
+    assert.ok(options?.tx, "profile notifications must participate in the credential transaction");
+    throw new Error("fixture outbox failure");
+  };
+  try {
+    await assert.rejects(usersService.updateUser({ ...scope(businessId), userId: waiter.id,
+      payload: { password: "must-roll-back-password", name: "Must roll back" } }), /fixture outbox failure/);
+  } finally { admincoreChangeSyncService.notifyChange = notify; }
+  const afterFailure = await prisma.user.findUniqueOrThrow({ where: { id: waiter.id } });
+  assert.equal(afterFailure.passwordHash, beforeConflict.passwordHash);
+  assert.equal(afterFailure.name, beforeConflict.name);
+  assert.equal(await prisma.authSession.count({ where: { tokenHash: sessionHash } }), 1);
+  await prisma.authSession.delete({ where: { tokenHash: sessionHash } });
 
   // P0: self-service profile edit must not be a privilege-escalation path.
   const edited = await usersService.updateOwnProfile({ ...scope(businessId), userId: waiter.id, payload: {

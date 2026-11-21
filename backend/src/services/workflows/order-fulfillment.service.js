@@ -6,6 +6,7 @@ import { convertRecipeQuantity } from "../../core/inventory/recipe-units.js";
 import { featureToggleService } from "../featureToggleService.js";
 import { kotService } from "../../features/kitchen/kot/kot.service.js";
 import { FEATURE_KEYS } from "../../shared/constants/module.constants.js";
+import { upsertCustomerForBill } from "../../core/customers/customer-core.js";
 import {
   appendKotAudit,
   buildKotItemState,
@@ -77,6 +78,9 @@ class OrderFulfillmentService {
   }
 
   async handleOrderCreated({ tenantId, businessId, orderId, tx = prisma }) {
+    if (tx === prisma) return prisma.$transaction((client) => this.handleOrderCreated({ tenantId, businessId, orderId, tx: client }));
+    const order = await tx.order.findFirst({ where: { id: orderId, businessId } });
+    if (order) await upsertCustomerForBill(tx, { businessId, phone: order.metadata?.customer_phone, name: order.customerName });
     return this.ensureKotForOrder({
       tenantId,
       businessId,

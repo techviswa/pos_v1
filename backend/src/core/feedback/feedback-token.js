@@ -12,7 +12,7 @@ const secret = () =>
   process.env.FEEDBACK_TOKEN_SECRET ||
   (env.auth.jwtSecret && env.auth.jwtSecret !== "change-me" ? env.auth.jwtSecret : "") ||
   // Last resort: derive from private deployment configuration instead of a value that is public in the repository.
-  createHash("sha256").update(`${env.database.url}|feedback-token`).digest("hex");
+  createHash("sha256").update(`${process.env.DATABASE_URL || env.database.url}|feedback-token`).digest("hex");
 
 const mac = (billId) => createHmac("sha256", secret()).update(String(billId)).digest("base64url").slice(0, 32);
 

@@ -19,6 +19,13 @@ Living list for both projects. Verify with `cmd /c npm --prefix backend run depl
 - CORS without wildcard, no self-registration in production, no demo seeding in production, security headers.
 
 **POS (Express/Prisma/PostgreSQL)**
+- Local RLS activated on 2026-10-25: separate restricted system/tenant roles,
+  62 protected models, 61 direct SQL isolation checks passed, and restarted
+  backend readiness passed. Administrator credentials removed from app env.
+- PostgreSQL RLS implementation: forced policies for all application models,
+  separate migration/system/tenant roles, scoped transaction-local SQL context,
+  database foreign-reference triggers and direct SQL regression tests. Activation
+  requires the migration and runtime role setup; see [RLS_DEPLOYMENT.md](RLS_DEPLOYMENT.md).
 - Rate limits: login, password reset/change, invites; public reads (generous, shared Wi-Fi safe) and writes (tight).
 - Privilege escalation closed; last-owner protection; own password change needs the current password.
 - Tenant isolation across businesses, features, logistics, feedback, legacy state, QR outlet, sync logs.
@@ -30,7 +37,12 @@ Living list for both projects. Verify with `cmd /c npm --prefix backend run depl
 - Database guarantees: unique invoice number per business, one kitchen ticket per order, billed orders not deletable.
 - Server-side pricing, quantity/GST/discount validation, idempotent bills/payments/refunds/QR orders, overselling
   refused atomically, order lifecycle rules, forged metadata dropped.
-- Payment intents tied to the bill's outstanding amount; confirming one confirms the bill payment (manager + ref).
+- Payment intents tied to the bill's outstanding amount; manual confirmation requires manager authority and a reference.
+  Razorpay confirmation requires a signed webhook or a server-to-provider lookup of the captured amount/currency.
+- QR checkout uses the order tracking capability for that invoice only. Staff billing permission/outlet guards control
+  invoice issuance; guest loyalty access/redemption requires OTP verification of the order's phone. Durable claims and
+  request keys serialize online shares and recover retries. Public callers cannot confirm money. Payment summaries use
+  integer paise, and earned points wait for full payment. See QR_CHECKOUT.md for setup and verification.
 - QR: inbox to approve/reject orders (was missing), reject only while pending, SMS verification (Twilio or webhook),
   hashed/rate-limited codes in the database.
 - Real-time: Server-Sent Events over PostgreSQL NOTIFY (commit-only, multi-instance), single-use stream tickets,
@@ -75,6 +87,14 @@ Living list for both projects. Verify with `cmd /c npm --prefix backend run depl
   database is baselined, so `npm --prefix backend run prisma:deploy` works for future migrations.
 
 ## Production configuration
+
+Tenant isolation is enforced centrally for authenticated business requests by the
+shared Prisma query guard, with per-request asynchronous scope and explicit rules
+for state documents, sessions, tokens, jobs and system catalogues. See
+[TENANT_ISOLATION.md](TENANT_ISOLATION.md) for the covered boundaries, public/platform
+capabilities, raw SQL limits, integrity audit and staging release requirements.
+Production startup now refuses reported insecure configuration rather than only
+logging it.
 POS: `ADMIN_EMAIL`, `ADMIN_PASSWORD`, `CORS_ORIGINS`, `ADMINCORE_API_KEY` (>= 32), `FEEDBACK_TOKEN_SECRET`, `OTP_SECRET`,
 `MAX_STAFF_DISCOUNT_PERCENT` (default 30), SMS: `SMS_PROVIDER=twilio` + `TWILIO_ACCOUNT_SID/TWILIO_AUTH_TOKEN/TWILIO_FROM`
 or `SMS_PROVIDER=webhook` + `SMS_WEBHOOK_URL` (HTTPS) [+ `SMS_WEBHOOK_TOKEN`], `SMS_COUNTRY_CODE` (default +91).
@@ -84,6 +104,10 @@ AdminCore: `JWT_SECRET` (>= 32), `ADMIN_EMAIL`, `ADMIN_PASSWORD` (>= 12, first b
 Frontend (AdminCore): leave `REACT_APP_BACKEND_URL` unset on Vercel so `/api` goes through the same-origin rewrite.
 
 ## Deliberate limits (not bugs)
+- QR offers use the shared price engine. QR feedback requires a paid invoice and the order capability; transaction
+  locks merge duplicate submissions. Service analytics requires reports permission and applies outlet/tenant scope.
+  Follow-up writes require manager-view permission; private notes/history are excluded from guest responses.
+  See QR_OFFERS_FEEDBACK_ANALYTICS.md for metric definitions, date bounds and verification.
 - Offline till: a cashier already signed in on a tab can reload and keep taking cash/due bills for up to 24 hours
   without a connection (app shell cached by a service worker; menu and outlets copied per user and wiped at logout).
   Signing in on a new tab, card/UPI payments and the kitchen screen need the connection; offline receipts say to hand
@@ -101,5 +125,6 @@ Frontend (AdminCore): leave `REACT_APP_BACKEND_URL` unset on Vercel so `/api` go
   audit findings that only a move to Vite would clear; they are build-time only and do not ship to browsers.
 - Payroll does not file PF (ECR), ESI, PT or TDS returns and does not compute income tax; TDS is entered as a line.
 - Automatic expiry of paid periods is off until renewals are recorded; enabling `all` early would lock paying tenants.
-- No payment-gateway webhook yet: UPI/card confirmations are manual (manager + transaction reference).
+- Razorpay checkout needs each restaurant's credentials, webhook configuration and a public API URL. Without it,
+  UPI/card confirmation remains manual (manager + transaction reference). QR payment before order approval is not supported.
 - Staff with no outlet assignment keep business-wide access (single-outlet businesses rely on this).

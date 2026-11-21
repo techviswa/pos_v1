@@ -101,3 +101,10 @@ memory/test_credentials.md
 # Mobile development cache
 android-sdk/frontend/node_modules/.cache/
 frontend/node_modules/.cache/
+
+# Any other environment variant and database dumps (Phase 0 safeguard)
+.env.*
+!.env.example
+*.dump
+*.sql.gz
+*.bson

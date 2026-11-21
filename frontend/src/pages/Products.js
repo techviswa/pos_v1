@@ -1,4 +1,5 @@
 import React, { useMemo, useRef, useState } from "react";
+import { API_URL } from "../lib/apiUrl";
 import axios from "axios";
 import { Layout } from "../components/Layout";
 import { toast } from "sonner";
@@ -8,23 +9,9 @@ import { useAuth } from "../contexts/AuthContext";
 import { useUi } from "../contexts/UiContext";
 import { useAutoRefresh } from "../hooks/useAutoRefresh";
 import { MenuStructureEditor, toMenuStructureForm, toMenuStructurePayload, validateMenuStructure } from "../core/menu/MenuStructureEditor";
+import { ProductPhoto, readProductPhoto, resolveProductPhoto } from "../components/ProductPhoto";
+import { QrProductDetails, normalizeQrDetails } from "../components/QrProductDetails";
 
-const API_URL = (() => {
-  const configured = String(process.env.REACT_APP_BACKEND_URL || "").replace(/\/+$/, "");
-  if (typeof window === "undefined") return configured;
-
-  const currentOrigin = window.location.origin.replace(/\/+$/, "");
-  const currentHost = window.location.hostname;
-  if (configured && configured !== currentOrigin && !configured.includes("vercel.app")) {
-    return configured;
-  }
-
-  if (currentHost === "localhost" || currentHost === "127.0.0.1") {
-    return configured || "http://localhost:4001";
-  }
-
-  return "https://pos-v1-fwjm.onrender.com";
-})();
 const LOW_STOCK_THRESHOLD = 3;
 const MENU_CHANNELS = ["Dine-In", "Takeaway", "Delivery"];
 
@@ -90,7 +77,7 @@ const createRecipeFormLines = (lines = []) =>
     unit: line.unit || "",
   }));
 
-const getProductImageUrl = (product = {}) =>
+const getProductImageUrl = (product = {}) => resolveProductPhoto(
   product.image_url ||
   product.imageUrl ||
   product.photo_url ||
@@ -99,7 +86,7 @@ const getProductImageUrl = (product = {}) =>
   product.pictureUrl ||
   product.thumbnail_url ||
   product.thumbnailUrl ||
-  "";
+  "");
 
 const getProductInitial = (name = "") =>
   String(name || "P").trim().charAt(0).toUpperCase() || "P";
@@ -124,6 +111,7 @@ export const Products = () => {
   const [editingProduct, setEditingProduct] = useState(null);
   const [stockTarget, setStockTarget] = useState(null);
   const [formData, setFormData] = useState({
+    image_url: "",
     name: "",
     price: "",
     cost_price: "",
@@ -132,6 +120,7 @@ export const Products = () => {
     category: "",
     dietary_type: "Veg",
     channel_settings: createDefaultChannelSettings(),
+    qr_details: {},
     outlet_overrides: {},
     variationText: "",
     addonProductIds: [],
@@ -152,6 +141,7 @@ export const Products = () => {
   const [newCategoryName, setNewCategoryName] = useState("");
   const [recipeDraftInventoryId, setRecipeDraftInventoryId] = useState("");
   const [formError, setFormError] = useState("");
+  const [photoBusy, setPhotoBusy] = useState(false);
   const hasLoadedProductsRef = useRef(false);
 
   const fetchProducts = async () => {
@@ -220,7 +210,7 @@ export const Products = () => {
         active: current?.active ?? baseActive,
       };
       return settings;
-    }, {});
+    }, { ...(product?.channel_settings || {}) });
     const nextOutletOverrides = createDefaultOutletOverrides(outlets);
     (product?.outlet_overrides || []).forEach((entry) => {
       if (entry?.outlet_id) {
@@ -232,6 +222,7 @@ export const Products = () => {
     });
     setEditingProduct(product);
     setFormData({
+      image_url: product?.image_url || "",
       name: product?.name || "",
       price: basePrice?.toString() || "",
       cost_price: product?.cost_price?.toString() || "",
@@ -240,6 +231,7 @@ export const Products = () => {
       category: product?.category || "",
       dietary_type: product?.dietary_type || "Veg",
       channel_settings: nextChannelSettings,
+      qr_details: product?.channel_settings?.qr || product?.channel_settings?.qr_ordering || {},
       outlet_overrides: nextOutletOverrides,
       variationText: formatOptionText(product?.variation_options || []),
       addonProductIds: deriveAddonSelections(product, products),
@@ -414,6 +406,7 @@ export const Products = () => {
 
   const saveProduct = async (event) => {
     event.preventDefault();
+    if (photoBusy) { setFormError("Please wait for the photo preview before saving."); return; }
     setFormError("");
     const resolvedCategory = (categoryMode === "new" ? newCategoryName : formData.category).trim();
     if (!resolvedCategory) {
@@ -454,6 +447,7 @@ export const Products = () => {
     }
 
     const payload = {
+      image_url: formData.image_url || null,
       name: formData.name.trim(),
       price: Number(formData.price),
       cost_price: Number(formData.cost_price || 0),
@@ -468,7 +462,7 @@ export const Products = () => {
           active: current.active !== false,
         };
         return settings;
-      }, {}),
+      }, { ...formData.channel_settings, qr: normalizeQrDetails(formData.qr_details) }),
       outlet_overrides: Object.entries(formData.outlet_overrides || {})
         .map(([outletId, override]) => ({
           outlet_id: outletId,
@@ -735,6 +729,21 @@ export const Products = () => {
                   <input className="cf-input" data-testid="product-name-input" required value={formData.name} onChange={(event) => setFormData({ ...formData, name: event.target.value })} />
                 </div>
                 <div className="cf-field">
+                  <label htmlFor="product-photo">Product photo</label>
+                  <input id="product-photo" type="file" accept="image/jpeg,image/png,image/webp" onChange={async (event) => {
+                    const file = event.target.files?.[0];
+                    if (!file) return;
+                    setPhotoBusy(true);
+                    try { const image = await readProductPhoto(file); setFormData((current) => ({ ...current, image_url: image })); setFormError(""); }
+                    catch (error) { setFormError(error.message); }
+                    finally { setPhotoBusy(false); }
+                    event.target.value = "";
+                  }} />
+                  {photoBusy ? <p role="status">Preparing photo...</p> : null}
+                  <p className="cf-card__meta">Upload a real product photo. It appears in Products and the customer QR menu after saving.</p>
+                  {formData.image_url ? <><ProductPhoto source={formData.image_url} name={formData.name || "Product preview"} /><button type="button" className="cf-btn cf-btn--secondary cf-btn--small" onClick={() => setFormData((current) => ({ ...current, image_url: "" }))}>Remove photo</button></> : null}
+                </div>
+                <div className="cf-field">
                   <label>Price</label>
                   <input className="cf-input" data-testid="product-price-input" min="0" required step="0.01" type="number" value={formData.price} onChange={(event) => setFormData({ ...formData, price: event.target.value })} />
                 </div>
@@ -823,6 +832,7 @@ export const Products = () => {
                   </div>
                 </div>
                 <div className="cf-field">
+                  <QrProductDetails value={formData.qr_details} onChange={(qr_details) => setFormData({ ...formData, qr_details })} />
                   <label>Variations</label>
                   <textarea
                     className="cf-textarea"

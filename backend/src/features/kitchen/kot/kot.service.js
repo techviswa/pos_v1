@@ -1,3 +1,4 @@
+import { readExportPage } from "../../../shared/utils/export-cursor.js";
 import prisma from "../../../database/prisma/client.js";
 import { admincoreChangeSyncService } from "../../../core/admincore/admincore-change-sync.service.js";
 import { aggregateKitchenStatus, validateKitchenTransition } from "./kot-workflow.js";
@@ -182,18 +183,24 @@ class KotService {
     return ticket;
   }
 
-  async listTickets({ tenantId, limit, status, stationId }) {
+  async listTickets({ tenantId, limit, offset = 0, ascending = false, status, stationId, active = false, outletIds, query = {} }) {
     const business = await ensureBusiness({ tenantId });
     const parsedLimit = Number(limit);
-    const tickets = await prisma.kitchenTicket.findMany({
+    const tickets = await readExportPage(prisma.kitchenTicket, {
       where: {
         businessId: business.id,
         ...(status ? { status } : {}),
+        ...(active ? { AND: [{ status: { in: ["pending", "accepted", "preparing", "ready"] } }, { order: { status: { notIn: ["cancelled", "rejected", "qr_rejected", "completed"] } } }] } : {}),
+        ...(outletIds?.length ? { order: { OR: [
+          { outletId: { in: outletIds } },
+          ...outletIds.map((id) => ({ metadata: { path: ["outlet_id"], equals: id } })),
+        ] } } : {}),
       },
       include: getTicketInclude(),
-      orderBy: { createdAt: "desc" },
+        orderBy: [{ createdAt: ascending ? "asc" : "desc" }, { id: "asc" }],
+        skip: offset,
       ...(Number.isInteger(parsedLimit) && parsedLimit > 0 ? { take: parsedLimit } : {}),
-    });
+    }, query);
 
     const items = tickets
       .map((ticket) => this.serializeTicket(ticket))

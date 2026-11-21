@@ -1,26 +1,24 @@
 import React from "react";
 import { FULFILLMENT_MODES } from "../utils/fulfillmentMode";
 
-export const FulfillmentModeSelector = ({ value, onChange }) => (
-  <div className="cf-grid-2" style={{ gridTemplateColumns: "repeat(4, minmax(0, 1fr))", gap: 10 }}>
-    {FULFILLMENT_MODES.map((mode) => {
+export const FulfillmentModeSelector = ({ value, onChange, allowedModes }) => {
+  const modes = FULFILLMENT_MODES.filter(mode => allowedModes?.[mode.key] === true);
+  if (modes.length < 2) return null;
+  return <div className="cf-billing-services" role="group" aria-label="Order service">
+    {modes.map((mode) => {
       const active = value === mode.key;
       return (
         <button
           key={mode.key}
-          className="cf-card"
+          aria-pressed={active}
+          title={mode.description}
+          className={`cf-btn cf-btn--small ${active ? "cf-btn--primary" : "cf-btn--secondary"}`}
           onClick={() => onChange(mode.key)}
-          style={{
-            padding: "12px 14px",
-            textAlign: "left",
-            borderColor: active ? "var(--cf-accent)" : "var(--cf-line)",
-            background: active ? "rgba(0, 45, 245, 0.06)" : "var(--cf-panel)",
-          }}
           type="button"
         >
-          <div style={{ fontWeight: 700, fontSize: 14 }}>{mode.label}</div>
+          {mode.label}
         </button>
       );
     })}
-  </div>
-);
+  </div>;
+};

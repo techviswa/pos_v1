@@ -1,4 +1,5 @@
 import { tableManagementRepository } from "./table-management.repository.js";
+import prisma from "../../../database/prisma/client.js";
 import { tableManagementValidation } from "./table-management.validation.js";
 import { createHttpError, createNotFoundError } from "../../../shared/utils/http-error.js";
 import { randomBytes } from "node:crypto";
@@ -402,6 +403,15 @@ class TableManagementService {
     });
 
     return serializedQrCode;
+  }
+
+  async deleteTableQrCode({ tenantId, businessId, tableId }) {
+    const business = await this.getBusiness({ tenantId, businessId });
+    const table = await tableManagementRepository.getTableById({ businessId: business.id, tableId });
+    if (!table) throw createNotFoundError("Table", { tableId });
+    await prisma.tableQrCode.deleteMany({ where: { businessId: business.id, tableId } });
+    await admincoreChangeSyncService.notifyChange({ resource: "tables", action: "qr_deleted", recordId: tableId, tenantId: business.tenantId, businessId: business.id });
+    return { table_id: tableId, deleted: true };
   }
 
   async deleteTable({ tenantId, businessId, tableId }) {

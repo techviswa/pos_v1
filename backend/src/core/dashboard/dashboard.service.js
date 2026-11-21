@@ -1,56 +1,22 @@
 import prisma from "../../database/prisma/client.js";
+import { reportOutlets } from './outlet-report-policy.js';
 import { isDatabaseAvailable } from "../../config/db.js";
 import { ensureBusiness } from "../../database/prisma/helpers.js";
+import { assertOwnedIds } from '../../database/prisma/scope.js';
+import { createHttpError } from '../../shared/utils/http-error.js';
 import {
   getBillOutletId,
   getBillRevenue,
   isRevenueBill,
 } from "../billing/bill-analytics.utils.js";
-import {
-  billingSeedData,
-  inventorySeedData,
-  outletSeedData,
-  productSeedData,
-  userSeedData,
-} from "../../shared/data/core-seed-data.js";
 
 const DASHBOARD_CACHE_TTL_MS = 10000;
 const dashboardStatsCache = new Map();
 
 class DashboardService {
-  getFallbackStats() {
-    return {
-      overview: {
-        total_sales: billingSeedData.reduce((sum, bill) => sum + Number(bill.total || 0), 0),
-        total_bills: billingSeedData.length,
-        total_products: productSeedData.length,
-        total_inventory_items: inventorySeedData.length,
-        total_outlets: outletSeedData.length,
-        total_staff: userSeedData.length,
-        open_purchase_orders: 0,
-        scheduled_routes: 0,
-      },
-      outlets: outletSeedData.map((outlet) => ({
-        outlet_id: outlet.id,
-        outlet_name: outlet.name,
-        sales: 0,
-      })),
-      route_plans: [],
-      restock_logs: [],
-      inventoryAlerts: inventorySeedData
-        .filter((item) => Number(item.stock || 0) < 10)
-        .map((item) => ({
-          id: item.id,
-          name: item.name,
-          stock: item.stock,
-          unit: item.unit,
-          reorderLevel: 10,
-        })),
-    };
-  }
-
-  async getStats({ tenantId }) {
-    const cacheKey = String(tenantId || "default");
+  async getStats({ tenantId, outletId = null }) {
+    if (!isDatabaseAvailable()) throw createHttpError({ statusCode: 503, code: 'DASHBOARD_UNAVAILABLE', message: 'Dashboard data is unavailable. Retry after the database reconnects.' });
+    const cacheKey = JSON.stringify([tenantId, outletId]);
     const cached = dashboardStatsCache.get(cacheKey);
     const now = Date.now();
 
@@ -58,17 +24,11 @@ class DashboardService {
       return cached.data;
     }
 
-    if (!isDatabaseAvailable()) {
-      const data = this.getFallbackStats();
-      dashboardStatsCache.set(cacheKey, {
-        timestamp: now,
-        data,
-      });
-      return data;
-    }
-
     try {
       const business = await ensureBusiness({ tenantId });
+      if (outletId) await assertOwnedIds({ kind: 'outlet', ids: [outletId], businessId: business.id });
+      const routeWhere = { businessId: business.id, status: { in: ['planned', 'in-transit'] }, ...(outletId ? { stops: { some: { outletId } } } : {}) };
+      const allocationWhere = { businessId: business.id, ...(outletId ? { outletId } : {}) };
 
       const [
         bills,
@@ -79,61 +39,71 @@ class DashboardService {
         purchaseOrderCount,
         scheduledRoutes,
         allocations,
+        routeCount,
+        allocationCount,
       ] = await Promise.all([
         prisma.bill.findMany({
           where: { businessId: business.id },
+          include: { order: { select: { outletId: true } } },
           orderBy: { createdAt: "desc" },
         }),
         prisma.inventoryItem.findMany({
-          where: { businessId: business.id },
+          where: { businessId: business.id, ...(outletId ? { outletLinks: { some: { outletId, enabled: true } } } : {}) },
+          ...(outletId ? { include: { outletLinks: { where: { outletId, enabled: true } } } } : {}),
           orderBy: { createdAt: "asc" },
         }),
         prisma.product.findMany({
-          where: { businessId: business.id },
+          where: { businessId: business.id, ...(outletId ? { outletLinks: { some: { outletId, enabled: true } } } : {}) },
         }),
         prisma.outlet.findMany({
-          where: { businessId: business.id },
+          where: { businessId: business.id, ...(outletId ? { id: outletId } : {}) },
           orderBy: { createdAt: "asc" },
         }),
         prisma.user.findMany({
-          where: { businessId: business.id },
+          where: { businessId: business.id, ...(outletId ? { OR: [{ outletAssignments: { none: {} } }, { outletAssignments: { some: { outletId } } }] } : {}) },
         }),
         prisma.purchaseOrder.count({
           where: {
             businessId: business.id,
             status: { in: ["pending", "approved"] },
+            ...(outletId ? { outletId } : {}),
           },
         }),
         prisma.routePlan.findMany({
-          where: {
-            businessId: business.id,
-            status: { in: ["planned", "in-transit"] },
-          },
+          where: routeWhere,
           include: {
-            stops: true,
+            stops: outletId ? { where: { outletId } } : true,
           },
           orderBy: { createdAt: "desc" },
           take: 5,
         }),
         prisma.allocation.findMany({
-          where: { businessId: business.id },
+          where: allocationWhere,
           include: { outlet: true, routePlan: true },
           orderBy: { createdAt: "desc" },
           take: 5,
         }),
+        prisma.routePlan.count({ where: routeWhere }),
+        prisma.allocation.count({ where: allocationWhere }),
       ]);
 
-      const revenueBills = bills.filter(isRevenueBill);
-      const salesByOutlet = outlets.map((outlet) => {
+      const scopedBills = bills.filter(bill => !outletId || getBillOutletId(bill) === outletId);
+      const scopedInventory = inventory.map(item => outletId ? { ...item, stock: item.outletLinks[0].stock, reorderLevel: item.outletLinks[0].reorderLevel } : item);
+      const revenueBills = scopedBills.filter(isRevenueBill);
+      const historicalOutletIds = new Set(scopedBills.map(getBillOutletId));
+      const salesByOutlet = reportOutlets(outlets, historicalOutletIds, outletId).map((outlet) => {
         const outletBills = revenueBills.filter((bill) => getBillOutletId(bill) === outlet.id);
         return {
           outlet_id: outlet.id,
           outlet_name: outlet.name,
+          status: outlet.status || 'active',
           sales: outletBills.reduce((sum, bill) => sum + getBillRevenue(bill), 0),
         };
       });
 
       const data = {
+        generated_at: new Date().toISOString(),
+        outlet_id: outletId,
         overview: {
           total_sales: revenueBills.reduce((sum, bill) => sum + getBillRevenue(bill), 0),
           total_bills: revenueBills.length,
@@ -142,9 +112,11 @@ class DashboardService {
           total_outlets: outlets.length,
           total_staff: staff.length,
           open_purchase_orders: purchaseOrderCount,
-          scheduled_routes: scheduledRoutes.length,
+          scheduled_routes: routeCount,
         },
         outlets: salesByOutlet,
+        route_plans_pagination: { total: routeCount, limit: 5, has_more: routeCount > scheduledRoutes.length },
+        restock_logs_pagination: { total: allocationCount, limit: 5, has_more: allocationCount > allocations.length },
         route_plans: scheduledRoutes.map((routePlan) => ({
           id: routePlan.id,
           route_name: routePlan.routeName,
@@ -160,7 +132,7 @@ class DashboardService {
           quantity: Array.isArray(allocation.items) ? allocation.items.length : 0,
           route_name: allocation.routePlan?.routeName || "Direct Dispatch",
         })),
-        inventoryAlerts: inventory
+        inventoryAlerts: scopedInventory
           .filter((item) => Number(item.stock || 0) < Number(item.reorderLevel || 0))
           .map((item) => ({
             id: item.id,
@@ -178,16 +150,7 @@ class DashboardService {
 
       return data;
     } catch (error) {
-      if (error?.code !== "P2021") {
-        throw error;
-      }
-
-      const data = this.getFallbackStats();
-      dashboardStatsCache.set(cacheKey, {
-        timestamp: now,
-        data,
-      });
-      return data;
+      throw error;
     }
   }
 }
