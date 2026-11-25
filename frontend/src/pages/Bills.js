@@ -334,6 +334,8 @@ export const Bills = () => {
                 apiUrl={API_URL}
                 bill={selectedBill}
                 canRefund={["Owner", "Manager"].includes(user?.role)}
+                canCollect={hasPermission(user, "billing")}
+                canConfirm={["Owner", "Manager"].includes(user?.role)}
                 currency={settings.currency}
                 key={`payments-${selectedBill.id}`}
                 onChanged={(updated) => {
