@@ -111,8 +111,7 @@ export const buildReceiptHtml = ({ bill, settings = {}, feedbackQr = "" }) => {
   ${data.due > 0 ? row("Balance due", money(data.due)) : ""}
   ${data.offerTitle || data.offerMessage ? `<hr><div class="center"><b>${escapeHtml(data.offerTitle)}</b></div><div class="center muted">${escapeHtml(data.offerMessage)}</div>` : ""}
   ${feedbackQr ? `<hr><div class="center muted">Scan to rate your visit</div><img class="qr" alt="" src="${escapeHtml(feedbackQr)}">` : ""}
-  ${settings.footer ? `<hr><div class="center muted">${escapeHtml(settings.footer)}</div>` : ""}
-  <div class="center muted">Thank you!</div>
+  <hr><div class="center muted">${escapeHtml(settings.footer || "Thank you!")}</div>
 </div></body></html>`;
 };
 
