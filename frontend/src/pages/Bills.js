@@ -17,6 +17,7 @@ import { StockReversal } from "../core/billing/components/StockReversal";
 import { BillPayments } from "../core/billing/components/BillPayments";
 import { printReceipt } from "../core/billing/receipt/printReceipt";
 import { toast } from "sonner";
+import { localDateKey } from "../lib/localDate";
 
 
 const getStartOfToday = () => {
@@ -175,7 +176,7 @@ export const Bills = () => {
                     <td className="cf-table__mono" style={{ fontWeight: 600 }}>
                       {bill.invoice_number || bill.id}
                     </td>
-                    <td className="cf-table__mono">{Number.isFinite(created.getTime()) ? created.toISOString().slice(0, 10) : 'Not recorded'}</td>
+                    <td className="cf-table__mono">{Number.isFinite(created.getTime()) ? localDateKey(created) : 'Not recorded'}</td>
                     <td className="cf-table__mono" style={{ color: "var(--cf-text-2)" }}>
                       {created.toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" })}
                     </td>

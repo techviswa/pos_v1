@@ -44,6 +44,7 @@ const commands = [
   "node scripts/tenant-lifecycle-tests.mjs",
   "node scripts/user-admin-policy-tests.mjs",
   "node scripts/billing-integrity-tests.mjs",
+  "node scripts/tax-rate-tests.mjs",
   "node scripts/menu-depth-tests.mjs",
   "node scripts/staff-features-tests.mjs",
   "node scripts/customers-payroll-tests.mjs",

@@ -546,7 +546,8 @@ export const Billing = () => {
   const discountValue = Math.max(0, Number(discount.value || 0));
   const discountAmount = useMemo(() => {
     if (discount.type === "percent") {
-      return Math.min(subtotal, subtotal * (discountValue / 100));
+      // Rounded to the paisa exactly as the server does, so loyalty limits and totals agree.
+      return Math.round(Math.min(subtotal, subtotal * (discountValue / 100)) * 100) / 100;
     }
     if (discount.type === "fixed") {
       return Math.min(subtotal, discountValue);
@@ -565,7 +566,7 @@ export const Billing = () => {
   const tax = Math.round(taxableSubtotal * (settings.taxRate / 100) * 100) / 100;
   const tipAmount = Math.max(0, Math.round(Number(tip.amount || 0) * 100) / 100) || 0;
   const tipStaffName = tip.staffId ? tipTeam.find((member) => member.id === tip.staffId)?.name || "" : "";
-  const total = taxableSubtotal + tax + tipAmount;
+  const total = Math.round((taxableSubtotal + tax + tipAmount) * 100) / 100;
   const giftAmount = giftPay.card
     ? Math.max(0, Math.round(Math.min(Number(giftPay.amount) || 0, giftPay.card.balance, total) * 100) / 100)
     : 0;

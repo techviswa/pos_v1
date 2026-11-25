@@ -1,3 +1,4 @@
+import { readBusinessProfile } from "../businesses/business-profile.js";
 import { readExportPage } from "../../shared/utils/export-cursor.js";
 import { assertFulfillmentEnabled } from "./fulfillment-policy.js";
 import prisma from "../../database/prisma/client.js";
@@ -192,6 +193,11 @@ class BillingService {
   async createInvoice({ tenantId, payload: rawPayload, user, transaction = null, qrAllocation = null }) {
     const business = await ensureBusiness({ tenantId });
     const payload = sanitizeInvoiceRequest(rawPayload, user);
+    // Without a manager's override the bill is taxed at the rate saved in Settings (the same rate the till shows),
+    // not a hardcoded 18%.
+    if (payload.gst_rate === undefined && payload.gstRate === undefined) {
+      payload.gst_rate = (await readBusinessProfile(business.id)).taxRate;
+    }
     if (payload.outlet_id || payload.outletId) {
       await assertOwnedIds({ kind: "outlet", ids: [payload.outlet_id || payload.outletId], businessId: business.id });
     }

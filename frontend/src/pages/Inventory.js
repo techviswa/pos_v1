@@ -8,6 +8,8 @@ import { toast } from "sonner";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "../components/ui/dialog";
 import { useAutoRefresh } from "../hooks/useAutoRefresh";
 import { InventoryAccounting } from "../core/inventory/InventoryAccounting";
+import { StockCount } from "../core/inventory/StockCount";
+import { useActiveOutlet } from "../core/outlets/store/ActiveOutletContext";
 import { IngredientAllergens } from "../components/IngredientAllergens";
 
 const INVENTORY_UNIT_OPTIONS = ["kg", "liter", "pound", "tonne", "pieces", "dozens"];
@@ -89,6 +91,7 @@ const getInventorySection = (itemName) => INVENTORY_SECTION_MAP[itemName] || "Ot
 
 export const Inventory = () => {
   const navigate = useNavigate();
+  const { outlets: countOutlets } = useActiveOutlet();
   const [loading, setLoading] = useState(true);
   const [inventory, setInventory] = useState([]);
   const [unitLibrary, setUnitLibrary] = useState([]);
@@ -359,6 +362,7 @@ export const Inventory = () => {
             <p>Track item-wise inventory, consumption rate, expiry, wastage, and pilferage</p>
           </div>
           <div className="cf-page__header-actions">
+            <StockCount apiUrl={API_URL} inventory={inventory} outlets={countOutlets || []} onDone={fetchInventory} />
             <button className="cf-btn cf-btn--primary" onClick={openAddDialog}>
               + Add Inventory Item
             </button>

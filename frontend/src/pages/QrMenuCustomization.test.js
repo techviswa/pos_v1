@@ -17,7 +17,7 @@ test("guests see allergens/sold-out state and must choose required options befor
   global.IS_REACT_ACT_ENVIRONMENT = true;
   sessionStorage.clear();
   axios.get.mockResolvedValue({ data: { data: {
-    business: { name: "Cafe" }, table: { name: "T1" }, ordering: {}, table_session: { id: "visit", session_key: "key", opened_at: "now" },
+    business: { name: "Cafe" }, table: { name: "T1" }, ordering: { tax_rate: 18, service_charge_percent: 5.5 }, table_session: { id: "visit", session_key: "key", opened_at: "now" },
     items: [
       { id: "toast", name: "Toast", price: 20, dietary_type: "Veg", allergens: ["Wheat", "Milk"], may_contain: ["Nuts"], allergens_reviewed: true, qr_availability: { available: true }, modifier_groups: [{ id: "g", name: "Toast level", min_select: 1, max_select: 1, options: [{ id: "crispy", name: "Crispy", price: 2 }] }] },
       { id: "cake", name: "Cake", price: 30, qr_availability: { available: false, reason: "Sold out" } },
@@ -49,6 +49,10 @@ test("guests see allergens/sold-out state and must choose required options befor
     expect(document.querySelector('[role="dialog"]')).toBeNull();
     expect(element.textContent).toContain("Choices: Crispy");
     expect(element.textContent).toContain("Kitchen request: Less salt");
+    // The guest sees what the bill will charge: service charge to the paisa, then GST on items + service charge.
+    expect(element.textContent).toContain("Service chargeRs 1.21");
+    expect(element.textContent).toContain("GST (18%)Rs 4.18");
+    expect(element.textContent).toContain("Estimated totalRs 27.39");
     // Browsing a fresh configuration or dismissing it must not change the cart.
     await act(async () => button("Add").click());
     expect(document.querySelector('textarea[maxlength="200"]').value).toBe("");

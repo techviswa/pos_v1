@@ -6,6 +6,7 @@ import { toast } from "sonner";
 import { getApiErrorMessage } from "../lib/apiErrors";
 import { fulfillmentService } from "../features/billing/fulfillment/services/fulfillment.service";
 import { useAutoRefresh } from "../hooks/useAutoRefresh";
+import { localDateKey } from "../lib/localDate";
 
 const ACTIVE_STATUSES = new Set(["reserved", "occupied"]);
 const HISTORY_STATUSES = new Set(["available", "released", "cancelled", "no_show"]);
@@ -22,14 +23,14 @@ const DEFAULT_FORM = {
   notes: "",
 };
 
-const todayInputValue = () => new Date().toISOString().slice(0, 10);
+const todayInputValue = () => localDateKey();
 const normalizePhone = (value) => String(value || "").replace(/\D/g, "").slice(0, 10);
 const toArray = (value) => (Array.isArray(value) ? value : []);
 const createClientId = () => window.crypto?.randomUUID?.() || String(Date.now());
 const getReservationDateKey = (reservation) => {
   const value = reservation.reservation_for || reservation.reservation_date || reservation.scheduled_for;
   if (!value) return todayInputValue();
-  return new Date(value).toISOString().slice(0, 10);
+  return localDateKey(value);
 };
 const getReservationTime = (reservation) => {
   const value = reservation.reservation_for || reservation.reservation_date || reservation.scheduled_for;

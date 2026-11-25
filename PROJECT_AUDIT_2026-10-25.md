@@ -411,3 +411,22 @@ inputs.
 - Improved: Cash drawer summary and zero-float note; table/category/reservation forms use Notes and Position instead of raw JSON / Sort Order.
 - Verified: `deploy:check` passed, 38 frontend suites / 135 tests passed, build compiled, live browser checks of Billing, Bills print, Cash drawer and Plan.
 - Open: AdminCore link for online plan payments; KOT is not in the Starter plan; table release after payment is a manual staff action.
+
+## 2026-11-26 (later): live A-to-Z QR demo and project sweep
+
+Live end-to-end on Bheemas Cafe (trial data): QR codes generated for 13 tables; guest
+order at T2 (2 Cappuccino + Veg Sandwich) placed, staff-approved, bill requested,
+issued (CF-MAIN-20261125-0002, Rs 400 + Rs 72 GST), cash collected on Bills, receipt
+printed, guest feedback 5/5 recorded, customer + 20 loyalty points created. Main
+Outlet stock fell by exactly the recipe quantities; central kitchen unchanged; cash
+drawer Rs 767 for 2 bills; Reports and GST report match.
+
+- Fixed: QR orders had no outlet (stock would come from central, cash to no drawer). `table-outlet.js`, `qr-table-outlet-tests.mjs`; table form Outlet field for multi-outlet businesses.
+- Fixed: QR ordering is off by default with no hint; QR screen now says so with one-click enable. LAN-only Wi-Fi note no longer shown on public links.
+- Fixed: screens for plan features the business lacks (KOT on Starter) were shown and returned 403; app now follows `GET /api/features`.
+- Fixed: no UI to collect payment on unpaid (QR/Due) bills, confirm UPI/card references or void a bill (`BillPayments.jsx`).
+- Fixed: till and Products compared/costed recipe quantities without unit conversion (150 ml vs 24.7 l; Rs 9,000 instead of Rs 9). `lib/recipeUnits.js`.
+- Fixed: Dashboard profit counted GST as income and re-costed old bills at today's prices; now uses Reports' calculation and flags items sold without a cost (`dashboard-profit-tests.mjs`).
+- Fixed: bills ignored the tax rate saved in Settings (hardcoded 18%) while the till showed the Settings rate (`tax-rate-tests.mjs`).
+- Fixed: QR guest total omitted GST and rounded service charge to whole rupees; reservation planner used the UTC day (wrong "today" before 5:30 am IST).
+- Open (no UI yet): physical stock count (`POST /api/inventory/stock-audits`), manual UPI intent confirm, outlet purchase-order approve/reject, delivery route start/complete (status names also disagree), scheduled reports (no scheduler), batch tracking and barcode screens (listed as plan features), outlet deactivation, editing a pending allocation, vendor bill without receipt. Till stock check ignores combo components and modifier recipes (server still refuses correctly).

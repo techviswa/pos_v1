@@ -171,9 +171,13 @@ export const QrOrdering = () => {
   const phoneVerificationRequired = Boolean(orderingRules.require_phone_verification);
   const serviceCharge =
     Number(orderingRules.service_charge_fixed || 0) +
-    Math.round(total * (Number(orderingRules.service_charge_percent || 0) / 100));
+    Math.round(total * Number(orderingRules.service_charge_percent || 0)) / 100; // to the paisa, as the server charges it
   const normalizedTipAmount = orderingRules.tips_enabled ? Math.max(0, Number(tipAmount || 0)) : 0;
   const payableTotal = total + serviceCharge + normalizedTipAmount;
+  // GST is added on items + service charge when the bill is issued (a tip is not taxed); show the guest the estimate.
+  const taxRate = Math.max(0, Number(orderingRules.tax_rate || 0));
+  const estimatedTax = Math.round((total + serviceCharge) * taxRate) / 100;
+  const estimatedTotal = Math.round((payableTotal + estimatedTax) * 100) / 100;
   const minOrderTotal = Number(orderingRules.min_order_total || 0);
   let orderBlockedReason = "";
   if (orderingRules.paused) {
@@ -585,10 +589,17 @@ export const QrOrdering = () => {
                 onChange={(event) => setTipAmount(event.target.value)}
               />
             ) : null}
+            {estimatedTax > 0 ? (
+              <div className="cf-qr-cart__total cf-qr-cart__total--muted" data-testid="qr-estimated-tax">
+                <span>GST ({taxRate}%)</span>
+                <strong>{formatCurrency(estimatedTax)}</strong>
+              </div>
+            ) : null}
             <div className="cf-qr-cart__total">
-              <span>Total</span>
-              <strong>{formatCurrency(payableTotal)}</strong>
+              <span>{estimatedTax > 0 ? "Estimated total" : "Total"}</span>
+              <strong>{formatCurrency(estimatedTotal)}</strong>
             </div>
+            {estimatedTax > 0 ? <p className="cf-card__meta">Your final bill comes from the restaurant and may differ if loyalty points or offers apply.</p> : null}
             <input className="cf-input" placeholder="Name optional" value={customerName} onChange={(event) => setCustomerName(event.target.value)} />
             <input
               className="cf-input"
@@ -749,7 +760,7 @@ export const QrOrderTracking = () => {
             </div>
           ))}
           <div className="cf-qr-cart__total">
-            <span>Total</span>
+            <span>Order total (before GST)</span>
             <strong>{formatCurrency(order?.total || 0)}</strong>
           </div>
         </aside>

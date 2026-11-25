@@ -3,6 +3,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from "../../../../co
 import { toast } from "sonner";
 import { getPublicQrUrl } from "../../../../lib/qrUrls";
 import { LocalQrCode } from "../../../../components/LocalQrCode";
+import { localDateKey } from "../../../../lib/localDate";
 
 const createEmptyTableForm = () => ({
   name: "",
@@ -902,7 +903,7 @@ export const FulfillmentTablePanel = ({
                 <label>Reservation Date</label>
                 <input
                   className="cf-input cf-table-modal__input"
-                  min={new Date().toISOString().slice(0, 10)}
+                  min={localDateKey()}
                   onChange={(event) => setReservationForm((current) => ({ ...current, reservation_date: event.target.value }))}
                   type="date"
                   value={reservationForm.reservation_date}

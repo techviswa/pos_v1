@@ -1,3 +1,4 @@
+import { readBusinessProfile } from "../../../core/businesses/business-profile.js";
 import prisma from "../../../database/prisma/client.js";
 import { upsertCustomerForBill } from "../../../core/customers/customer-core.js";
 import { serializeOrder, serializeProduct, toPrismaOrderItems } from "../../../database/prisma/helpers.js";
@@ -208,6 +209,8 @@ class QrOrderingService {
     const tableOutlet = await resolveTableOutlet({ businessId: qrCode.businessId, meta: qrCode.table.meta });
     qrCode.outletId = tableOutlet.outletId;
     qrCode.outletAmbiguous = tableOutlet.ambiguous;
+    // The guest sees the GST their final bill will carry (the rate saved in Settings, as billing uses).
+    qrCode.taxRate = (await readBusinessProfile(qrCode.businessId)).taxRate;
     return qrCode;
   }
 
@@ -247,6 +250,7 @@ class QrOrderingService {
         tips_enabled: rules.tipsEnabled,
         service_charge_percent: rules.serviceChargePercent,
         service_charge_fixed: rules.serviceChargeFixed,
+        tax_rate: qrCode.taxRate ?? null,
         public_base_url: rules.publicBaseUrl,
       },
       table_session: {
