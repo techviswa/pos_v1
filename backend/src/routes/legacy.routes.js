@@ -23,6 +23,12 @@ import {
 } from "../core/billing/bill-analytics.utils.js";
 import { authService } from "../core/auth/auth.service.js";
 import { signFeedbackToken } from "../core/feedback/feedback-token.js";
+
+// The feedback page is a frontend route; the API host would 404. Use the configured public site, else the caller origin.
+const publicFrontendBase = (req) => String(
+  process.env.QR_PUBLIC_BASE_URL || process.env.PUBLIC_QR_BASE_URL || req.get("origin") || `${req.protocol}://${req.get("host")}`,
+).replace(/\/+$/, "");
+
 import { assertOwnedIds } from "../database/prisma/scope.js";
 import { filterByOutletScope } from "../shared/middleware/outletScope.js";
 import { applyDefaultOutlet, invoiceOutletGuard, scopeOutletQuery } from "../shared/middleware/recordOutletGuards.js";
@@ -600,7 +606,7 @@ router.post("/bills", requirePermission("billing"), applyDefaultOutlet, async (r
       initializeFeedback: true,
       payload: {
         feedback_token: signFeedbackToken(created.id),
-        feedback_link: `${req.protocol}://${req.get("host")}/feedback/${signFeedbackToken(created.id)}`,
+        feedback_link: `${publicFrontendBase(req)}/feedback/${signFeedbackToken(created.id)}`,
         updated_at: timestamp,
       },
     });

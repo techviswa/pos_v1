@@ -57,10 +57,12 @@ export function CashierSettlement({ apiUrl, outletId, currency = "INR", initiall
     finally { if (scope.current === outlet) setBusy(false); }
   };
   const money = value => value == null ? "Not recorded" : formatCurrency(value, currency);
-  const metrics = report => [["Opening cash", report.opening_cash], ["Cash collected", report.cash_sales], ["Non-cash confirmed", report.non_cash_sales],
-    ["Cash refunds", report.cash_refunds], ["Expected drawer", report.expected_cash], ["Pending confirmation", report.pending_payment_amount],
+  // The core drawer figures always show; the rest only when this shift actually had them, so real amounts stand out.
+  const metrics = report => [["Opening cash", report.opening_cash, true], ["Cash collected", report.cash_sales, true], ["Non-cash payments (UPI/card)", report.non_cash_sales, true],
+    ["Cash refunds", report.cash_refunds], ["Pending confirmation", report.pending_payment_amount],
     ["Tips inside sales", report.tips_collected], ["Gift cards sold (cash)", report.gift_card_sales_cash], ["Gift cards sold (other)", report.gift_card_sales_other],
-    ["Gift card cash payouts", report.gift_card_refunds_cash], ["Paid with gift cards", report.gift_card_redeemed]];
+    ["Gift card cash payouts", report.gift_card_refunds_cash], ["Paid with gift cards", report.gift_card_redeemed]]
+    .filter(([, value, always]) => always || Number(value || 0) !== 0);
   return <details open={initiallyOpen} className="cf-card cf-billing__support" onToggle={event => { if (!initiallyOpen && event.currentTarget.open && !data && !busy && !error) void load(); }}>
     <summary>Cashier shift & settlement</summary>
     <div className="cf-billing-panel">
@@ -68,7 +70,14 @@ export function CashierSettlement({ apiUrl, outletId, currency = "INR", initiall
         <button type="button" className="cf-btn cf-btn--secondary" disabled={busy} onClick={() => load()}>Refresh settlement</button></div>
       {error && <p role="alert" className="cf-billing-panel__error">{error} Previously loaded figures may be out of date.</p>}
       {data && <>
-        {data.report && <dl className="cf-settlement-metrics">{metrics(data.report).map(([label, value]) => <div key={label}><dt>{label}</dt><dd>{money(value)}</dd></div>)}</dl>}
+        {data.report && <>
+          <div className="cf-metrics" data-testid="drawer-summary">
+            <div className="cf-metric"><div className="cf-metric__label">Expected cash in drawer</div><div className="cf-metric__value">{money(data.report.expected_cash)}</div><div className="cf-metric__sub">Opening cash + cash collected − cash refunds</div></div>
+            <div className="cf-metric"><div className="cf-metric__label">Total collected this shift</div><div className="cf-metric__value">{money(Number(data.report.cash_sales || 0) + Number(data.report.non_cash_sales || 0))}</div><div className="cf-metric__sub">{data.report.bill_count || 0} bill{Number(data.report.bill_count) === 1 ? "" : "s"}</div></div>
+          </div>
+          {Number(data.shift?.opening_cash || 0) === 0 && <p className="cf-card__meta" role="note">This shift started with no opening cash recorded (the first bill opens a shift automatically). Next time, open the shift here with your starting float before billing.</p>}
+          <dl className="cf-settlement-metrics">{metrics(data.report).map(([label, value]) => <div key={label}><dt>{label}</dt><dd>{money(value)}</dd></div>)}</dl>
+        </>}
         <section className="cf-settlement-action" aria-label={open ? "Close shift" : "Open shift"}>
           <h3>{open ? "Reconcile and close shift" : "Open a cashier shift"}</h3>
           <p>{open ? "Count the physical cash, then review the variance before closing." : "Enter the starting cash float in this outlet’s drawer."}</p>

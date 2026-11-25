@@ -65,6 +65,19 @@ try {
   assert.equal(statusCall.url, `/api/billing/pos/${biz}?tenant_id=${encodeURIComponent(tenant)}`, "always this business and tenant");
   assert.equal(statusCall.key, KEY);
 
+  // Without the AdminCore link the owner sees the plan the POS enforces, not an error page.
+  const { default: env } = await import("../src/config/env.js");
+  env.admincore.enabled = false;
+  const callsBefore = calls.length;
+  const local = await ok(call("GET", "/api/saas/billing/status", { session: ownerS }), 200, "local plan without AdminCore");
+  env.admincore.enabled = true;
+  assert.equal(calls.length, callsBefore, "no AdminCore call when billing is not linked");
+  assert.equal(local.data.configured, false);
+  assert.equal(local.data.source, "pos");
+  assert.ok(local.data.plan_slug, "the business plan is shown");
+  assert.ok(local.data.usage?.outlets && Number.isFinite(local.data.usage.outlets.used), "usage against limits is shown");
+  assert.ok(local.data.plans.some((plan) => plan.slug === "starter"), "plan catalogue is listed");
+
   await ok(call("POST", "/api/saas/billing/checkout", { session: ownerS, body: { plan_slug: "Pro!!" } }), 400, "plan checked");
   const checkout = await ok(call("POST", "/api/saas/billing/checkout", { session: ownerS, body: { plan_slug: "pro", billing_cycle: "yearly", business_id: "someone-else", tenant_id: "other" } }), 200, "checkout");
   assert.equal(checkout.data.short_url, "https://rzp.io/i/sub_1");

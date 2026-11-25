@@ -11,16 +11,18 @@ const createEmptyTableForm = () => ({
   area_id: "",
   active: true,
   shape: "",
-  sort_order: "0",
-  meta_text: "{}",
+  sort_order: "",
+  notes: "",
+  meta_base: {},
 });
 
 const createEmptyAreaForm = () => ({
   name: "",
   code: "",
   active: true,
-  sort_order: "0",
-  meta_text: "{}",
+  sort_order: "",
+  notes: "",
+  meta_base: {},
 });
 
 const statusLabelMap = {
@@ -96,7 +98,8 @@ const createEmptyReservationForm = () => ({
   reservation_date: "",
   reservation_time: "",
   source: "manual",
-  meta_text: "{}",
+  notes: "",
+  meta_base: {},
 });
 
 const formatReservationDateTime = (value) => {
@@ -120,19 +123,24 @@ const buildReservationIso = (dateValue, timeValue) => {
   return parsed.toISOString();
 };
 
-const safeSerializeMeta = (value) => {
-  if (!value || (typeof value === "object" && !Object.keys(value).length)) return "{}";
-  try {
-    return JSON.stringify(value, null, 2);
-  } catch {
-    return "{}";
-  }
+const metaObject = (value) => (value && typeof value === "object" && !Array.isArray(value) ? value : {});
+
+// Notes are the only operator-facing extra detail; other stored keys (e.g. deposit info) are preserved as they were.
+const buildMeta = (base, notes) => {
+  const { notes: _previous, ...rest } = metaObject(base);
+  const text = String(notes || "").trim();
+  return text ? { ...rest, notes: text } : rest;
 };
 
-const parseMetaInput = (value) => {
-  const trimmed = String(value || "").trim();
-  if (!trimmed) return {};
-  return JSON.parse(trimmed);
+// A blank position means "after the last one", so nobody has to type a number to add a table or category.
+const resolvePosition = (value, items, editingId) => {
+  const typed = String(value ?? "").trim();
+  if (typed !== "" && Number.isFinite(Number(typed)) && Number(typed) >= 0) return Math.round(Number(typed));
+  if (editingId) {
+    const existing = items.find((item) => item.id === editingId);
+    if (existing && Number.isFinite(Number(existing.sort_order))) return Number(existing.sort_order);
+  }
+  return items.reduce((highest, item) => Math.max(highest, Number(item.sort_order) || 0), 0) + 1;
 };
 
 export const FulfillmentTablePanel = ({
@@ -224,8 +232,9 @@ export const FulfillmentTablePanel = ({
       area_id: table.area_id || "",
       active: table.active !== false,
       shape: table.shape || "",
-      sort_order: String(table.sort_order ?? 0),
-      meta_text: safeSerializeMeta(table.meta),
+      sort_order: String(table.sort_order ?? ""),
+      notes: metaObject(table.meta).notes || "",
+      meta_base: metaObject(table.meta),
     });
     setIsTableModalOpen(true);
   };
@@ -243,8 +252,9 @@ export const FulfillmentTablePanel = ({
       name: area.name || "",
       code: area.code || "",
       active: area.active !== false,
-      sort_order: String(area.sort_order ?? 0),
-      meta_text: safeSerializeMeta(area.meta),
+      sort_order: String(area.sort_order ?? ""),
+      notes: metaObject(area.meta).notes || "",
+      meta_base: metaObject(area.meta),
     });
     setIsAreaModalOpen(true);
   };
@@ -254,28 +264,23 @@ export const FulfillmentTablePanel = ({
     setReservationForm({
       ...createEmptyReservationForm(),
       source: table.current_reservation?.source || "manual",
-      meta_text: safeSerializeMeta(table.current_reservation?.meta),
+      notes: metaObject(table.current_reservation?.meta).notes || "",
+      meta_base: metaObject(table.current_reservation?.meta),
     });
     setIsReservationModalOpen(true);
   };
 
   const submitTable = async () => {
-    let payload;
-    try {
-      payload = {
-        name: tableForm.name.trim(),
-        code: tableForm.code.trim() || null,
-        seats: Number(tableForm.seats || 4),
-        area_id: tableForm.area_id || null,
-        active: tableForm.active,
-        shape: tableForm.shape.trim() || null,
-        sort_order: Number(tableForm.sort_order || 0),
-        meta: parseMetaInput(tableForm.meta_text),
-      };
-    } catch {
-      toast.error("Table meta must be valid JSON");
-      return;
-    }
+    const payload = {
+      name: tableForm.name.trim(),
+      code: tableForm.code.trim() || null,
+      seats: Number(tableForm.seats || 4),
+      area_id: tableForm.area_id || null,
+      active: tableForm.active,
+      shape: tableForm.shape.trim() || null,
+      sort_order: resolvePosition(tableForm.sort_order, tableItems, editingTableId),
+      meta: buildMeta(tableForm.meta_base, tableForm.notes),
+    };
 
     if (editingTableId) {
       await onUpdateTable(editingTableId, payload);
@@ -287,19 +292,13 @@ export const FulfillmentTablePanel = ({
   };
 
   const submitArea = async () => {
-    let payload;
-    try {
-      payload = {
-        name: areaForm.name.trim(),
-        code: areaForm.code.trim() || null,
-        active: areaForm.active,
-        sort_order: Number(areaForm.sort_order || 0),
-        meta: parseMetaInput(areaForm.meta_text),
-      };
-    } catch {
-      toast.error("Category meta must be valid JSON");
-      return;
-    }
+    const payload = {
+      name: areaForm.name.trim(),
+      code: areaForm.code.trim() || null,
+      active: areaForm.active,
+      sort_order: resolvePosition(areaForm.sort_order, areaItems, editingAreaId),
+      meta: buildMeta(areaForm.meta_base, areaForm.notes),
+    };
 
     if (editingAreaId) {
       await onUpdateArea(editingAreaId, payload);
@@ -313,13 +312,7 @@ export const FulfillmentTablePanel = ({
   const submitReservation = async () => {
     if (!reservationTable) return;
 
-    let reservationMeta;
-    try {
-      reservationMeta = parseMetaInput(reservationForm.meta_text);
-    } catch {
-      toast.error("Reservation meta must be valid JSON");
-      return;
-    }
+    const reservationMeta = buildMeta(reservationForm.meta_base, reservationForm.notes);
 
     await onReserveTable(reservationTable, {
       reservation_for: buildReservationIso(reservationForm.reservation_date, reservationForm.reservation_time),
@@ -532,7 +525,6 @@ export const FulfillmentTablePanel = ({
                   <div className="cf-card__meta">
                     {area.active === false ? "Disabled" : "Enabled"} | {area.table_count || 0} tables
                     {area.code ? ` | ${area.code}` : ""}
-                    {area.sort_order !== undefined ? ` | Sort ${area.sort_order}` : ""}
                   </div>
                 </div>
                 {canManageTables ? (
@@ -567,8 +559,8 @@ export const FulfillmentTablePanel = ({
                   {reservation.released_at ? ` | Released ${formatReservationDateTime(reservation.released_at)}` : ""}
                   {reservation.canceled_at ? ` | Canceled ${formatReservationDateTime(reservation.canceled_at)}` : ""}
                 </span>
-                {reservation.meta && Object.keys(reservation.meta).length ? (
-                  <div className="cf-card__meta" style={{ marginTop: 6 }}>Meta: {safeSerializeMeta(reservation.meta)}</div>
+                {metaObject(reservation.meta).notes ? (
+                  <div className="cf-card__meta" style={{ marginTop: 6 }}>Notes: {metaObject(reservation.meta).notes}</div>
                 ) : null}
               </div>
               <button className="cf-btn cf-btn--secondary cf-btn--small" disabled={busy} onClick={() => handleUndoReservation(reservation.id)} type="button">
@@ -656,14 +648,16 @@ export const FulfillmentTablePanel = ({
             </div>
 
             <div className="cf-field">
-              <label>Sort Order</label>
+              <label>Position in list</label>
               <input
                 className="cf-input cf-table-modal__input"
                 min="0"
                 onChange={(event) => setTableForm((current) => ({ ...current, sort_order: event.target.value }))}
+                placeholder="Added at the end"
                 type="number"
                 value={tableForm.sort_order}
               />
+              <span className="cf-card__meta">Lower numbers show first. Leave blank to place it last.</span>
             </div>
 
             <div className="cf-field">
@@ -687,12 +681,13 @@ export const FulfillmentTablePanel = ({
             </div>
 
             <div className="cf-field" style={{ gridColumn: "1 / -1" }}>
-              <label>Table Meta JSON</label>
-              <textarea
-                className="cf-textarea cf-table-modal__input"
-                onChange={(event) => setTableForm((current) => ({ ...current, meta_text: event.target.value }))}
-                placeholder='{"zone":"window","min_spend":500}'
-                value={tableForm.meta_text}
+              <label>Notes (optional)</label>
+              <input
+                className="cf-input cf-table-modal__input"
+                maxLength={200}
+                onChange={(event) => setTableForm((current) => ({ ...current, notes: event.target.value }))}
+                placeholder="e.g. Window seat, near charging point"
+                value={tableForm.notes}
               />
             </div>
           </div>
@@ -791,14 +786,16 @@ export const FulfillmentTablePanel = ({
             </div>
 
             <div className="cf-field">
-              <label>Sort Order</label>
+              <label>Position in list</label>
               <input
                 className="cf-input cf-table-modal__input"
                 min="0"
                 onChange={(event) => setAreaForm((current) => ({ ...current, sort_order: event.target.value }))}
+                placeholder="Added at the end"
                 type="number"
                 value={areaForm.sort_order}
               />
+              <span className="cf-card__meta">Lower numbers show first. Leave blank to place it last.</span>
             </div>
 
             <div className="cf-field">
@@ -822,12 +819,13 @@ export const FulfillmentTablePanel = ({
             </div>
 
             <div className="cf-field" style={{ gridColumn: "1 / -1" }}>
-              <label>Category Meta JSON</label>
-              <textarea
-                className="cf-textarea cf-table-modal__input"
-                onChange={(event) => setAreaForm((current) => ({ ...current, meta_text: event.target.value }))}
-                placeholder='{"theme":"family","priority":1}'
-                value={areaForm.meta_text}
+              <label>Notes (optional)</label>
+              <input
+                className="cf-input cf-table-modal__input"
+                maxLength={200}
+                onChange={(event) => setAreaForm((current) => ({ ...current, notes: event.target.value }))}
+                placeholder="e.g. Air-conditioned, family seating"
+                value={areaForm.notes}
               />
             </div>
           </div>
@@ -911,12 +909,13 @@ export const FulfillmentTablePanel = ({
             </div>
 
             <div className="cf-field">
-              <label>Reservation Meta JSON</label>
-              <textarea
-                className="cf-textarea cf-table-modal__input"
-                onChange={(event) => setReservationForm((current) => ({ ...current, meta_text: event.target.value }))}
-                placeholder='{"occasion":"birthday","deposit_received":true}'
-                value={reservationForm.meta_text}
+              <label>Notes (optional)</label>
+              <input
+                className="cf-input cf-table-modal__input"
+                maxLength={200}
+                onChange={(event) => setReservationForm((current) => ({ ...current, notes: event.target.value }))}
+                placeholder="e.g. Birthday, needs a high chair"
+                value={reservationForm.notes}
               />
             </div>
 

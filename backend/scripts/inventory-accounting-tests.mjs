@@ -8,6 +8,7 @@ import { reportsService } from "../src/core/reports/reports.service.js";
 import { billingService } from "../src/core/billing/billing.service.js";
 import { reverseBillStock } from "../src/core/billing/stock-reversal.service.js";
 import { admincoreChangeSyncService } from "../src/core/admincore/admincore-change-sync.service.js";
+import { runTenantScope } from "../src/database/prisma/tenant-context.js";
 
 export async function testInventoryAccounting({ tenantId, businessId, user, apiUrl, sessionId, restrictedSessionId }) {
   const outlet = await prisma.outlet.create({ data: { businessId, name: "Valuation test outlet", code: randomUUID() } });
@@ -18,6 +19,14 @@ export async function testInventoryAccounting({ tenantId, businessId, user, apiU
   const [originalReceipt, receiptReplay] = await Promise.all([receive(10, 100, "central", receiptKey), receive(10, 100, "central", receiptKey)]);
   assert.equal(originalReceipt.record.id, receiptReplay.record.id, "Receiving replay must not duplicate stock");
   await assert.rejects(receive(11, 100, "central", receiptKey), /different data/);
+  // Inside a signed-in request the tenant guard is active: the replay record must belong to this business,
+  // otherwise every receiving from the Inventory screen (which always sends a request id) is refused.
+  const scopedIngredient = await inventoryService.createItem({ tenantId, payload: { name: `Scoped receiving test ${randomUUID().slice(0, 8)}`, stock: 0, unit: "kg", conversion_cost: 0 } });
+  const scopedPayload = { outlet_id: outlet.id, stock_location: "central", request_id: randomUUID(), vendor_name: "Fixture supplier", items: [{ inventory_id: scopedIngredient.id, quantity: 2, unit_cost: 40 }] };
+  const scoped = await runTenantScope({ businessId, tenantId }, () => operations.receivePurchase({ tenantId, user, payload: scopedPayload }));
+  const scopedReplay = await runTenantScope({ businessId, tenantId }, () => operations.receivePurchase({ tenantId, user, payload: scopedPayload }));
+  assert.equal(scoped.record.id, scopedReplay.record.id, "A scoped receiving replay returns the original receipt");
+  assert.equal((await prisma.inventoryItem.findUnique({ where: { id: scopedIngredient.id } })).stock, 2, "A scoped replay does not add stock twice");
   await receive(10, 200);
   assert.equal((await prisma.inventoryItem.findUnique({ where: { id: ingredient.id } })).conversionCost, 150);
   const transfer = await operations.createTransferRequest({ tenantId, user, payload: { destination_outlet_id: outlet.id, items: [{ inventory_id: ingredient.id, quantity: 4 }] } });

@@ -15,6 +15,8 @@ import { OutletOverviewPanel } from "../core/outlets/components/OutletOverviewPa
 import { useActiveOutlet } from "../core/outlets/store/ActiveOutletContext";
 import { StockReversal } from "../core/billing/components/StockReversal";
 import { BillPayments } from "../core/billing/components/BillPayments";
+import { printReceipt } from "../core/billing/receipt/printReceipt";
+import { toast } from "sonner";
 
 
 const getStartOfToday = () => {
@@ -212,14 +214,17 @@ export const Bills = () => {
             </DialogHeader>
             {selectedBill ? (
               <div style={{ display: "grid", gap: 16 }}>
+                <div className="cf-billing-panel__actions">
+                  <button className="cf-btn cf-btn--primary" data-testid="print-bill-receipt" type="button" onClick={() => printReceipt({ bill: selectedBill, settings }).catch(() => toast.error("Could not open the print dialog. Try again."))}>Print receipt</button>
+                </div>
                 {hasPermission(user, 'billing') && <div>
                   <button className="cf-btn cf-btn--secondary" onClick={() => navigate('/billing', reusableItems ? { state: { repeatBillId: selectedBill.id, repeatOutletId: selectedOutletId } } : {})}>{reusableItems ? 'Use items for a new sale' : 'Start a new sale'}</button>
                   <p className="cf-card__meta">{reusableItems ? 'Current menu prices and availability apply.' : 'These historical items have no menu references. Choose the current products for the new sale.'} The original bill, payments and table reservation remain unchanged.</p>
                 </div>}
                 <div className="cf-grid-2">
                   <div>
-                    <div className="cf-page__overline" style={{ marginBottom: 6 }}>Bill #</div>
-                    <div className="cf-table__mono">{selectedBill.id}</div>
+                    <div className="cf-page__overline" style={{ marginBottom: 6 }}>Invoice</div>
+                    <div className="cf-table__mono">{selectedBill.invoice_number || selectedBill.id}</div>
                   </div>
                   <div>
                     <div className="cf-page__overline" style={{ marginBottom: 6 }}>Payment</div>

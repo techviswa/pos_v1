@@ -23,6 +23,8 @@ import { loadOfflineData, saveOfflineData, setOfflineScope } from "../lib/offlin
 import { BillingFulfillmentSection } from "../features/billing/fulfillment/pages/BillingFulfillmentSection";
 import { fulfillmentService } from "../features/billing/fulfillment/services/fulfillment.service";
 import { useBillingFulfillment } from "../features/billing/fulfillment/store/useBillingFulfillment";
+import { printReceipt, feedbackUrlFor } from "../core/billing/receipt/printReceipt";
+import { LocalQrCode } from "../components/LocalQrCode";
 import {
   validateFulfillment,
   buildFulfillmentPayload,
@@ -1056,7 +1058,7 @@ export const Billing = () => {
         printableOfferTitle,
         printableOfferMessage,
         orderMeta: { ...nextOrderMeta, ...buildFulfillmentPayload(nextOrderMeta) },
-        feedbackLink: generatedBill.feedback_link || `${window.location.origin}/feedback/${generatedBill.feedback_token}`,
+        feedbackLink: feedbackUrlFor(generatedBill) || generatedBill.feedback_link || "",
         dateLabel: new Date().toLocaleDateString("en-IN"),
         timeLabel: new Date().toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" }),
       });
@@ -1068,7 +1070,7 @@ export const Billing = () => {
       setGiftPay({ code: "", card: null, amount: "" });
       setBillingErrors({});
       fetchProducts();
-      toast.success(`Bill ${generatedBill.id} generated`);
+      toast.success(`Bill ${generatedBill.invoice_number || generatedBill.id} generated`);
     } catch (error) {
       if (!isNetworkFailure(error)) {
         toast.error(getApiErrorMessage(error, "Failed to generate bill"));
@@ -1537,6 +1539,19 @@ export const Billing = () => {
             <DialogTitle className="cf-dialog__title">Receipt</DialogTitle>
           </DialogHeader>
           {receipt ? (
+            <div className="cf-billing-panel__actions" style={{ marginBottom: 12 }}>
+              <button
+                className="cf-btn cf-btn--primary"
+                data-testid="print-receipt"
+                onClick={() => printReceipt({ bill: receipt, settings }).catch(() => toast.error("Could not open the print dialog. Try again."))}
+                type="button"
+              >
+                Print receipt
+              </button>
+              <button className="cf-btn cf-btn--secondary" onClick={() => setReceipt(null)} type="button">New bill</button>
+            </div>
+          ) : null}
+          {receipt ? (
             <div className="cf-receipt">
               <div className="cf-receipt__shop">{settings.shopName}</div>
               <div className="cf-receipt__meta">
@@ -1548,7 +1563,7 @@ export const Billing = () => {
               </div>
               <div style={{ display: "flex", justifyContent: "space-between", color: "var(--cf-text-2)", fontSize: 10, marginBottom: 8 }}>
                 <span>
-                  Bill: <b>{receipt.id}</b>
+                  {receipt.offline ? "Ref" : "Invoice"}: <b>{receipt.offline ? receipt.id : receipt.invoice_number || receipt.id}</b>
                 </span>
                 <span>
                   {receipt.dateLabel} {receipt.timeLabel}
@@ -1651,15 +1666,11 @@ export const Billing = () => {
                 <div className="cf-page__overline" style={{ marginBottom: 10 }}>Customer Feedback</div>
                 <p className="cf-feedback-box__text">This feedback link is meant to stay on the printed receipt only. It is not sent separately by SMS or WhatsApp.</p>
                 {receipt.feedbackLink && !receipt.offline ? (
-                  <img
-                    alt="Feedback QR code"
-                    className="cf-feedback-box__qr"
-                    src={`https://api.qrserver.com/v1/create-qr-code/?size=140x140&data=${encodeURIComponent(receipt.feedbackLink)}`}
-                  />
+                  <LocalQrCode value={receipt.feedbackLink} label="Feedback QR code" filename="feedback-qr.png" size={140} />
                 ) : null}
                 <input className="cf-input" readOnly value={receipt.feedbackLink} />
                 <div className="cf-feedback-box__status">
-                  Print this bill to share the feedback link with the customer.
+                  The printed receipt carries this QR so the customer can rate the visit.
                 </div>
               </div>
             </div>

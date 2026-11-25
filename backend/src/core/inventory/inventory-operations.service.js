@@ -187,7 +187,7 @@ class InventoryOperationsService {
           received_item_count: receivedItems.length,
         },
       }, { tx });
-      if (requestKey) await tx.stateDocument.create({ data: { key: requestKey, data: { fingerprint, receipt_id: purchaseOrder.id } } });
+      if (requestKey) await tx.stateDocument.create({ data: { key: requestKey, data: { business_id: business.id, fingerprint, receipt_id: purchaseOrder.id } } });
       return { purchaseOrder, receivedItems };
     });
 

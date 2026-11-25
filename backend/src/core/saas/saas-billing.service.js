@@ -1,5 +1,6 @@
 import env from "../../config/env.js";
 import { createHttpError } from "../../shared/utils/http-error.js";
+import { SAAS_PLANS } from "./saas-plans.js";
 
 /**
  * The owner's "Plan & billing" screen. Plans, prices, payments and Razorpay subscriptions live in AdminCore (Taskoora's
@@ -12,6 +13,35 @@ let fetchImpl = (...args) => fetch(...args);
 export const setSaasBillingFetch = (implementation) => { fetchImpl = implementation || ((...args) => fetch(...args)); };
 
 const baseUrl = () => String(env.admincore.apiBaseUrl || "").replace(/\/+$/, "");
+
+const onlineBillingConfigured = () => Boolean(env.admincore.enabled && baseUrl() && env.admincore.apiKey);
+
+// Without the AdminCore link the owner still sees the plan this POS enforces (plan, status, limits and usage),
+// marked as not payable online, instead of an error page.
+const localStatus = async (context) => {
+  const { saasService } = await import("./saas.service.js");
+  const overview = await saasService.getTenantOverview({ businessId: context.businessId });
+  return {
+    configured: false,
+    source: "pos",
+    plan_slug: overview.plan?.key || null,
+    plan_name: overview.plan?.name || null,
+    billing_cycle: null,
+    status: overview.subscription?.status || null,
+    current_period_end: overview.subscription?.current_period_end || null,
+    trial_end: null,
+    auto_pay: false,
+    cancel_at_period_end: false,
+    pending_checkout: null,
+    payments: [],
+    usage: overview.usage?.limits || {},
+    enabled_features: overview.enabled_features || [],
+    plans: Object.values(SAAS_PLANS).map((plan) => ({
+      id: plan.key, slug: plan.key, name: plan.name, limits: plan.limits, features: plan.features,
+      pricing: { monthly: Number(plan.monthly_price || 0), yearly: 0 },
+    })),
+  };
+};
 
 const callAdminCore = async (method, path, body) => {
   if (!env.admincore.enabled || !baseUrl() || !env.admincore.apiKey) {
@@ -49,6 +79,7 @@ const scopeQuery = (context) => `?tenant_id=${encodeURIComponent(context.tenantI
 
 export const saasBillingService = {
   status(context) {
+    if (!onlineBillingConfigured()) return localStatus(context);
     return callAdminCore("GET", `/pos/${encodeURIComponent(context.businessId)}${scopeQuery(context)}`);
   },
 

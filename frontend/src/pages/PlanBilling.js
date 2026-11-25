@@ -15,6 +15,9 @@ const STATUS_TEXT = {
   expired: "Expired: read-only until paid", cancelled: "Cancelled: read-only", suspended: "Suspended by Taskoora",
 };
 
+const USAGE_LABELS = { outlets: "Outlets", staff: "Active staff", products: "Active menu items", qr_tables: "QR tables", monthly_orders: "Orders this month" };
+const FEATURE_LABELS = { billing: "Billing", products: "Menu", reports: "Reports", staff: "Staff", "table-management": "Tables", kot: "Kitchen tickets (KOT)", inventory: "Inventory", barcode: "Barcodes", "batch-tracking": "Batch tracking", "outlet-inventory-allocation": "Outlet stock allocation", "outlet-purchase-orders": "Outlet purchase orders", "delivery-route-plan": "Delivery routes" };
+
 /** The Owner's Taskoora plan: pay by UPI Autopay or card mandate through Razorpay, see payments, stop auto-pay. */
 export const PlanBilling = () => {
   const [data, setData] = useState(null);
@@ -62,6 +65,8 @@ export const PlanBilling = () => {
   };
 
   const paidPlans = (data?.plans || []).filter((plan) => Number(plan.pricing?.[cycle] || 0) > 0);
+  const cycles = ["monthly", "yearly"].filter((key) => (data?.plans || []).some((plan) => Number(plan.pricing?.[key] || 0) > 0));
+  const usageRows = Object.entries(data?.usage || {}).filter(([, row]) => row && typeof row === "object");
 
   return (
     <Layout title="Plan & Billing">
@@ -76,12 +81,31 @@ export const PlanBilling = () => {
         {data ? (
           <>
             <div className="cf-metrics">
-              <div className="cf-metric"><div className="cf-metric__label">Plan</div><div className="cf-metric__value">{data.plan_slug || "-"}</div><div className="cf-metric__sub">{data.billing_cycle || ""}</div></div>
+              <div className="cf-metric"><div className="cf-metric__label">Plan</div><div className="cf-metric__value">{data.plan_name || data.plan_slug || "-"}</div><div className="cf-metric__sub">{data.billing_cycle || ""}</div></div>
               <div className="cf-metric"><div className="cf-metric__label">Status</div><div className="cf-metric__value" style={{ fontSize: 16 }}>{STATUS_TEXT[data.status] || data.status || "-"}</div></div>
-              <div className="cf-metric"><div className="cf-metric__label">{data.cancel_at_period_end ? "Ends on" : "Paid until"}</div><div className="cf-metric__value" style={{ fontSize: 16 }}>{formatDateTime(data.current_period_end || data.trial_end)}</div></div>
+              <div className="cf-metric"><div className="cf-metric__label">{data.cancel_at_period_end ? "Ends on" : "Paid until"}</div><div className="cf-metric__value" style={{ fontSize: 16 }}>{data.current_period_end || data.trial_end ? formatDateTime(data.current_period_end || data.trial_end) : "No end date set"}</div></div>
               <div className="cf-metric"><div className="cf-metric__label">Automatic payment</div><div className="cf-metric__value" style={{ fontSize: 16 }}>{data.auto_pay ? (data.cancel_at_period_end ? "Stopping" : "On") : "Off"}</div></div>
             </div>
-            {!data.configured ? <p className="cf-card__meta" role="alert">Online plan payments are not switched on yet. Contact Taskoora support to pay.</p> : null}
+            {!data.configured ? <p className="cf-card__meta" role="status">Online plan payments are not switched on for this account yet, so plans cannot be bought here. Contact Taskoora support to change or pay for a plan.</p> : null}
+            {usageRows.length ? (
+              <div className="cf-card cf-card--padded" style={{ marginTop: 12, overflowX: "auto" }} data-testid="plan-usage">
+                <div className="cf-page__overline">Usage against your plan</div>
+                <table className="cf-table">
+                  <thead><tr><th>Limit</th><th>Used</th><th>Allowed</th><th>Left</th></tr></thead>
+                  <tbody>
+                    {usageRows.map(([key, row]) => (
+                      <tr key={key}>
+                        <td>{USAGE_LABELS[key] || key.replace(/_/g, " ")}</td>
+                        <td className="cf-table__mono">{row.used ?? "-"}</td>
+                        <td className="cf-table__mono">{row.limit == null ? "Unlimited" : row.limit}</td>
+                        <td className="cf-table__mono" style={row.exceeded || row.remaining === 0 ? { color: "var(--cf-danger, #b42318)", fontWeight: 600 } : undefined}>{row.limit == null ? "-" : row.remaining}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+                {(data.enabled_features || []).length ? <p className="cf-card__meta" style={{ marginTop: 8 }}>Included: {data.enabled_features.map((key) => FEATURE_LABELS[key] || key).join(", ")}.</p> : null}
+              </div>
+            ) : null}
             {data.pending_checkout?.short_url ? (
               <div className="cf-card cf-card--padded" role="status" style={{ marginTop: 12 }}>
                 You started paying for {data.pending_checkout.plan_slug} ({data.pending_checkout.billing_cycle}).{" "}
@@ -90,7 +114,7 @@ export const PlanBilling = () => {
             ) : null}
             <div className="cf-card cf-card--padded" style={{ marginTop: 12 }}>
               <div style={{ display: "flex", gap: 8, marginBottom: 10 }}>
-                {["monthly", "yearly"].map((key) => (
+                {cycles.length > 1 && cycles.map((key) => (
                   <button className={`cf-btn cf-btn--small ${cycle === key ? "cf-btn--primary" : "cf-btn--secondary"}`} key={key} type="button" onClick={() => setCycle(key)}>{key === "monthly" ? "Monthly" : "Yearly"}</button>
                 ))}
               </div>
@@ -102,6 +126,7 @@ export const PlanBilling = () => {
                       <strong>{plan.name}</strong>
                       <div className="cf-metric__value">{formatCurrency(plan.pricing[cycle])}<span className="cf-card__meta"> / {cycle === "monthly" ? "month" : "year"}</span></div>
                       {plan.description ? <p className="cf-card__meta">{plan.description}</p> : null}
+                      {plan.limits ? <p className="cf-card__meta">{[["outlets", "outlets"], ["staff", "staff"], ["products", "menu items"], ["qr_tables", "QR tables"]].map(([key, label]) => `${plan.limits[key] == null ? "Unlimited" : plan.limits[key]} ${label}`).join(" · ")}</p> : null}
                       <button className="cf-btn cf-btn--primary cf-btn--small" disabled={busy || current || !data.configured} type="button" onClick={() => pay(plan.slug)}>
                         {current ? "Current plan" : data.plan_slug === plan.slug ? "Pay for this plan" : "Switch to this plan"}
                       </button>
