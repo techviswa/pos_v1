@@ -403,3 +403,11 @@ till reload/sale/sync) passed. `render.yaml` gained `SENTRY_DSN` and
 `SENTRY_ENVIRONMENT`; DEPLOYMENT.md gained Razorpay till, Plan & Billing and
 Sentry setup. Hosted secrets, Razorpay accounts and Sentry DSNs remain operator
 inputs.
+## 2026-11-26: live operator fixes (Bheemas Cafe)
+
+- Fixed: purchase receiving returned 403 TENANT_REFERENCE_FORBIDDEN for every signed-in user (replay record lacked `business_id`). Evidence: live request 647a7a03 failed, passes after fix; scoped regression in `inventory-accounting-tests.mjs`. Audit of all other StateDocument writes found no further cases.
+- Fixed: receipts had no print action; printed feedback link pointed at the API host (404). Shared 80 mm receipt (`core/billing/receipt/printReceipt.js`) on checkout and Bills; verified on live by capturing the printed text.
+- Fixed: Plan & Billing 503 when AdminCore billing is not linked; now shows local plan, usage and features (`saas-billing-tests.mjs`).
+- Improved: Cash drawer summary and zero-float note; table/category/reservation forms use Notes and Position instead of raw JSON / Sort Order.
+- Verified: `deploy:check` passed, 38 frontend suites / 135 tests passed, build compiled, live browser checks of Billing, Bills print, Cash drawer and Plan.
+- Open: AdminCore link for online plan payments; KOT is not in the Starter plan; table release after payment is a manual staff action.
