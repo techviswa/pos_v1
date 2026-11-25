@@ -19,6 +19,7 @@ import { bindTenantScope } from "../../../database/prisma/tenant-context.js";
 import { guestProgress } from "./guest-progress.js";
 import { guestMenuDetails, qrSaleState } from "../../../core/products/qr-menu-details.js";
 import { recipeAllergenDetails } from "../../../core/products/ingredient-allergens.js";
+import { resolveTableOutlet } from "./table-outlet.js";
 
 const cloneJson = (value, fallback) => {
   if (value === undefined || value === null) return fallback;
@@ -204,6 +205,9 @@ class QrOrderingService {
     }
 
     bindTenantScope({ businessId: qrCode.businessId, tenantId: qrCode.business.tenantId });
+    const tableOutlet = await resolveTableOutlet({ businessId: qrCode.businessId, meta: qrCode.table.meta });
+    qrCode.outletId = tableOutlet.outletId;
+    qrCode.outletAmbiguous = tableOutlet.ambiguous;
     return qrCode;
   }
 
@@ -305,7 +309,7 @@ class QrOrderingService {
       requestMeta.refresh ? Promise.resolve() : this.recordScan(qrCode, requestMeta),
       requestMeta.refresh ? prisma.tableSession.findUnique({ where: { sessionKey: todaySessionKey(qrCode.tableId) } }) : this.ensureTableSession({ qrCode }),
     ]);
-    const outletId = qrCode.table.meta?.outlet_id || qrCode.table.meta?.outletId || null;
+    const outletId = qrCode.outletId;
     const [products, rules] = await Promise.all([
       prisma.product.findMany({
         where: {
@@ -497,7 +501,10 @@ class QrOrderingService {
       });
     }
 
-    const outletId = qrCode.table.meta?.outlet_id || qrCode.table.meta?.outletId || null;
+    const outletId = qrCode.outletId;
+    if (qrCode.outletAmbiguous) {
+      throw createHttpError({ statusCode: 409, code: "TABLE_OUTLET_REQUIRED", message: "This table is not linked to an outlet yet. Please ask staff to take your order." });
+    }
     const productIds = [...new Set(requestedItems.map((item) => item.productId || item.product_id).filter(Boolean))];
     // QR-specific availability (QR channel switch and schedule) is checked first, then the shared price engine
     // validates variations, add-ons and modifier choices and prices every line as billing will.
@@ -646,7 +653,7 @@ class QrOrderingService {
       const created = await tx.order.create({
         data: {
           businessId: qrCode.businessId,
-          outletId: qrCode.table.meta?.outlet_id || qrCode.table.meta?.outletId || null,
+          outletId: qrCode.outletId,
           trackingToken,
           customerName,
           channel: "qr",

@@ -10,6 +10,7 @@ import { getApiErrorMessage } from "../lib/apiErrors";
 import { useUi } from "../contexts/UiContext";
 import { useAuth } from "../contexts/AuthContext";
 import { useAutoRefresh } from "../hooks/useAutoRefresh";
+import { useBusinessTemplate } from "../core/platform/store/useBusinessTemplate";
 import { QrInbox } from "../components/QrInbox";
 import { TableAssistanceInbox } from "../components/TableAssistanceInbox";
 import { fulfillmentService } from "../features/billing/fulfillment/services/fulfillment.service";
@@ -106,14 +107,21 @@ export const Waiter = () => {
   };
 
   useAutoRefresh(fetchData, { liveResources: ["bills", "tables", "reservations"], refreshOnFocus: true });
+  // Kitchen tickets are a plan feature: without it there is no pickup queue to show (the API answers 403).
+  const { isFeatureEnabled } = useBusinessTemplate();
+  const [kitchenOff, setKitchenOff] = useState(false);
+  const kitchenEnabled = isFeatureEnabled("kot") && !kitchenOff;
   const fetchKitchen = async () => {
     try {
       const response = await axios.get(`${API_URL}/api/kot`, { withCredentials: true, params: { status: "ready", limit: 100 } });
       setReadyKitchen(toArrayPayload(response.data));
       setKitchenError(null);
-    } catch (error) { setKitchenError(error); }
+    } catch (error) {
+      if (error.response?.data?.error?.code === "FEATURE_DISABLED") { setKitchenOff(true); return; }
+      setKitchenError(error);
+    }
   };
-  useAutoRefresh(fetchKitchen, { liveResources: ["kot"], refreshOnFocus: true });
+  useAutoRefresh(fetchKitchen, { enabled: kitchenEnabled, liveResources: ["kot"], refreshOnFocus: true });
   const serveTicket = async (ticketId) => {
     setServing((current) => ({ ...current, [ticketId]: true }));
     try {
@@ -227,7 +235,7 @@ export const Waiter = () => {
         <QrInbox currency={settings.currency} />
         <TableAssistanceInbox />
 
-        <section className="cf-card cf-card--padded" aria-label="Kitchen pickup queue">
+        {kitchenEnabled ? <section className="cf-card cf-card--padded" aria-label="Kitchen pickup queue">
           <h2>Kitchen orders ready for pickup</h2>
           {kitchenError ? <ApiErrorPanel error={kitchenError} onRetry={fetchKitchen} /> : readyKitchen.length ? readyKitchen.map((ticket) => (
             <div key={ticket.id} style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 12, padding: "12px 0" }}>
@@ -238,7 +246,7 @@ export const Waiter = () => {
               <button type="button" className="cf-btn cf-btn--primary" style={{ minHeight: 44 }} disabled={serving[ticket.id]} onClick={() => serveTicket(ticket.id)}>Mark served</button>
             </div>
           )) : <p>No kitchen orders waiting for pickup.</p>}
-        </section>
+        </section> : null}
         <div className="cf-metrics">
           <button className="cf-metric cf-metric--button" onClick={() => navigate("/waiter/reservations")} type="button">
             <div className="cf-metric__label">Reserved Tables</div>

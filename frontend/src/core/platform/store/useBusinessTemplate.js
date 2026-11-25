@@ -1,6 +1,7 @@
 import { useMemo } from "react";
 import { FEATURE_REGISTRY } from "../features/featureRegistry";
 import { getActiveBusinessConfig } from "../config/activeBusinessConfig";
+import { isDisabledByServer, useServerDisabledFeatures } from "./serverFeatures";
 
 const toArray = (value) => (Array.isArray(value) ? value : []);
 
@@ -8,9 +9,10 @@ export const useBusinessTemplate = () => {
   const businessConfig = useMemo(() => getActiveBusinessConfig(), []);
   const activeTemplate = businessConfig.template;
   const operationalRules = businessConfig.operationalRules || activeTemplate?.operationalRules || {};
+  const serverDisabled = useServerDisabledFeatures();
   const enabledFeatures = useMemo(
-    () => new Set(toArray(businessConfig.enabledFeatures)),
-    [businessConfig.enabledFeatures],
+    () => new Set(toArray(businessConfig.enabledFeatures).filter((key) => !isDisabledByServer(serverDisabled, key))),
+    [businessConfig.enabledFeatures, serverDisabled],
   );
   const enabledModules = useMemo(
     () => new Set(toArray(businessConfig.enabledModules)),

@@ -33,8 +33,7 @@ export const tableAssistanceService = {
   async create({ token, sessionKey, payload = {} }) {
     const { qr, session } = await guestContext({ token, sessionKey });
     if (qr.accessMode === "read_only") fail(402, "Table requests are unavailable for this business");
-    const outletId = qr.table.meta?.outlet_id || qr.table.meta?.outletId || null;
-    if (outletId && !await prisma.outlet.findFirst({ where: { id: outletId, businessId: qr.businessId }, select: { id: true } })) fail(409, "This table's outlet needs to be corrected by the restaurant");
+    const outletId = qr.outletId;
     if (typeof payload.kind !== "string" || !Object.hasOwn(ASSISTANCE_KINDS, payload.kind)) fail(400, "Choose a valid assistance request");
     const note = typeof payload.note === "string" ? payload.note.trim() : "";
     if (note.length > 200) fail(400, "Keep your request within 200 characters");

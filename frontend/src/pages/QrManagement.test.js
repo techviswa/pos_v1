@@ -8,12 +8,15 @@ jest.mock("qrcode", () => ({ toDataURL: () => Promise.resolve("data:image/png;ba
 jest.mock("../features/billing/fulfillment/services/fulfillment.service", () => ({ fulfillmentService: {
   fetchTableManagement: jest.fn(() => Promise.resolve({ tables: { items: [{ id: "table-1", name: "Table 1", qr_ordering: { token: "active-token", active: true } }] } })),
   deleteTableQrCode: jest.fn(() => Promise.resolve({ deleted: true })),
-  fetchSettings: () => Promise.resolve({ capabilities: { qrOrderingEnabled: true } }),
+  fetchSettings: jest.fn(() => Promise.resolve({ capabilities: { qrOrderingEnabled: true } })),
+  updateSettings: jest.fn((settings) => Promise.resolve(settings)),
 } }));
 
 beforeEach(() => {
   fulfillmentService.fetchTableManagement.mockResolvedValue({ tables: { items: [{ id: "table-1", name: "Table 1", qr_ordering: { token: "active-token", active: true } }] } });
   fulfillmentService.deleteTableQrCode.mockResolvedValue({ deleted: true });
+  fulfillmentService.fetchSettings.mockResolvedValue({ capabilities: { qrOrderingEnabled: true } });
+  fulfillmentService.updateSettings.mockImplementation((settings) => Promise.resolve(settings));
 });
 
 test("QR workspace displays a scannable image, download and menu link for each active table", async () => {
@@ -46,4 +49,20 @@ test("Delete QR confirms, deletes only the QR and refreshes the workspace", asyn
     expect(element.querySelector('img[alt="Scan to order at Table 1"]')).toBeNull();
     expect(element.textContent).toContain("Table 1");
   } finally { confirm.mockRestore(); await act(async () => root.unmount()); }
+});
+
+test("When QR ordering is off, the workspace says guests cannot order and turns it on in one step", async () => {
+  global.IS_REACT_ACT_ENVIRONMENT = true;
+  fulfillmentService.fetchSettings.mockResolvedValue({ capabilities: { qrOrderingEnabled: false } });
+  const element = document.createElement("div");
+  const root = createRoot(element);
+  try {
+    await act(async () => root.render(<QrManagement />));
+    expect(element.querySelector('[data-testid="qr-ordering-blocked"]').textContent).toContain("QR ordering is off");
+    expect(element.textContent).toContain("Code ready · ordering off");
+    await act(async () => element.querySelector('[data-testid="qr-turn-on"]').click());
+    expect(fulfillmentService.updateSettings).toHaveBeenCalledWith(expect.objectContaining({ capabilities: expect.objectContaining({ qrOrderingEnabled: true }) }));
+    expect(element.querySelector('[data-testid="qr-ordering-blocked"]')).toBeNull();
+    expect(element.textContent).toContain("Active");
+  } finally { await act(async () => root.unmount()); }
 });

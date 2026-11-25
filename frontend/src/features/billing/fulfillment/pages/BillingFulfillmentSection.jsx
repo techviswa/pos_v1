@@ -22,6 +22,8 @@ export const BillingFulfillmentSection = ({
   areaItems,
   reservationItems,
   qrOrderingEnabled,
+  outletItems,
+  activeOutletId,
   onSelectTable,
   onReserveTable,
   onUndoReservation,
@@ -83,6 +85,8 @@ export const BillingFulfillmentSection = ({
         reservationItems={reservationItems}
         tableItems={tableItems}
         qrOrderingEnabled={qrOrderingEnabled}
+        outletItems={outletItems}
+        activeOutletId={activeOutletId}
       />
     ) : null}
   </div>

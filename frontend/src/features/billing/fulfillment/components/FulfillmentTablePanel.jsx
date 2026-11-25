@@ -12,6 +12,7 @@ const createEmptyTableForm = () => ({
   active: true,
   shape: "",
   sort_order: "",
+  outlet_id: "",
   notes: "",
   meta_base: {},
 });
@@ -132,6 +133,12 @@ const buildMeta = (base, notes) => {
   return text ? { ...rest, notes: text } : rest;
 };
 
+// The outlet that serves a table (its QR orders, stock and cash). One-outlet businesses never need to set it.
+const withOutlet = (meta, outletId) => {
+  const { outlet_id: _old, outletId: _legacy, ...rest } = meta;
+  return outletId ? { ...rest, outlet_id: outletId } : rest;
+};
+
 // A blank position means "after the last one", so nobody has to type a number to add a table or category.
 const resolvePosition = (value, items, editingId) => {
   const typed = String(value ?? "").trim();
@@ -160,6 +167,8 @@ export const FulfillmentTablePanel = ({
   onUpdateTable,
   orderMeta,
   qrOrderingEnabled,
+  outletItems = [],
+  activeOutletId = "",
   reservationItems = [],
   tableItems = [],
 }) => {
@@ -219,6 +228,7 @@ export const FulfillmentTablePanel = ({
     setTableForm({
       ...createEmptyTableForm(),
       area_id: areaId || "",
+      outlet_id: outletItems.length > 1 ? activeOutletId : "",
     });
     setIsTableModalOpen(true);
   };
@@ -233,6 +243,7 @@ export const FulfillmentTablePanel = ({
       active: table.active !== false,
       shape: table.shape || "",
       sort_order: String(table.sort_order ?? ""),
+      outlet_id: metaObject(table.meta).outlet_id || metaObject(table.meta).outletId || "",
       notes: metaObject(table.meta).notes || "",
       meta_base: metaObject(table.meta),
     });
@@ -271,6 +282,10 @@ export const FulfillmentTablePanel = ({
   };
 
   const submitTable = async () => {
+    if (outletItems.length > 1 && !tableForm.outlet_id) {
+      toast.error("Choose the outlet that serves this table");
+      return;
+    }
     const payload = {
       name: tableForm.name.trim(),
       code: tableForm.code.trim() || null,
@@ -279,7 +294,7 @@ export const FulfillmentTablePanel = ({
       active: tableForm.active,
       shape: tableForm.shape.trim() || null,
       sort_order: resolvePosition(tableForm.sort_order, tableItems, editingTableId),
-      meta: buildMeta(tableForm.meta_base, tableForm.notes),
+      meta: withOutlet(buildMeta(tableForm.meta_base, tableForm.notes), tableForm.outlet_id),
     };
 
     if (editingTableId) {
@@ -632,6 +647,27 @@ export const FulfillmentTablePanel = ({
                 {canManageTables ? <option value="__create_new__">+ Add New Category</option> : null}
               </select>
             </div>
+
+            {outletItems.length > 1 ? (
+              <div className="cf-field">
+                <label>Outlet</label>
+                <select
+                  className="cf-select cf-table-modal__input"
+                  data-testid="table-outlet"
+                  onChange={(event) => setTableForm((current) => ({ ...current, outlet_id: event.target.value }))}
+                  value={tableForm.outlet_id}
+                >
+                  <option value="">Choose outlet</option>
+                  {tableForm.outlet_id && !outletItems.some((outlet) => outlet.id === tableForm.outlet_id) ? (
+                    <option value={tableForm.outlet_id}>Another outlet (not assigned to you)</option>
+                  ) : null}
+                  {outletItems.map((outlet) => (
+                    <option key={outlet.id} value={outlet.id}>{outlet.name}</option>
+                  ))}
+                </select>
+                <span className="cf-card__meta">QR orders from this table go to this outlet's kitchen, stock and cash drawer.</span>
+              </div>
+            ) : null}
 
             <div className="cf-field">
               <label>Shape</label>

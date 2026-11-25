@@ -183,7 +183,7 @@ export const Billing = () => {
   const repeatBillId = location.state?.repeatBillId;
   const { user } = useAuth();
   const { settings } = useUi();
-  const { selectedOutlet, selectedOutletId } = useActiveOutlet();
+  const { outlets: outletItems, selectedOutlet, selectedOutletId } = useActiveOutlet();
   const [loading, setLoading] = useState(true);
   const [products, setProducts] = useState([]);
   const [recentOrders, setRecentOrders] = useState([]);
@@ -1221,6 +1221,8 @@ export const Billing = () => {
             onUpdateTable={updateTableRecord}
             orderMeta={orderMeta}
             qrOrderingEnabled={Boolean(tableData.settings?.capabilities?.qrOrderingEnabled)}
+            outletItems={outletItems || []}
+            activeOutletId={selectedOutletId || ""}
             reservationItems={tableReservations.items || []}
             sectionRef={fulfillmentSectionRef}
             setOrderMeta={setOrderMeta}

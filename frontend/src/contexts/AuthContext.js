@@ -3,6 +3,7 @@ import axios from 'axios';
 import { canRetryRead, createBackendRecovery, isTemporaryBackendFailure } from '../lib/backendRecovery';
 import { clearTabSessionId, getTabSessionHeaders, getTabSessionId, setTabSessionId } from '../lib/sessionSlots';
 import { API_URL } from '../lib/apiUrl';
+import { setFeatureOwner } from '../core/platform/store/serverFeatures';
 import { setOfflineOwner } from '../core/offline/offlineQueue';
 import {
   clearOfflineData,
@@ -86,6 +87,9 @@ export const AuthProvider = ({ children }) => {
     setOfflineScope(user || null);
     if (user && !user.offline) saveOfflineSession(user);
   }, [user]);
+  // Plan features (e.g. kitchen tickets) are loaded again whenever a different user or business signs in.
+  const featureOwner = user && !user.offline ? `${user.id || ""}:${user.business_id || user.businessId || ""}` : "";
+  useEffect(() => { setFeatureOwner(featureOwner); }, [featureOwner]);
   const [loading, setLoading] = useState(true);
   const [waking, setWaking] = useState(false);
   const [authUnavailable, setAuthUnavailable] = useState(false);

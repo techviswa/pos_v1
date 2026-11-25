@@ -6,7 +6,12 @@ export const setQrConnection = (connection) => { runtimeConnection = connection;
 
 export const resolveQrApiBaseUrl = (configured = "", pageOrigin = window.location.origin) => resolveApiBaseUrl(configured, pageOrigin);
 
-export const getPublicQrUrl = (token, configured = process.env.REACT_APP_PUBLIC_FRONTEND_URL, pageOrigin = window.location.origin) => {
+/** True when guests can only reach this QR link from the same network as the POS (localhost or a LAN address). */
+export const isLocalNetworkUrl = (url) => {
+  try { const { hostname } = new URL(url); return isLoopback(hostname) || isLan(hostname); } catch { return false; }
+};
+
+export const getPublicQrUrl =(token, configured = process.env.REACT_APP_PUBLIC_FRONTEND_URL, pageOrigin = window.location.origin) => {
   const page = new URL(pageOrigin);
   const base = new URL(runtimeConnection?.public_frontend_url || configured || pageOrigin);
   // Opening POS through its current LAN address also corrects stale local QR hosts.

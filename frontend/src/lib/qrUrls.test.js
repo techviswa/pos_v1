@@ -1,4 +1,4 @@
-import { getPublicQrUrl, resolveQrApiBaseUrl, setQrConnection } from "./qrUrls";
+import { getPublicQrUrl, isLocalNetworkUrl, resolveQrApiBaseUrl, setQrConnection } from "./qrUrls";
 afterEach(() => setQrConnection(null));
 
 test("phones use the POS network address instead of their own localhost", () => {
@@ -19,4 +19,11 @@ test("an unconfigured public deployment never contacts a hardcoded service", () 
 test("QR links follow the currently opened LAN address and preserve tokens", () => {
   expect(getPublicQrUrl("token", "http://192.168.1.67:3002", "http://192.168.0.14:3002")).toBe("http://192.168.0.14:3002/qr/token");
   expect(getPublicQrUrl("token", "https://menu.example.com", "http://localhost:3002")).toBe("https://menu.example.com/qr/token");
+});
+
+test("only local or LAN QR links carry the same Wi-Fi warning", () => {
+  expect(isLocalNetworkUrl("http://192.168.0.14:3002/qr/x")).toBe(true);
+  expect(isLocalNetworkUrl("http://localhost:3002/qr/x")).toBe(true);
+  expect(isLocalNetworkUrl("https://pos-v1-pi.vercel.app/qr/x")).toBe(false);
+  expect(isLocalNetworkUrl("not a url")).toBe(false);
 });

@@ -3,7 +3,7 @@ import { ArrowClockwise, Copy, QrCode } from "@phosphor-icons/react";
 import { toast } from "sonner";
 import { Layout } from "../components/Layout";
 import { fulfillmentService } from "../features/billing/fulfillment/services/fulfillment.service";
-import { getPublicQrUrl } from "../lib/qrUrls";
+import { getPublicQrUrl, isLocalNetworkUrl } from "../lib/qrUrls";
 import { LocalQrCode } from "../components/LocalQrCode";
 import { ApiErrorPanel } from "../components/ApiErrorPanel";
 import { QrServiceAnalytics } from "../components/QrServiceAnalytics";
@@ -99,18 +99,26 @@ export const QrManagement = () => {
     }));
   };
 
-  const saveRules = async () => {
+  const saveRules = async (toSave = settings, message = "QR settings saved") => {
     setSavingRules(true);
     try {
-      const nextSettings = await fulfillmentService.updateSettings(settings);
+      const nextSettings = await fulfillmentService.updateSettings(toSave);
       setSettings(normalizeSettings(nextSettings));
-      toast.success("QR settings saved");
+      toast.success(message);
     } catch {
       toast.error("Unable to save QR settings");
     } finally {
       setSavingRules(false);
     }
   };
+
+  // Guests who scan a code while ordering is off or paused only see "Ordering unavailable", so say so here.
+  const orderingBlocked = !qrOrderingEnabled ? "off" : qrRules.orderingPaused ? "paused" : "";
+  const turnOnOrdering = () => saveRules(
+    { ...settings, capabilities: { ...settings.capabilities, qrOrderingEnabled: true }, reservationRules: { ...settings.reservationRules, qrOrderingRules: { ...qrRules, orderingPaused: false } } },
+    "QR ordering is on. Guests can now order by scanning a table code.",
+  );
+  const localLinks = qrTables.some((table) => isLocalNetworkUrl(getPublicQrUrl(table.qr_ordering.token)));
 
   const prepareQr = async (table, payload = {}) => {
     setBusyTableId(table.id);
@@ -159,7 +167,7 @@ export const QrManagement = () => {
               <ArrowClockwise size={15} weight="bold" />
               Refresh
             </button>
-            <button className="cf-btn cf-btn--primary" disabled={savingRules || loading} onClick={saveRules} type="button">
+            <button className="cf-btn cf-btn--primary" disabled={savingRules || loading} onClick={() => saveRules()} type="button">
               {savingRules ? "Saving..." : "Save Rules"}
             </button>
           </div> : null}
@@ -175,13 +183,20 @@ export const QrManagement = () => {
           </div>
         ) : (
           <>
+            {orderingBlocked ? <section className="cf-card cf-card--padded" role="alert" data-testid="qr-ordering-blocked" style={{ marginBottom: 24, borderColor: "var(--cf-danger, #dc2626)" }}>
+              <div className="cf-card__title"><span>{orderingBlocked === "off" ? "QR ordering is off" : "QR ordering is paused"}</span></div>
+              <p className="cf-card__meta">Guests who scan a table code now see "Ordering unavailable" and cannot order.</p>
+              <button className="cf-btn cf-btn--primary" type="button" disabled={savingRules} onClick={turnOnOrdering} data-testid="qr-turn-on">
+                {savingRules ? "Saving..." : orderingBlocked === "off" ? "Turn on QR ordering" : "Resume QR ordering"}
+              </button>
+            </section> : null}
             <section className="cf-card cf-card--padded" style={{ marginBottom: 24 }} aria-label="Scannable table QR codes">
               <div className="cf-card__title"><span>Scan a table QR code</span></div>
-              <p className="cf-card__meta">Scan the image with your phone camera, or download it to print for the table. On this local setup, phones must use the same Wi-Fi as the POS computer.</p>
+              <p className="cf-card__meta">Scan the image with your phone camera, or download it to print for the table.{localLinks ? " These links use a local address, so phones must be on the same Wi-Fi as the POS computer." : ""}</p>
               <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(190px, 1fr))", gap: 12 }}>
                 {qrTables.map((table) => <article className="cf-card cf-card--padded" key={table.id} style={{ textAlign: "center" }}>
                   <h3>{table.name}</h3>
-                  <p className="cf-card__meta">{table.area_name || "Unassigned"} · {table.qr_ordering.active ? "Active" : "Inactive — activate before use"}</p>
+                  <p className="cf-card__meta">{table.area_name || "Unassigned"} · {!table.qr_ordering.active ? "Inactive — activate before use" : orderingBlocked ? `Code ready · ordering ${orderingBlocked}` : "Active"}</p>
                   {table.qr_ordering.active ? <LocalQrCode size={128} value={getPublicQrUrl(table.qr_ordering.token)} label={`Scan to order at ${table.name}`} filename={`table-${table.code || table.id}-qr.png`} /> : <p>Generate an active QR code for this table below.</p>}
                   <a className="cf-btn cf-btn--secondary cf-btn--small" style={{ marginTop: 12 }} href={getPublicQrUrl(table.qr_ordering.token)} target="_blank" rel="noreferrer">Open menu</a>
                   <button className="cf-btn cf-btn--danger cf-btn--small" style={{ marginTop: 8 }} type="button" disabled={busyTableId === table.id} onClick={() => deleteQr(table)}>Delete QR</button>

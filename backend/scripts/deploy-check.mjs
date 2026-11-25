@@ -31,6 +31,7 @@ const commands = [
     "node scripts/qr-progress-tests.mjs",
     "node scripts/qr-menu-details-tests.mjs",
     "node scripts/qr-checkout-tests.mjs",
+    "node scripts/qr-table-outlet-tests.mjs",
     "node scripts/qr-experience-tests.mjs",
   "node scripts/customer-qr-sync-tests.mjs",
   "node scripts/database-error-tests.mjs",

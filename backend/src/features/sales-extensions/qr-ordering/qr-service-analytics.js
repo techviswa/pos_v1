@@ -4,6 +4,7 @@ import { guestProgress } from "./guest-progress.js";
 import { ASSISTANCE_KINDS } from "./table-assistance.service.js";
 import { reviewKey } from "./qr-experience.service.js";
 import { qrBillScope } from "./qr-bill-scope.js";
+import { tableOutletMap } from "./table-outlet.js";
 
 const fail = (message) => { throw createHttpError({ statusCode: 400, message }); };
 const day = (value) => new Date(value).toISOString().slice(0, 10);
@@ -30,7 +31,8 @@ export async function qrServiceAnalytics({ businessId, outletIds, query = {} }) 
   const range = analyticsRange(query), createdAt = { gte: range.start, lt: range.end };
   const outlet = outletIds ? { outletId: { in: outletIds } } : {};
   const tables = await prisma.diningTable.findMany({ where: { businessId }, select: { id: true, meta: true } });
-  const tableIds = tables.filter((table) => !outletIds || outletIds.includes(table.meta?.outlet_id || table.meta?.outletId)).map((table) => table.id);
+  const outletOf = await tableOutletMap({ businessId, tables });
+  const tableIds = tables.filter((table) => !outletIds || outletIds.includes(outletOf.get(table.id))).map((table) => table.id);
   const [orders, scans, documents, feedback] = await Promise.all([
     prisma.order.findMany({ where: { businessId, channel: "qr", createdAt, ...outlet }, include: { items: true, kitchenTickets: { select: { status: true } } } }),
     prisma.tableQrScanEvent.count({ where: { businessId, scannedAt: createdAt, ...(outletIds ? { tableId: { in: tableIds } } : {}) } }),

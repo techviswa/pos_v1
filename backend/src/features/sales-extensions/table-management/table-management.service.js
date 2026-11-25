@@ -282,6 +282,8 @@ class TableManagementService {
     const business = await this.getBusiness({ tenantId, businessId });
     const data = tableManagementValidation.validateTablePayload(payload);
     await assertOwnedIds({ kind: "area", ids: [data.areaId], businessId: business.id });
+    // A table may only be linked to one of this business's own outlets.
+    await assertOwnedIds({ kind: "outlet", ids: [data.meta?.outlet_id || data.meta?.outletId], businessId: business.id });
     const created = await tableManagementRepository.createTable({
       businessId: business.id,
       data: {
@@ -320,6 +322,8 @@ class TableManagementService {
 
     const data = tableManagementValidation.validateTablePayload(payload, { partial: true });
     await assertOwnedIds({ kind: "area", ids: [data.areaId], businessId: business.id });
+    // A table may only be linked to one of this business's own outlets.
+    await assertOwnedIds({ kind: "outlet", ids: [data.meta?.outlet_id || data.meta?.outletId], businessId: business.id });
     const updated = await tableManagementRepository.updateTable({
       tableId,
       data: {
