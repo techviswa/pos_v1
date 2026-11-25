@@ -86,6 +86,8 @@ export const DashboardMetricDetail = () => {
   const filteredRevenueBills = revenueDetail.bills || [];
   const revenueSummary = {
     revenue: Number(revenueDetail.revenue || 0),
+    netSales: Number(revenueDetail.net_sales ?? revenueDetail.revenue ?? 0),
+    itemsWithoutCost: Number(revenueDetail.items_without_cost || 0),
     goodsCost: Number(revenueDetail.goods_cost || 0),
     grossProfit: Number(revenueDetail.gross_profit || 0),
     marginPercent: Number(revenueDetail.margin_percent || 0),
@@ -96,10 +98,11 @@ export const DashboardMetricDetail = () => {
   };
 
   const revenueRows = [
-    { label: "Revenue", value: revenueSummary.revenue },
+    { label: "Sales (incl. GST)", value: revenueSummary.revenue },
+    { label: "Net sales (excl. GST)", value: revenueSummary.netSales },
     { label: "Goods Cost", value: revenueSummary.goodsCost },
     { label: "Gross Profit", value: revenueSummary.grossProfit },
-    { label: "Margin %", value: revenueSummary.marginPercent, isPercent: true },
+    { label: "Margin % of net sales", value: revenueSummary.marginPercent, isPercent: true },
     { label: "Online Revenue", value: revenueSummary.onlineRevenue },
     { label: "Dine-In Revenue", value: revenueSummary.dineInRevenue },
     { label: "Orders", value: revenueSummary.orderCount, isCount: true },
@@ -457,10 +460,10 @@ export const DashboardMetricDetail = () => {
                 Financial summary for the selected period
               </span>
             </div>
-            {revenueSummary.goodsCost <= 0 && revenueSummary.revenue > 0 ? (
-              <div className="cf-table-toolbar" style={{ borderTop: "1px solid var(--cf-border)" }}>
+            {revenueSummary.itemsWithoutCost > 0 && revenueSummary.revenue > 0 ? (
+              <div className="cf-table-toolbar" role="status" style={{ borderTop: "1px solid var(--cf-border)" }}>
                 <span style={{ color: "var(--cf-text-2)", fontSize: 12 }}>
-                  Goods cost is still zero for the products in this period. Update product goods cost to see true profit and margin.
+                  {revenueSummary.itemsWithoutCost} item(s) sold in this period had no recipe or cost price, so their cost is counted as zero and profit is overstated. Add a recipe or cost price in Products; past bills keep the cost recorded when they were sold.
                 </span>
               </div>
             ) : null}
@@ -489,7 +492,8 @@ export const DashboardMetricDetail = () => {
                 <tr>
                   <th>Bill</th>
                   <th>Customer</th>
-                  <th>Revenue</th>
+                  <th>Sales (incl. GST)</th>
+                  <th>Net (excl. GST)</th>
                   <th>Goods Cost</th>
                   <th>Gross Profit</th>
                 </tr>
@@ -498,17 +502,19 @@ export const DashboardMetricDetail = () => {
                 {filteredRevenueBills.length ? filteredRevenueBills.map((bill) => {
                   const billGoodsCost = Number(bill.goods_cost || 0);
                   const billRevenue = Number(bill.revenue ?? bill.total ?? 0);
+                  const billNet = Number(bill.net_sales ?? billRevenue);
                   return (
                     <tr key={bill.id}>
                       <td className="cf-table__mono">{bill.id.slice(0, 8)}</td>
                       <td>{bill.customer_name || "Walk-in"}</td>
                       <td className="cf-table__mono">{formatCurrency(billRevenue, settings.currency)}</td>
+                      <td className="cf-table__mono">{formatCurrency(billNet, settings.currency)}</td>
                       <td className="cf-table__mono">{formatCurrency(billGoodsCost, settings.currency)}</td>
-                      <td className="cf-table__mono">{formatCurrency(billRevenue - billGoodsCost, settings.currency)}</td>
+                      <td className="cf-table__mono">{formatCurrency(Number(bill.gross_profit ?? billNet - billGoodsCost), settings.currency)}</td>
                     </tr>
                   );
                 }) : (
-                  <tr><td colSpan="5" style={{ color: "var(--cf-text-3)" }}>No bills found for this period.</td></tr>
+                  <tr><td colSpan="6" style={{ color: "var(--cf-text-3)" }}>No bills found for this period.</td></tr>
                 )}
               </tbody>
             </table>

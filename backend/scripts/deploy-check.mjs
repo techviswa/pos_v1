@@ -23,6 +23,7 @@ const commands = [
   "node scripts/sales-charts-tests.mjs",
   "node src/core/dashboard/outlet-report-policy.test.mjs",
   "node scripts/dashboard-quality-tests.mjs",
+  "node scripts/dashboard-profit-tests.mjs",
   "node scripts/bill-serialization-tests.mjs",
   "node scripts/fulfillment-policy-tests.mjs",
   "node scripts/qr-connection-tests.mjs",

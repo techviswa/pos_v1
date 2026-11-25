@@ -131,7 +131,7 @@ export const Dashboard = () => {
       label: "All-time Sales",
       value: formatCurrency(stats?.total_revenue || 0, settings.currency),
       sub: Number(stats?.revenue_summary?.goods_cost || 0) > 0
-        ? `${formatCurrency(stats?.revenue_summary?.gross_profit || 0, settings.currency)} gross profit at ${Number(stats?.revenue_summary?.margin_percent || 0).toFixed(1)}% margin`
+        ? `${formatCurrency(stats?.revenue_summary?.gross_profit || 0, settings.currency)} gross profit at ${Number(stats?.revenue_summary?.margin_percent || 0).toFixed(1)}% margin (excl. GST)${Number(stats?.revenue_summary?.items_without_cost || 0) > 0 ? ` · ${stats.revenue_summary.items_without_cost} item(s) sold without a cost` : ""}`
         : "Update goods cost in Products to unlock true profit",
     },
   ];

@@ -11,6 +11,7 @@ import { useAutoRefresh } from "../hooks/useAutoRefresh";
 import { MenuStructureEditor, toMenuStructureForm, toMenuStructurePayload, validateMenuStructure } from "../core/menu/MenuStructureEditor";
 import { ProductPhoto, readProductPhoto, resolveProductPhoto } from "../components/ProductPhoto";
 import { QrProductDetails, normalizeQrDetails } from "../components/QrProductDetails";
+import { convertRecipeQuantity } from "../lib/recipeUnits";
 
 const LOW_STOCK_THRESHOLD = 3;
 const MENU_CHANNELS = ["Dine-In", "Takeaway", "Delivery"];
@@ -91,10 +92,12 @@ const getProductImageUrl = (product = {}) => resolveProductPhoto(
 const getProductInitial = (name = "") =>
   String(name || "P").trim().charAt(0).toUpperCase() || "P";
 
-const computeDraftRecipeCost = (lines = [], inventoryCatalog = []) =>
+// Ingredient cost is per stock unit (e.g. per litre); the recipe may use another unit (ml), so convert first.
+export const computeDraftRecipeCost = (lines = [], inventoryCatalog = []) =>
   (lines || []).reduce((sum, line) => {
     const inventoryItem = inventoryCatalog.find((item) => item.id === line.inventory_id);
-    return sum + (Number(inventoryItem?.conversion_cost || 0) * Number(line.quantity || 0));
+    const quantity = convertRecipeQuantity(line.quantity || 0, line.unit, inventoryItem?.unit) ?? Number(line.quantity || 0);
+    return sum + (Number(inventoryItem?.conversion_cost || 0) * quantity);
   }, 0);
 
 export const Products = () => {

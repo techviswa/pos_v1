@@ -72,10 +72,12 @@ export const getBillLineCost = (bill, item, product) => {
   const historical = saved?.unit_cost != null;
   const metadata = getBillMetadata(bill);
   const consumed = metadata.inventory_consumption || [];
-  const originalCost = toAnalyticsNumber(item.quantity) * toAnalyticsNumber(historical ? saved.unit_cost : product?.costPrice);
+  const unitCost = toAnalyticsNumber(historical ? saved.unit_cost : product?.costPrice);
+  const originalCost = toAnalyticsNumber(item.quantity) * unitCost;
   const productQuantity = (metadata.inventory_consumption_by_product || []).filter((entry) => entry.product_id === item.productId).reduce((sum, entry) => sum + entry.quantity, 0);
   const restoredQuantity = (metadata.stock_returns || []).flatMap((entry) => entry.products || []).filter((entry) => entry.product_id === item.productId).reduce((sum, entry) => sum + entry.quantity, 0);
   const retainedRatio = saved?.cost_source !== "recipe" ? 1 : metadata.stock_reversal ? 0 : productQuantity > 0 ? Math.max(0, 1 - restoredQuantity / productQuantity) : 1;
   const voidWithoutConsumption = VOID_STATUSES.has(String(bill.status || "").toLowerCase()) && !consumed.length;
-  return { amount: voidWithoutConsumption ? 0 : originalCost * retainedRatio, estimated: !historical };
+  // `missing`: the item sold with no cost known (no recipe and no cost price). Its ₹0 cost is unknown, not free.
+  return { amount: voidWithoutConsumption ? 0 : originalCost * retainedRatio, estimated: !historical, missing: unitCost <= 0 && toAnalyticsNumber(item.quantity) > 0 };
 };

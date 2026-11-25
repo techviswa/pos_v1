@@ -4,6 +4,7 @@ import { cartFromBill, configuredPrice } from '../core/billing/utils/reuseBill';
 import { API_URL } from "../lib/apiUrl";
 import axios from "axios";
 import { apiData } from "../lib/apiData";
+import { convertRecipeQuantity } from "../lib/recipeUnits";
 import { Layout } from "../components/Layout";
 import { ApiErrorPanel } from "../components/ApiErrorPanel";
 import { QrCheckoutInbox } from "../components/QrCheckoutInbox";
@@ -162,16 +163,20 @@ const recipeLineRemoved = (line, removals = []) => {
   return removals.some((token) => ingredientName === token || ingredientName.includes(token));
 };
 
-const summarizeRecipeLines = (recipeLines = [], multiplier = 1) =>
+// Demand per ingredient in the unit its stock is counted in (unitById), e.g. 150 ml of milk -> 0.15 l.
+// Lines whose units cannot be converted keep their own figure; the server refuses those bills with a clear message.
+export const summarizeRecipeLines = (recipeLines = [], multiplier = 1, unitById = {}) =>
   recipeLines.reduce((summary, line) => {
     if (!line?.inventory_id) return summary;
+    const stockUnit = unitById[line.inventory_id];
+    const converted = stockUnit ? convertRecipeQuantity(line.quantity || 0, line.unit, stockUnit) : null;
     const current = summary[line.inventory_id] || {
       inventory_id: line.inventory_id,
       ingredient_name: line.ingredient_name,
-      unit: line.unit,
+      unit: converted == null ? line.unit : stockUnit,
       quantity: 0,
     };
-    current.quantity += Number(line.quantity || 0) * Number(multiplier || 0);
+    current.quantity += Number(converted ?? line.quantity ?? 0) * Number(multiplier || 0);
     summary[line.inventory_id] = current;
     return summary;
   }, {});
@@ -445,6 +450,10 @@ export const Billing = () => {
     () => Object.fromEntries((inventoryCatalog || []).map((item) => [item.id, Number(item.current_stock || 0)])),
     [inventoryCatalog]
   );
+  const inventoryUnitById = useMemo(
+    () => Object.fromEntries((inventoryCatalog || []).filter((item) => item.unit).map((item) => [item.id, item.unit])),
+    [inventoryCatalog]
+  );
   const cartEntries = Object.values(cart);
   const buildConfiguredRecipeLines = (product, variationName = "", addonNames = [], removalNames = []) => {
     const variationOption = (product?.variation_options || []).find((item) => item.name === variationName);
@@ -466,7 +475,8 @@ export const Billing = () => {
             entry.addons || [],
             entry.removals || []
           ),
-          entry.quantity
+          entry.quantity,
+          inventoryUnitById
         );
         Object.values(demand).forEach((line) => {
           const bucket = summary[line.inventory_id] || { ...line, quantity: 0 };
@@ -475,7 +485,7 @@ export const Billing = () => {
         });
         return summary;
       }, {}),
-    [cartEntries]
+    [cartEntries, inventoryUnitById]
   );
   const cartProductCounts = useMemo(
     () =>
@@ -487,7 +497,7 @@ export const Billing = () => {
   );
   const getIngredientShortages = (recipeLines = [], multiplier = 1, existingDemand = cartIngredientDemand) => {
     if (!ingredientStockKnown) return [];
-    const demand = summarizeRecipeLines(recipeLines, multiplier);
+    const demand = summarizeRecipeLines(recipeLines, multiplier, inventoryUnitById);
     return Object.values(demand).filter((line) => {
       if (!Object.prototype.hasOwnProperty.call(inventoryStockById, line.inventory_id)) return false;
       const availableStock = Number(inventoryStockById[line.inventory_id] || 0);
@@ -808,7 +818,8 @@ export const Billing = () => {
               entry.addons || [],
               entry.removals || []
             ),
-            entry.quantity
+            entry.quantity,
+            inventoryUnitById
           );
           Object.values(demand).forEach((line) => {
             const bucket = summary[line.inventory_id] || { ...line, quantity: 0 };

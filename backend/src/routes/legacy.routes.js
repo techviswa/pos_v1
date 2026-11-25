@@ -100,64 +100,45 @@ const isBillInPeriod = (bill, periodRange) => {
   return true;
 };
 
-const buildProductCostMap = async (tenantId) => {
-  try {
-    const business = await ensureBusiness({ tenantId });
-    const products = await prisma.product.findMany({
-      where: { businessId: business.id },
-      select: { id: true, name: true, costPrice: true },
-    });
-    return new Map(products.flatMap((product) => [
-      [product.id, toNumber(product.costPrice, 0)],
-      [product.name, toNumber(product.costPrice, 0)],
-    ]));
-  } catch (error) {
-    throw error;
-  }
-};
-
-const getBillGoodsCost = (bill, productCostMap) =>
-  (bill.items || []).reduce((sum, item) => {
-    const quantity = toNumber(item.quantity, 0);
-    const unitCost = toNumber(item.unit_cost ?? productCostMap.get(item.productId) ?? productCostMap.get(item.product_id) ?? productCostMap.get(item.name), 0);
-    return sum + unitCost * quantity;
-  }, 0);
-
-const buildRevenueAnalytics = async ({ tenantId, bills, period = "all" }) => {
+// Sales are what customers paid (incl. GST, less refunds). Profit uses the same calculation as Reports:
+// GST excluded, and each bill's cost as recorded when it was sold. Items sold with no cost known are counted
+// so the margin is not presented as complete.
+const buildRevenueAnalytics = async ({ tenantId, bills, period = "all", outletId = null }) => {
   const periodRange = getPeriodRange(period);
-  const productCostMap = await buildProductCostMap(tenantId);
   const selectedBills = bills
     .filter((bill) => isRevenueBill(bill))
     .filter((bill) => isBillInPeriod(bill, periodRange));
+  const profit = await reportsService.profitSummary({ tenantId, outletId, start: periodRange.start || null, end: periodRange.end || null });
 
   const billRows = selectedBills.map((bill) => {
     const revenue = getBillNetRevenue(bill);
-    const goodsCost = getBillGoodsCost(bill, productCostMap);
+    const figures = profit.bills.get(bill.id) || { net_sales: revenue, goods_cost: 0, gross_profit: revenue };
     return {
       ...bill,
       revenue,
-      goods_cost: goodsCost,
-      gross_profit: revenue - goodsCost,
+      net_sales: figures.net_sales,
+      goods_cost: figures.goods_cost,
+      gross_profit: figures.gross_profit,
       channel: getBillChannel(bill),
     };
   });
 
   const revenue = billRows.reduce((sum, bill) => sum + bill.revenue, 0);
-  const goodsCost = billRows.reduce((sum, bill) => sum + bill.goods_cost, 0);
   const onlineRevenue = billRows
     .filter((bill) => bill.channel === "online")
     .reduce((sum, bill) => sum + bill.revenue, 0);
   const dineInRevenue = billRows
     .filter((bill) => bill.channel === "dine_in")
     .reduce((sum, bill) => sum + bill.revenue, 0);
-  const grossProfit = revenue - goodsCost;
 
   return {
     period: periodRange.key,
     revenue,
-    goods_cost: goodsCost,
-    gross_profit: grossProfit,
-    margin_percent: revenue ? (grossProfit / revenue) * 100 : 0,
+    net_sales: profit.net_sales,
+    goods_cost: profit.goods_cost,
+    gross_profit: profit.gross_profit,
+    margin_percent: profit.margin_percent,
+    items_without_cost: profit.items_without_cost,
     online_revenue: onlineRevenue,
     dine_in_revenue: dineInRevenue,
     order_count: billRows.length,
@@ -417,10 +398,10 @@ const getDashboardStats = async (tenantId, outletId = null, period = "all") => {
   const outlets = await getOutlets(tenantId);
   const outletIds = new Set(outlets.map((outlet) => outlet.id));
   const bills = await getAllRevenueBills(tenantId, outletId);
-  const revenueDetail = await buildRevenueAnalytics({ tenantId, bills, period });
+  const revenueDetail = await buildRevenueAnalytics({ tenantId, bills, period, outletId });
   const allTimeRevenueDetail = period === "all"
     ? revenueDetail
-    : await buildRevenueAnalytics({ tenantId, bills, period: "all" });
+    : await buildRevenueAnalytics({ tenantId, bills, period: "all", outletId });
   const kitchen = await getCentralKitchenSnapshot(tenantId, outletId ? [outletId] : null);
   const inventorySummary = { at_risk_items: kitchen.low_stock_items, expiry_alerts: kitchen.central_inventory.filter((row) => row.expiry_date && daysBetween(row.expiry_date) <= 14), total_wastage_last_30_days: kitchen.central_inventory.reduce((sum, row) => sum + row.wastage_last_30_days, 0) };
   const business = await ensureBusiness({ tenantId });
@@ -472,9 +453,11 @@ const getDashboardStats = async (tenantId, outletId = null, period = "all") => {
     cashier_count: cashierCount,
     total_revenue: allTimeRevenueDetail.revenue,
     revenue_summary: {
+      net_sales: allTimeRevenueDetail.net_sales,
       goods_cost: allTimeRevenueDetail.goods_cost,
       gross_profit: allTimeRevenueDetail.gross_profit,
       margin_percent: allTimeRevenueDetail.margin_percent,
+      items_without_cost: allTimeRevenueDetail.items_without_cost,
     },
     revenue_detail: revenueDetail,
     inventory_summary: {

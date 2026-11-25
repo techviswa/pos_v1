@@ -141,6 +141,31 @@ class ReportsService {
     };
   }
 
+  /**
+   * Profit for a time window, computed exactly like productProfitability so the dashboard and reports agree:
+   * revenue excludes GST and refunds, cost is what each bill recorded when it was sold. Returns per-bill figures too.
+   */
+  async profitSummary({ tenantId, outletId = null, start = null, end = null }) {
+    const context = await this.getReportContext({ tenantId, outletId });
+    const inWindow = (bill) => { const at = Date.parse(bill.created_at); return (!start || at >= start.getTime()) && (!end || at < end.getTime()); };
+    const productById = new Map(context.products.map((product) => [product.id, product]));
+    const bills = new Map();
+    const missing = new Set();
+    for (const bill of context.bills.filter((row) => isRevenueBill(row) && inWindow(row))) {
+      let goodsCost = 0;
+      for (const item of bill.items || []) {
+        const cost = getBillLineCost(bill, item, productById.get(item.productId));
+        goodsCost += cost.amount;
+        if (cost.missing) missing.add(item.productId || item.name);
+      }
+      const netSales = getBillSubtotal(bill);
+      bills.set(bill.id, { net_sales: netSales, goods_cost: goodsCost, gross_profit: netSales - goodsCost });
+    }
+    const totals = [...bills.values()].reduce((sum, row) => ({ net_sales: sum.net_sales + row.net_sales, goods_cost: sum.goods_cost + row.goods_cost }), { net_sales: 0, goods_cost: 0 });
+    const grossProfit = totals.net_sales - totals.goods_cost;
+    return { ...totals, gross_profit: grossProfit, margin_percent: totals.net_sales ? (grossProfit / totals.net_sales) * 100 : 0, items_without_cost: missing.size, bills };
+  }
+
   async productProfitability(input) {
     const { business, bills, products } = await this.getReportContext(input);
     const productById = new Map(products.map((product) => [product.id, product]));
@@ -158,6 +183,7 @@ class ReportsService {
           revenue: 0,
           cogs: 0,
           estimated_cost: false,
+          cost_missing: false,
           gross_profit: 0,
           margin_percent: 0,
         };
@@ -167,6 +193,7 @@ class ReportsService {
         const cost = getBillLineCost(bill, item, product);
         row.cogs += cost.amount;
         row.estimated_cost ||= cost.estimated;
+        row.cost_missing ||= cost.missing && isRevenueBill(bill);
         row.gross_profit = row.revenue - row.cogs;
         row.margin_percent = row.revenue > 0 ? (row.gross_profit / row.revenue) * 100 : 0;
         rowsByKey.set(key, row);
@@ -182,8 +209,9 @@ class ReportsService {
           revenue: sum.revenue + row.revenue,
           cogs: sum.cogs + row.cogs,
           gross_profit: sum.gross_profit + row.gross_profit,
+          items_without_cost: sum.items_without_cost + (row.cost_missing ? 1 : 0),
         }),
-        { quantity_sold: 0, revenue: 0, cogs: 0, gross_profit: 0 },
+        { quantity_sold: 0, revenue: 0, cogs: 0, gross_profit: 0, items_without_cost: 0 },
       ),
       rows,
     };
