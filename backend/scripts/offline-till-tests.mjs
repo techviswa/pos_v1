@@ -134,7 +134,7 @@ try {
   await waitFor(`Object.keys(localStorage).some((key) => key.startsWith('cashflow-offline-data:') && key.includes(':billing:'))`, "menu copy saved");
   // Channel prices have separate caches. Prime the delivery menu online rather
   // than assuming that a dine-in price is valid for an uncached service mode.
-  await evaluate(`[...document.querySelectorAll('[aria-label="Order service"] button')].find((button) => button.firstElementChild?.textContent.trim() === 'Delivery').click(); true`);
+  await evaluate(`[...document.querySelectorAll('[aria-label="Order service"] button')].find((button) => button.textContent.trim() === 'Delivery').click(); true`);
   await waitFor(`Boolean(${card}) && Object.keys(localStorage).some((key) => key.startsWith('cashflow-offline-data:') && key.endsWith(':Delivery'))`, "delivery menu copy saved");
 
   // 2. Connection lost and the page reloaded: the app still opens from the device and keeps selling.
@@ -147,7 +147,7 @@ try {
 
   await addOne();
   await addOne();
-  await evaluate(`[...document.querySelectorAll('[aria-label="Order service"] button')].find((button) => button.firstElementChild?.textContent.trim() === 'Delivery').click(); true`);
+  await evaluate(`[...document.querySelectorAll('[aria-label="Order service"] button')].find((button) => button.textContent.trim() === 'Delivery').click(); true`);
   await waitFor("Boolean(document.getElementById('delivery-address'))", "delivery details visible");
   const fill = (label, value) => evaluate(`(() => {
     const field = [...document.querySelectorAll('.cf-field')].find((node) => node.querySelector('label')?.textContent.trim() === ${JSON.stringify(label)});

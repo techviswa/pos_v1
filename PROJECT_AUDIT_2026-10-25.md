@@ -389,3 +389,17 @@ production builds and read-only actual browser checks passed. The Admin API had
 been stopped; the canonical Admin launcher now tracks the actual Windows Python
 interpreter. Local subscription and overview reads recovered. Hosted/provider/
 device/financial approval gates remain open; no production deployment occurred.
+
+## 2026-11-25: pre-deployment verification
+
+Re-ran every check on the snapshot commit before deploying. POS `deploy:check`
+passed; POS 37 suites / 131 UI tests passed; POS production build compiled.
+AdminCore 269 backend tests (8 skipped) and 15 suites / 45 UI tests passed; its
+production build compiled. The browser checks had drifted from the 2026-11-01 UI
+moves: settlement is now exercised on `/cash-drawer` with the two-step
+review/confirm close, and the offline till locates service buttons by their text.
+After those test updates, `test:browser` (mobile viewports, settlement, offline
+till reload/sale/sync) passed. `render.yaml` gained `SENTRY_DSN` and
+`SENTRY_ENVIRONMENT`; DEPLOYMENT.md gained Razorpay till, Plan & Billing and
+Sentry setup. Hosted secrets, Razorpay accounts and Sentry DSNs remain operator
+inputs.

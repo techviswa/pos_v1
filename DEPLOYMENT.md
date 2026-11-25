@@ -131,3 +131,42 @@ SMS (India requires DLT):
 Rules enforced by the server: only guests who agreed to offers; replying STOP opts out immediately; promotions are
 sent only between 09:00 and 21:00 (default 10:00-21:00, as TRAI requires for promotional SMS); at most N per guest per week.
 Set `MARKETING_WORKER=off` on extra instances only if you want a single sender (several instances are also safe).
+
+## 7. Razorpay at the till (each restaurant's own account)
+
+Needs `POS_PUBLIC_API_URL` (public https URL of this API) and the encryption key above (`SECRETS_ENCRYPTION_KEY`, or
+`MARKETING_ENCRYPTION_KEY` when unset; never change it once keys are stored).
+
+1. The restaurant Owner opens **Settings > Razorpay** and enters the Key ID and Key Secret from Razorpay Dashboard >
+   Account & Settings > API keys. The keys are checked with Razorpay before Razorpay can be switched on.
+2. Press **Create webhook secret**, then in Razorpay Dashboard > Webhooks add the webhook URL shown on that screen
+   (`https://API/api/public/payments/razorpay/webhook/<key>`) with that secret and the events listed there
+   (payments, QR codes, payment links and refunds).
+3. Test with Razorpay test keys first: take a UPI (QR) and a Card (link) payment, refund one from **Bills**.
+
+Without a webhook the till still confirms by asking Razorpay every few seconds while the payment screen is open.
+
+## 8. Plan & Billing: charging restaurants (Taskoora's Razorpay account, on AdminCore)
+
+Set on the AdminCore backend: `RAZORPAY_KEY_ID`, `RAZORPAY_KEY_SECRET`, `RAZORPAY_WEBHOOK_SECRET`. Enable
+Subscriptions on the Razorpay account. Add a Razorpay webhook to `https://ADMINCORE-API/api/billing/razorpay/webhook`
+with the same secret and the events `subscription.activated`, `subscription.charged`, `subscription.resumed`,
+`subscription.pending`, `subscription.halted`, `subscription.paused`, `subscription.completed`, `subscription.cancelled`.
+
+The POS must reach AdminCore: `ADMINCORE_ENABLED=true`, `ADMINCORE_API_BASE_URL`, and the same `ADMINCORE_API_KEY`
+(32+ characters) on both services. Owners pay on **Plan & Billing**; a business whose retries all fail becomes
+read-only (data kept) until paid.
+
+## 9. Error alerts (Sentry)
+
+Create one Sentry project per app and set the DSN:
+
+```txt
+POS backend (Render):        SENTRY_DSN, SENTRY_ENVIRONMENT=production
+AdminCore backend (Render):  SENTRY_DSN, SENTRY_ENVIRONMENT=production
+POS frontend (Vercel):       REACT_APP_SENTRY_DSN, REACT_APP_SENTRY_ENVIRONMENT=production
+AdminCore frontend (Vercel): REACT_APP_SENTRY_DSN, REACT_APP_SENTRY_ENVIRONMENT=production
+```
+
+Leaving a DSN empty turns reporting off. Only server faults (5xx) and browser crashes are sent; tokens, cookies,
+emails, phone numbers, request bodies and secret URL keys are removed first. Redeploy Vercel after setting the DSN.

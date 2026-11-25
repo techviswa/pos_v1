@@ -38,11 +38,16 @@ services:
         generateValue: true
       - key: OTP_SECRET
         generateValue: true
-      # Encrypts each business's WhatsApp/SMS credentials. Never change it once accounts are connected
-      # (stored credentials would have to be entered again).
+      # Encrypts each business's WhatsApp/SMS and Razorpay credentials (used when SECRETS_ENCRYPTION_KEY is
+      # not set). Never change it once accounts are connected: stored credentials would have to be entered again.
       - key: MARKETING_ENCRYPTION_KEY
         generateValue: true
-      # Public https URL of this API, used in WhatsApp/SMS webhook addresses shown on the Marketing screen.
+      # Sentry error alerts. Leave empty to turn reporting off. Personal data is scrubbed before sending.
+      - key: SENTRY_DSN
+        sync: false
+      - key: SENTRY_ENVIRONMENT
+        value: production
+      # Public https URL of this API, used in WhatsApp/SMS and Razorpay webhook addresses shown in the app.
       - key: POS_PUBLIC_API_URL
         sync: false
       - key: CORS_ORIGINS

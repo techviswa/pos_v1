@@ -120,7 +120,7 @@ try {
   const results = [];
   for (const width of [390, 768]) {
     await send("Emulation.setDeviceMetricsOverride", { width, height: 844, deviceScaleFactor: 1, mobile: true }, session);
-    for (const route of ["/login", "/dashboard", "/billing", "/bills", "/chef", "/waiter", "/products", "/inventory", "/reports", "/qr-management", "/time-clock", "/attendance", "/tips", "/customers", "/gift-cards", "/payroll", "/marketing", `/qr/${qr.token}`]) {
+    for (const route of ["/login", "/dashboard", "/billing", "/cash-drawer", "/bills", "/chef", "/waiter", "/products", "/inventory", "/reports", "/qr-management", "/time-clock", "/attendance", "/tips", "/customers", "/gift-cards", "/payroll", "/marketing", `/qr/${qr.token}`]) {
       authenticated = route !== "/login" && !route.startsWith("/qr/");
       await send("Page.addScriptToEvaluateOnNewDocument", { source: `sessionStorage.setItem('cashflow-lite-tab-session-id',${JSON.stringify(auth.sessionId)});localStorage.setItem('cashflow-lite-active-outlet',${JSON.stringify(outlet.id)});` }, session);
       await send("Page.navigate", { url: `${webUrl}${route}` }, session);
@@ -177,14 +177,16 @@ try {
         assert.ok(await evaluate(`document.body.innerText.includes('Set pay') || document.body.innerText.includes('Edit')`), "/payroll must list staff pay");
       }
       if (route.startsWith("/qr/")) assert.ok(await evaluate(`document.body.innerText.includes('Viewport meal')`), "Public menu must show the available product");
-      if (route === "/billing" && width === 390) {
-        await evaluate(`[...document.querySelectorAll('summary')].find(e=>e.textContent.includes('Cashier shift')).click()`);
+      // Settlement lives on its own Cash drawer screen (opened by default); closing is review first, then confirm.
+      if (route === "/cash-drawer" && width === 390) {
         await new Promise((resolve) => setTimeout(resolve, 1000));
-        for (const expectedButton of ["Open shift", "Close & save settlement"]) {
-          assert.ok(await evaluate(`document.body.innerText.includes(${JSON.stringify(expectedButton)})`), `Missing settlement action: ${expectedButton}`);
-          await evaluate(`document.querySelector('details input[type=number]').focus()`);
-          await send("Input.insertText", { text: "50" }, session);
-          await evaluate(`document.querySelector('details form').requestSubmit()`);
+        for (const expectedButton of ["Open shift", "Review closing cash", "Confirm shift closure"]) {
+          assert.ok(await evaluate(`[...document.querySelectorAll('.cf-settlement-action button')].some(e=>e.textContent===${JSON.stringify(expectedButton)})`), `Missing settlement action: ${expectedButton}`);
+          if (expectedButton !== "Confirm shift closure") {
+            await evaluate(`document.querySelector('.cf-settlement-action input[type=number]').focus()`);
+            await send("Input.insertText", { text: "50" }, session);
+          }
+          await evaluate(`document.querySelector('.cf-settlement-action form').requestSubmit()`);
           await new Promise((resolve) => setTimeout(resolve, 800));
         }
         assert.equal(await prisma.stateDocument.count({ where: { key: { startsWith: "shift-history:" }, data: { path: ["business_id"], equals: id } } }), 1);
