@@ -430,3 +430,13 @@ drawer Rs 767 for 2 bills; Reports and GST report match.
 - Fixed: bills ignored the tax rate saved in Settings (hardcoded 18%) while the till showed the Settings rate (`tax-rate-tests.mjs`).
 - Fixed: QR guest total omitted GST and rounded service charge to whole rupees; reservation planner used the UTC day (wrong "today" before 5:30 am IST).
 - Open (no UI yet): physical stock count (`POST /api/inventory/stock-audits`), manual UPI intent confirm, outlet purchase-order approve/reject, delivery route start/complete (status names also disagree), scheduled reports (no scheduler), batch tracking and barcode screens (listed as plan features), outlet deactivation, editing a pending allocation, vendor bill without receipt. Till stock check ignores combo components and modifier recipes (server still refuses correctly).
+
+## 2026-11-26 (later): half-built workflows completed
+
+- Done: Central Kitchen purchase orders can be approved (dispatches a linked transfer from central stock, refused with the shortfall if stock is short) or rejected with a reason; open until received. Delivery routes start and complete. Live demo: PO for 2 l milk approved, dispatched, received (central 15 -> 13 l, outlet +2 l); route scheduled -> in transit -> delivered. `central-kitchen-decision-tests.mjs`.
+- Done: scheduled reports run for the last finished period, are emailed once per period by a background sender (claim record per period), and record "not sent" when SMTP is not configured. Reports > Scheduled tab; live: schedule added, "Run now" downloaded the GST CSV (voided bill excluded). `report-schedule-tests.mjs`. Email delivery needs SMTP_HOST/SMTP_FROM (and credentials) on the backend.
+- Done: closing an outlet is refused while its shift is open, transfers are unfinished or bills are unpaid; closed outlets take no bills/QR orders and free their plan slot; reopening checks the plan. `outlet-close-tests.mjs`.
+- Done: till stock check mirrors server deduction for combos and option-linked products/recipes (`saleDemand`).
+- Done: plan-gated purchase-order approve/reject only act on pending orders.
+- Open (needs approval for an additive DB migration that auto-applies on Render deploy): real product barcodes (scan at till, generate in-store codes; current barcode service returns mock data) and batch tracking linked to stock items (current Batch has no item/quantity).
+- Open: manual UPI payment request stays "pending" after the bill payment is confirmed on Bills (bill is correct; the request record is not closed).
