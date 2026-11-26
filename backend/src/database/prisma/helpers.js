@@ -418,6 +418,7 @@ export const serializeProduct = (product) => ({
   name: product.name,
   price: product.price,
   cost_price: product.costPrice,
+  barcode: product.barcode ?? null,
   stock: product.stock,
   active: product.active,
   category: product.category || DEFAULT_PRODUCT_CATEGORY,

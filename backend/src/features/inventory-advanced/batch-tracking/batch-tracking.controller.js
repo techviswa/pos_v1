@@ -3,7 +3,7 @@ import { batchTrackingService } from "./batch-tracking.service.js";
 
 class BatchTrackingController {
   async list(req, res) {
-    const data = await batchTrackingService.listBatches({ tenantId: req.context.tenantId });
+    const data = await batchTrackingService.listBatches({ tenantId: req.context.tenantId, outletIds: req.context.outletScope || null });
     res.status(200).json(apiResponse({ message: "Batches fetched successfully", data }));
   }
 
@@ -11,6 +11,7 @@ class BatchTrackingController {
     const data = await batchTrackingService.createBatch({
       tenantId: req.context.tenantId,
       payload: req.body,
+      outletScope: req.context.outletScope || null,
     });
     res.status(201).json(apiResponse({ message: "Batch created successfully", data }));
   }

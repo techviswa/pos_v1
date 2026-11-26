@@ -51,11 +51,13 @@ class FeatureToggleService {
       return toggles.filter((toggle) => toggle.enabled).map((toggle) => toggle.featureKey);
     }
 
-    return (
-      defaultFeatureToggles.get(targetBusinessId) ||
-      defaultFeatureToggles.get(env.defaultBusinessId) ||
-      this.getDefaultFeatureKeys()
-    );
+    if (defaultFeatureToggles.has(targetBusinessId)) return defaultFeatureToggles.get(targetBusinessId);
+    // A business without saved switches gets what its plan includes, never every feature.
+    if (business) {
+      const { saasService } = await import("../core/saas/saas.service.js");
+      return [...await saasService.getPlanFeatures(business.id)].filter((key) => this.isKnownFeature(key));
+    }
+    return defaultFeatureToggles.get(env.defaultBusinessId) || this.getDefaultFeatureKeys();
   }
 
   async setFeaturesForBusiness(businessId, featureNames) {

@@ -12,6 +12,10 @@ import { MenuStructureEditor, toMenuStructureForm, toMenuStructurePayload, valid
 import { ProductPhoto, readProductPhoto, resolveProductPhoto } from "../components/ProductPhoto";
 import { QrProductDetails, normalizeQrDetails } from "../components/QrProductDetails";
 import { convertRecipeQuantity } from "../lib/recipeUnits";
+import { useServerFeatureEnabled } from "../core/platform/store/serverFeatures";
+import { printLabels } from "../core/products/barcodeLabel";
+import { apiData } from "../lib/apiData";
+import { getApiErrorMessage } from "../lib/apiErrors";
 
 const LOW_STOCK_THRESHOLD = 3;
 const MENU_CHANNELS = ["Dine-In", "Takeaway", "Delivery"];
@@ -102,6 +106,9 @@ export const computeDraftRecipeCost = (lines = [], inventoryCatalog = []) =>
 
 export const Products = () => {
   const { user } = useAuth();
+  // Barcodes are a plan feature: the field shows when the plan includes it (or a product already has a code).
+  const barcodeEnabled = useServerFeatureEnabled("barcode");
+  const [barcodeBusy, setBarcodeBusy] = useState(false);
   const { settings } = useUi();
   const [loading, setLoading] = useState(true);
   const [products, setProducts] = useState([]);
@@ -119,6 +126,7 @@ export const Products = () => {
     price: "",
     cost_price: "",
     stock: "",
+    barcode: "",
     active: true,
     category: "",
     dietary_type: "Veg",
@@ -230,6 +238,7 @@ export const Products = () => {
       price: basePrice?.toString() || "",
       cost_price: product?.cost_price?.toString() || "",
       stock: product?.stock?.toString() || "",
+      barcode: product?.barcode || "",
       active: baseActive,
       category: product?.category || "",
       dietary_type: product?.dietary_type || "Veg",
@@ -455,6 +464,7 @@ export const Products = () => {
       price: Number(formData.price),
       cost_price: Number(formData.cost_price || 0),
       stock: Number(formData.stock),
+      ...(barcodeEnabled || editingProduct?.barcode ? { barcode: String(formData.barcode || "").trim() } : {}),
       active: formData.active,
       category: resolvedCategory || null,
       dietary_type: formData.dietary_type || "Veg",
@@ -758,6 +768,32 @@ export const Products = () => {
                   <label>Goods Cost</label>
                   <input className="cf-input" min="0" required step="0.01" type="number" value={formData.cost_price} onChange={(event) => setFormData({ ...formData, cost_price: event.target.value })} />
                 </div>
+                {barcodeEnabled || formData.barcode ? (
+                  <div className="cf-field" data-testid="product-barcode-field">
+                    <label>Barcode</label>
+                    <input className="cf-input" aria-label="Barcode" maxLength={32} placeholder="Scan or type the pack's barcode" value={formData.barcode} onChange={(event) => setFormData({ ...formData, barcode: event.target.value })} />
+                    <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginTop: 6 }}>
+                      {barcodeEnabled && editingProduct && !formData.barcode ? (
+                        <button className="cf-btn cf-btn--secondary cf-btn--small" disabled={barcodeBusy} type="button" onClick={async () => {
+                          setBarcodeBusy(true);
+                          try {
+                            const result = apiData(await axios.post(`${API_URL}/api/barcode/generate`, { product_id: editingProduct.id }, { withCredentials: true }));
+                            setFormData((current) => ({ ...current, barcode: result.barcode }));
+                            toast.success(`Barcode ${result.barcode} saved for ${editingProduct.name}`);
+                          } catch (error) { toast.error(getApiErrorMessage(error, "Could not generate a barcode")); }
+                          finally { setBarcodeBusy(false); }
+                        }}>Generate in-store code</button>
+                      ) : null}
+                      {formData.barcode ? (
+                        <button className="cf-btn cf-btn--secondary cf-btn--small" type="button" onClick={() => {
+                          const copies = Number(window.prompt("How many labels?", "1") || 0);
+                          if (copies > 0) printLabels({ name: formData.name, price: formatCurrency(formData.price, settings.currency), code: formData.barcode.trim(), copies });
+                        }}>Print labels</button>
+                      ) : null}
+                    </div>
+                    <span className="cf-card__meta">{editingProduct ? "Packed goods: scan the maker's code. Your own items: generate an in-store code and print labels." : "Save the product first to generate an in-store code."}</span>
+                  </div>
+                ) : null}
                 <div className="cf-field">
                   <label>Category</label>
                   <div style={{ display: "grid", gap: 8 }}>

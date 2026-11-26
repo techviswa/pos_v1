@@ -2,11 +2,14 @@ import React, { useState } from "react";
 import axios from "axios";
 import { useAuth } from "../../contexts/AuthContext";
 import { getApiErrorMessage } from "../../lib/apiErrors";
+import { useServerFeatureEnabled } from "../platform/store/serverFeatures";
 
 const money = (value) => Number(value || 0).toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
 export function InventoryAccounting({ apiUrl, onChanged, inventory = [] }) {
   const { user } = useAuth();
+  // Lot numbers and expiry per received line, when the plan includes batch tracking.
+  const batchesEnabled = useServerFeatureEnabled("batch-tracking");
   const [valuation, setValuation] = useState(null);
   const [receipts, setReceipts] = useState([]);
   const [receiptId, setReceiptId] = useState("");
@@ -39,7 +42,8 @@ export function InventoryAccounting({ apiUrl, onChanged, inventory = [] }) {
     const key = receivingKey || window.crypto.randomUUID(); setReceivingKey(key);
     try {
       await axios.post(`${apiUrl}/api/inventory/purchase-receivings`, { ...receiving, request_id: key,
-        items: receiptLines.map((line) => ({ inventory_id: line.inventory_id, quantity: Number(line.quantity), unit_cost: Number(line.unit_cost) })),
+        items: receiptLines.map((line) => ({ inventory_id: line.inventory_id, quantity: Number(line.quantity), unit_cost: Number(line.unit_cost),
+          ...(line.expiry_date ? { expiry_date: line.expiry_date } : {}), ...(batchesEnabled && String(line.batch_no || "").trim() ? { batch_no: line.batch_no.trim() } : {}) })),
       }, { withCredentials: true });
       await load(); onChanged?.(); setMessage("Purchase received and stock valuation updated.");
     } catch (error) { setReceiptUncertain(true); setMessage(`${getApiErrorMessage(error, "Receiving could not be confirmed.")} Retry the same request, or refresh and check receipts before creating another.`); }
@@ -80,6 +84,10 @@ export function InventoryAccounting({ apiUrl, onChanged, inventory = [] }) {
             <label>Ingredient<select className="cf-input" required value={line.inventory_id} onChange={(event) => setReceiptLines(receiptLines.map((entry, position) => position === index ? { ...entry, inventory_id: event.target.value } : entry))}><option value="">Select ingredient</option>{inventory.map((item) => <option key={item.id} value={item.id}>{item.name} ({item.unit})</option>)}</select></label>
             <label>Quantity<input className="cf-input" type="number" min="0.000001" step="any" required value={line.quantity} onChange={(event) => setReceiptLines(receiptLines.map((entry, position) => position === index ? { ...entry, quantity: event.target.value } : entry))} /></label>
             <label>Cost per inventory unit<input className="cf-input" type="number" min="0" step="any" required value={line.unit_cost} onChange={(event) => setReceiptLines(receiptLines.map((entry, position) => position === index ? { ...entry, unit_cost: event.target.value } : entry))} /></label>
+            {batchesEnabled ? <>
+              <label>Batch / lot number<input className="cf-input" maxLength={60} placeholder="Optional, from the pack" value={line.batch_no || ""} onChange={(event) => setReceiptLines(receiptLines.map((entry, position) => position === index ? { ...entry, batch_no: event.target.value } : entry))} /></label>
+              <label>Expiry date<input className="cf-input" type="date" required={Boolean(String(line.batch_no || "").trim())} value={line.expiry_date || ""} onChange={(event) => setReceiptLines(receiptLines.map((entry, position) => position === index ? { ...entry, expiry_date: event.target.value } : entry))} /></label>
+            </> : null}
             {receiptLines.length > 1 && <button type="button" className="cf-btn cf-btn--secondary" onClick={() => setReceiptLines(receiptLines.filter((_, position) => position !== index))}>Remove line</button>}
           </div>)}
           <button type="button" className="cf-btn cf-btn--secondary" onClick={() => setReceiptLines([...receiptLines, { inventory_id: "", quantity: "", unit_cost: "" }])}>Add receipt line</button>

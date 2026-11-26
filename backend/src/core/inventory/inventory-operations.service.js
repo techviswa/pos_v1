@@ -11,6 +11,7 @@ import {
 } from "../../database/prisma/helpers.js";
 import { createHttpError } from "../../shared/utils/http-error.js";
 import { admincoreChangeSyncService } from "../admincore/admincore-change-sync.service.js";
+import { validateBatchLine } from "../../features/inventory-advanced/batch-tracking/batch-rules.js";
 
 const toNumber = (value, fallback = 0) => {
   const parsed = Number(value);
@@ -99,6 +100,8 @@ class InventoryOperationsService {
     if (!lines.length) {
       throw createHttpError({ statusCode: 400, message: "Purchase receiving requires at least one item" });
     }
+    // Lot numbers are optional; when given they need the batch-tracking plan feature and an expiry date.
+    const batchLines = await Promise.all(lines.map((line) => validateBatchLine({ businessId: business.id, line })));
 
     const result = await prisma.$transaction(async (tx) => {
       await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`inventory-reconciliation:${business.id}`}))`;
@@ -116,7 +119,8 @@ class InventoryOperationsService {
         outletId: payload.outlet_id || payload.outletId || null,
       });
       const receivedItems = [];
-      for (const line of lines) {
+      const batches = [];
+      for (const [index, line] of lines.entries()) {
         const rawQuantity = line.quantity ?? line.received_quantity;
         const rawCost = line.unit_cost ?? line.conversion_cost;
         if (!validNumber(rawQuantity) || Number(rawQuantity) <= 0) throw createHttpError({ statusCode: 400, message: "Received quantity must be greater than zero" });
@@ -153,7 +157,12 @@ class InventoryOperationsService {
           unit_cost: unitCost,
           movement_id: movement.movement.id,
           stock_outlet_id: payload.stock_location === "outlet" ? outletId : null,
+          ...(batchLines[index] ? { batch_no: batchLines[index].batchNo, expiry_date: batchLines[index].expiryDate.toISOString().slice(0, 10) } : {}),
         });
+        if (batchLines[index]) {
+          batches.push({ businessId: business.id, sku: item.id, batchNo: batchLines[index].batchNo, expiryDate: batchLines[index].expiryDate,
+            inventoryItemId: item.id, outletId: payload.stock_location === "outlet" ? outletId : null, quantity, unitCost });
+        }
       }
 
       const purchaseOrder = await tx.purchaseOrder.create({
@@ -175,6 +184,7 @@ class InventoryOperationsService {
           items: receivedItems,
         },
       });
+      if (batches.length) await tx.batch.createMany({ data: batches.map((batch) => ({ ...batch, receiptId: purchaseOrder.id })) });
 
       await admincoreChangeSyncService.notifyChange({
         resource: "inventory",

@@ -438,5 +438,6 @@ drawer Rs 767 for 2 bills; Reports and GST report match.
 - Done: closing an outlet is refused while its shift is open, transfers are unfinished or bills are unpaid; closed outlets take no bills/QR orders and free their plan slot; reopening checks the plan. `outlet-close-tests.mjs`.
 - Done: till stock check mirrors server deduction for combos and option-linked products/recipes (`saleDemand`).
 - Done: plan-gated purchase-order approve/reject only act on pending orders.
-- Open (needs approval for an additive DB migration that auto-applies on Render deploy): real product barcodes (scan at till, generate in-store codes; current barcode service returns mock data) and batch tracking linked to stock items (current Batch has no item/quantity).
+- Done (user approved the additive migration `20261126090000_barcodes_and_batches`, local DB backed up first): product barcodes (unique per business, Enterprise plan, in-store EAN-13 generation, label printing, scan at the till) and batch tracking (lot + expiry captured at receiving, linked to item/location/cost, earliest-expiry-first remaining estimate, expiry alerts). `barcode-batch-tests.mjs`.
+- Fixed: a business with no saved feature switches received every feature (including Enterprise ones); it now gets its plan's features.
 - Done: a manual UPI request made at the till closes when its payment is confirmed on Bills; a payment still being collected via Razorpay cannot be confirmed by hand (`upi-request-confirm-tests.mjs`).

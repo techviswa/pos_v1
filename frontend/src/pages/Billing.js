@@ -466,7 +466,7 @@ export const Billing = () => {
     return products
       .filter((product) => {
         const matchesActive = product.active !== false;
-        const matchesSearch = !search || product.name.toLowerCase().includes(search.toLowerCase());
+        const matchesSearch = !search || product.name.toLowerCase().includes(search.toLowerCase()) || (product.barcode && product.barcode === search.trim());
         const matchesCategory = !category || product.category === category;
         return matchesActive && matchesSearch && matchesCategory;
       })
@@ -1254,7 +1254,20 @@ export const Billing = () => {
                 className="cf-search"
                 data-testid="product-search-input"
                 onChange={(event) => setSearch(event.target.value)}
-                placeholder="Search..."
+                onKeyDown={(event) => {
+                  // A barcode scanner types the code and presses Enter: add that product and clear for the next scan.
+                  if (event.key !== "Enter") return;
+                  const code = search.trim();
+                  const scanned = code && products.find((product) => product.barcode && product.barcode === code);
+                  if (!scanned) return;
+                  event.preventDefault();
+                  if (scanned.active === false) toast.error(`${scanned.name} is not on sale`);
+                  // Packed goods go straight in; only an item with a required choice (size, must-pick option) asks first.
+                  else if ((scanned.variation_options || []).length || (scanned.modifier_groups || []).some((group) => Number(group.min_select) > 0)) addToCart(scanned);
+                  else addConfiguredItemToCart(scanned);
+                  setSearch("");
+                }}
+                placeholder="Search or scan a barcode..."
                 value={search}
               />
               <select className="cf-select" aria-label="Product category" onChange={(event) => setCategory(event.target.value)} value={category}>

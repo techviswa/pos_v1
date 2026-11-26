@@ -9,6 +9,7 @@ import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "
 import { useAutoRefresh } from "../hooks/useAutoRefresh";
 import { InventoryAccounting } from "../core/inventory/InventoryAccounting";
 import { StockCount } from "../core/inventory/StockCount";
+import { BatchList } from "../core/inventory/BatchList";
 import { useActiveOutlet } from "../core/outlets/store/ActiveOutletContext";
 import { IngredientAllergens } from "../components/IngredientAllergens";
 
@@ -370,6 +371,7 @@ export const Inventory = () => {
         </div>
 
         <InventoryAccounting apiUrl={API_URL} onChanged={fetchInventory} inventory={inventory} />
+        <BatchList apiUrl={API_URL} inventory={inventory} refreshKey={inventory} />
         <IngredientAllergens apiUrl={API_URL} />
         <div className="cf-metrics">
           <button className="cf-metric cf-metric--button" onClick={() => navigateToSummary("items")} type="button">

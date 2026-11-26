@@ -153,3 +153,21 @@ test('cart items and checkout remain separate from scrollable adjustments', asyn
     fs.writeFileSync(process.env.POS_LAYOUT_FIXTURE, `<!doctype html><html><head><meta name="viewport" content="width=device-width, initial-scale=1"><style>body{margin:0} ${css}</style></head><body>${element.innerHTML}</body></html>`);
   }
 });
+
+test('a scanned barcode adds that product to the cart and clears the search for the next scan', async () => {
+  outlet = { selectedOutletId: 'main', selectedOutlet: { id: 'main', name: 'Main' } };
+  const originalGet = axios.get.getMockImplementation();
+  axios.get.mockImplementation((url, options) => url.endsWith('/api/products')
+    ? Promise.resolve({ data: [{ ...product('Bottled water'), barcode: '8901234567890' }, product('Tea')] })
+    : originalGet(url, options));
+  await act(async () => root.render(<Billing />));
+  const search = element.querySelector('[data-testid="product-search-input"]');
+  const type = (value) => { Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(search, value); search.dispatchEvent(new Event('input', { bubbles: true })); };
+  await act(async () => type('8901234567890'));
+  await act(async () => search.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true })));
+  expect(element.querySelector('.cf-cart__item-name').textContent).toContain('Bottled water');
+  expect(search.value).toBe('');
+  await act(async () => type('0000'));
+  await act(async () => search.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true })));
+  expect(element.querySelectorAll('.cf-cart__item-name')).toHaveLength(1);
+});

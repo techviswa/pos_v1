@@ -1,3 +1,4 @@
+import { resolveProductBarcode } from "../../features/barcode/barcode-rules.js";
 import { readExportPage } from "../../shared/utils/export-cursor.js";
 import prisma from "../../database/prisma/client.js";
 import { attachProductImages, saveProductImage } from "./product-images.js";
@@ -112,6 +113,7 @@ class ProductsService {
         const previous = await tx.product.findFirst({ where: { id: sourceProductId, businessId: business.id } });
         if (previous) return previous;
       }
+      const barcode = await resolveProductBarcode({ client: tx, businessId: business.id, payload });
       const created = await tx.product.create({
       data: {
         ...(sourceProductId ? { id: sourceProductId } : {}),
@@ -127,6 +129,7 @@ class ProductsService {
         channelSettings: normalizeChannelSettings(payload.channel_settings),
         outletOverrides: [],
         removalOptions: payload.removal_options || [],
+        ...(barcode ? { barcode } : {}),
       },
     });
       await saveMenuStructure({ tx, businessId: business.id, productId: created.id, payload });
@@ -159,6 +162,7 @@ class ProductsService {
     });
 
     await operationalWrite({ businessId: business.id, kind: "product-update", payload: { ...payload, request_id: commandId } }, async (tx) => {
+    const barcode = await resolveProductBarcode({ client: tx, businessId: business.id, payload, current: currentProduct.barcode, productId });
     const changed = await tx.product.updateMany({
       where: { id: productId, businessId: business.id, updatedAt: expectedUpdatedAt ? new Date(expectedUpdatedAt) : currentProduct.updatedAt },
       data: {
@@ -173,6 +177,7 @@ class ProductsService {
         recipeLines: payload.recipe_lines ?? currentProduct.recipeLines,
         channelSettings: normalizeChannelSettings(payload.channel_settings, currentProduct.channelSettings || {}),
         removalOptions: payload.removal_options ?? currentProduct.removalOptions,
+        ...(barcode !== undefined ? { barcode } : {}),
       },
     });
     if (changed.count !== 1) throw createHttpError({ statusCode: 409, code: "PRODUCT_VERSION_CONFLICT", message: "The product changed while you were editing. Reload it before saving." });
