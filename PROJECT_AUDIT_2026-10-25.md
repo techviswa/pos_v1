@@ -439,4 +439,4 @@ drawer Rs 767 for 2 bills; Reports and GST report match.
 - Done: till stock check mirrors server deduction for combos and option-linked products/recipes (`saleDemand`).
 - Done: plan-gated purchase-order approve/reject only act on pending orders.
 - Open (needs approval for an additive DB migration that auto-applies on Render deploy): real product barcodes (scan at till, generate in-store codes; current barcode service returns mock data) and batch tracking linked to stock items (current Batch has no item/quantity).
-- Open: manual UPI payment request stays "pending" after the bill payment is confirmed on Bills (bill is correct; the request record is not closed).
+- Done: a manual UPI request made at the till closes when its payment is confirmed on Bills; a payment still being collected via Razorpay cannot be confirmed by hand (`upi-request-confirm-tests.mjs`).

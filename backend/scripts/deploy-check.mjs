@@ -53,6 +53,7 @@ const commands = [
   "node scripts/customers-payroll-tests.mjs",
   "node scripts/marketing-tests.mjs",
   "node scripts/razorpay-payments-tests.mjs",
+  "node scripts/upi-request-confirm-tests.mjs",
   "node scripts/error-reporting-tests.mjs",
   "node scripts/saas-billing-tests.mjs",
   "node scripts/access-control-tests.mjs",

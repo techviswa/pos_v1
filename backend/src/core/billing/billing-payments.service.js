@@ -113,8 +113,18 @@ export const mutateBillPayment = async ({ tenantId, invoiceId, action, payload =
       }
       const alreadyPaid = summarizePayments(payments.filter((row) => row.id !== paymentId), bill.total).paid_amount;
       if (roundMoney(alreadyPaid + Number(payment.amount)) > roundMoney(bill.total)) throw createHttpError({ statusCode: 409, message: "Confirmation would exceed the invoice total" });
+      // Payment requests made for this payment at the till (manual UPI) close with it; a Razorpay request still
+      // collecting it blocks a hand confirmation, or the money could be counted twice.
+      const requests = await tx.stateDocument.findMany({ where: { key: { startsWith: `payment-intent:${encodeURIComponent(bill.businessId)}:` }, data: { path: ["billPaymentId"], equals: paymentId } } });
+      if (requests.some((row) => row.data?.status === "pending" && row.data?.provider === "razorpay")) {
+        throw createHttpError({ statusCode: 409, code: "GATEWAY_PAYMENT_PENDING", message: "This payment is being collected through Razorpay and confirms automatically. Cancel the Razorpay request first to confirm it by hand." });
+      }
       const shift = await ensureOpenShift(tx, bill.businessId, metadata.outlet_id || null, user);
       payments = payments.map((row) => row.id === paymentId ? { ...row, status: "confirmed", reference: verifiedReference, confirmed_at: at, confirmed_by: user.id, settlement_shift_id: shift.id } : row);
+      for (const row of requests.filter((entry) => entry.data?.status === "pending")) {
+        await tx.stateDocument.update({ where: { key: row.key }, data: { data: { ...row.data, status: "confirmed", reference: verifiedReference, confirmedAt: at, updatedAt: at,
+          providerPayload: { ...(row.data.providerPayload || {}), confirmed_on_bill_by: user?.id || null } } } });
+      }
     } else if (action === "void_request") {
       if (!String(payload.reason || "").trim()) throw createHttpError({ statusCode: 400, message: "Void reason is required" });
       Object.assign(metadata, { void_status: "pending_approval", void_reason: String(payload.reason).trim(),
