@@ -251,8 +251,8 @@ export const OutletDetailPage = () => {
               <div className="cf-field">
                 <label>Status</label>
                 <select className="cf-select" value={basicForm.status} onChange={(event) => setBasicForm((current) => ({ ...current, status: event.target.value }))}>
-                  <option value="active">Active</option>
-                  <option value="inactive">Inactive</option>
+                  <option value="active">Open</option>
+                  <option value="inactive">Closed (keeps history, takes no new bills, frees a plan slot)</option>
                 </select>
               </div>
             </div>

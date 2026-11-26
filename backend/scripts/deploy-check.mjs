@@ -20,6 +20,7 @@ const commands = [
   "node scripts/tenant-integrity-audit.mjs",
   "node scripts/central-kitchen-repair-tests.mjs",
   "node scripts/central-kitchen-decision-tests.mjs",
+  "node scripts/outlet-close-tests.mjs",
   "node scripts/report-consistency-tests.mjs",
   "node scripts/report-schedule-tests.mjs",
   "node scripts/sales-charts-tests.mjs",

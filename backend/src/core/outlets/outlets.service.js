@@ -21,6 +21,24 @@ import {
   toAnalyticsNumber,
 } from "../billing/bill-analytics.utils.js";
 import { admincoreChangeSyncService } from "../admincore/admincore-change-sync.service.js";
+import { readState } from "../../database/prisma/state-store.js";
+
+/**
+ * An outlet can be closed only when nothing is left half-done there: its cash drawer shift is closed, no stock
+ * transfer is on the way to or from it, and no bill is still waiting for payment. History is kept either way.
+ */
+const assertOutletCanClose = async ({ businessId, outletId }) => {
+  const problems = [];
+  const shift = await readState(`shift:${businessId}:${outletId}`);
+  if (shift?.status === "open") problems.push("its cash drawer shift is still open (close it on the Cash drawer screen)");
+  const moving = await prisma.allocation.count({ where: { businessId, status: { in: ["pending_approval", "approved"] }, OR: [{ outletId }, { sourceLocation: outletId }] } });
+  if (moving) problems.push(`${moving} stock transfer(s) are not finished (approve or receive them in Central Kitchen)`);
+  const unpaid = await prisma.bill.count({ where: { businessId, status: { notIn: ["void", "cancelled"] },
+    AND: [{ metadata: { path: ["outlet_id"], equals: outletId } },
+      { OR: [{ metadata: { path: ["payment_status"], equals: "unpaid" } }, { metadata: { path: ["payment_status"], equals: "partial_due" } }] }] } });
+  if (unpaid) problems.push(`${unpaid} bill(s) still have money to collect (Bills screen)`);
+  if (problems.length) throw createHttpError({ statusCode: 409, code: "OUTLET_NOT_READY_TO_CLOSE", message: `This outlet cannot be closed yet: ${problems.join("; ")}.` });
+};
 
 const DEFAULT_OUTLET_NAME = "Main Outlet";
 const DEFAULT_OUTLET_CODE = "MAIN";
@@ -499,6 +517,13 @@ class OutletsService {
 
   async updateOutlet({ tenantId, outletId, payload, commandId = null, expectedUpdatedAt = null }) {
     const { business, outlet } = await this.getOutletRecord({ tenantId, outletId });
+    const nextStatus = payload.status ?? outlet.status;
+    if (outlet.status === "active" && nextStatus !== "active") await assertOutletCanClose({ businessId: business.id, outletId });
+    if (outlet.status !== "active" && nextStatus === "active") {
+      // Reopening takes a plan slot again (closed outlets do not count).
+      const { saasService } = await import("../saas/saas.service.js");
+      await saasService.assertWithinLimit({ businessId: business.id, resource: "outlets", increment: 1 });
+    }
     await operationalWrite({ businessId: business.id, kind: `outlet-update:${outletId}`,
       payload: { ...payload, ...(commandId ? { request_id: commandId } : {}) } }, async tx => {
       const changed = await tx.outlet.updateMany({

@@ -23,8 +23,9 @@ const openOutlets = (client, businessId) => client.outlet.findMany({
 export async function resolveTableOutlet({ businessId, meta, client = prisma }) {
   const assigned = assignedTableOutletId(meta);
   if (assigned) {
-    const outlet = await client.outlet.findFirst({ where: { id: assigned, businessId }, select: { id: true } });
+    const outlet = await client.outlet.findFirst({ where: { id: assigned, businessId }, select: { id: true, status: true } });
     if (!outlet) throw createHttpError({ statusCode: 409, code: "TABLE_OUTLET_INVALID", message: "This table's outlet needs to be corrected by the restaurant" });
+    if (outlet.status !== "active") throw createHttpError({ statusCode: 409, code: "TABLE_OUTLET_CLOSED", message: "This table's outlet is closed. Please ask staff." });
     return { outletId: outlet.id, ambiguous: false };
   }
   const outlets = await openOutlets(client, businessId);

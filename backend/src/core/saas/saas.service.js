@@ -277,7 +277,8 @@ class SaasService {
     startOfMonth.setUTCHours(0, 0, 0, 0);
     const [business, outlets, staff, products, qrTables, monthlyOrders, bills, inventoryItems] = await Promise.all([
       prisma.business.findUnique({ where: { id: targetBusinessId } }),
-      prisma.outlet.count({ where: { businessId: targetBusinessId } }),
+      // Only open outlets use a plan slot; a closed outlet keeps its history but frees the slot.
+      prisma.outlet.count({ where: { businessId: targetBusinessId, status: "active" } }),
       prisma.user.count({ where: { businessId: targetBusinessId, active: true } }),
       prisma.product.count({ where: { businessId: targetBusinessId, active: true } }),
       prisma.tableQrCode.count({ where: { businessId: targetBusinessId, active: true } }),

@@ -200,6 +200,10 @@ class BillingService {
     }
     if (payload.outlet_id || payload.outletId) {
       await assertOwnedIds({ kind: "outlet", ids: [payload.outlet_id || payload.outletId], businessId: business.id });
+      const billingOutlet = await prisma.outlet.findFirst({ where: { id: payload.outlet_id || payload.outletId, businessId: business.id }, select: { status: true, name: true } });
+      if (billingOutlet && billingOutlet.status !== "active") {
+        throw createHttpError({ statusCode: 409, code: "OUTLET_CLOSED", message: `${billingOutlet.name} is closed. Reopen it before billing there.` });
+      }
     }
     const transact = transaction ? (work) => work(transaction) : (work) => prisma.$transaction(work);
     const { bill: createdBill, replayed } = await transact(async (tx) => {

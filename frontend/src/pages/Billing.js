@@ -5,6 +5,7 @@ import { API_URL } from "../lib/apiUrl";
 import axios from "axios";
 import { apiData } from "../lib/apiData";
 import { convertRecipeQuantity } from "../lib/recipeUnits";
+import { mergeDemand, saleDemand } from "../core/billing/utils/saleDemand";
 import { Layout } from "../components/Layout";
 import { ApiErrorPanel } from "../components/ApiErrorPanel";
 import { QrCheckoutInbox } from "../components/QrCheckoutInbox";
@@ -180,6 +181,31 @@ export const summarizeRecipeLines = (recipeLines = [], multiplier = 1, unitById 
     summary[line.inventory_id] = current;
     return summary;
   }, {});
+
+// The recipe a configured item uses: base recipe + chosen variation + add-ons, minus removed ingredients.
+const configuredRecipeLines = (product, variationName = "", addonNames = [], removalNames = []) => {
+  const variationOption = (product?.variation_options || []).find((item) => item.name === variationName);
+  const addonOptions = (product?.addon_options || []).filter((item) => addonNames.includes(item.name));
+  const removalTokens = normalizeRemovalTokens(removalNames);
+  return [
+    ...(product?.recipe_lines || []),
+    ...(variationOption?.recipe_lines || []),
+    ...addonOptions.flatMap((item) => item.recipe_lines || []),
+  ].filter((line) => !recipeLineRemoved(line, removalTokens));
+};
+const entryDemand = (entry, productsById, quantity = entry.quantity) => saleDemand({
+  product: entry.product, quantity, variation: entry.variation || "", addons: entry.addons || [], removals: entry.removals || [],
+  modifierIds: entry.modifiers || [], productsById, recipeFor: configuredRecipeLines,
+});
+const cartTotalDemand = (entries, productsById) => entries.reduce((total, entry) => mergeDemand(total, entryDemand(entry, productsById)), { stock: {}, recipes: [] });
+const demandIngredients = (recipes, unitById) => recipes.reduce((summary, { lines, multiplier }) => {
+  Object.values(summarizeRecipeLines(lines, multiplier, unitById)).forEach((line) => {
+    const bucket = summary[line.inventory_id] || { ...line, quantity: 0 };
+    bucket.quantity += Number(line.quantity || 0);
+    summary[line.inventory_id] = bucket;
+  });
+  return summary;
+}, {});
 
 export const Billing = () => {
   const location = useLocation(), navigate = useNavigate();
@@ -455,38 +481,23 @@ export const Billing = () => {
     [inventoryCatalog]
   );
   const cartEntries = Object.values(cart);
-  const buildConfiguredRecipeLines = (product, variationName = "", addonNames = [], removalNames = []) => {
-    const variationOption = (product?.variation_options || []).find((item) => item.name === variationName);
-    const addonOptions = (product?.addon_options || []).filter((item) => addonNames.includes(item.name));
-    const removalTokens = normalizeRemovalTokens(removalNames);
-    return [
-      ...(product?.recipe_lines || []),
-      ...(variationOption?.recipe_lines || []),
-      ...addonOptions.flatMap((item) => item.recipe_lines || []),
-    ].filter((line) => !recipeLineRemoved(line, removalTokens));
+  const buildConfiguredRecipeLines = configuredRecipeLines;
+  // Stock and ingredients each cart line really uses, as the server deducts them: a combo uses its components,
+  // a chosen option may use a linked product and its own recipe (see core/billing/utils/saleDemand.js).
+  const productsById = useMemo(() => Object.fromEntries(products.map((product) => [product.id, product])), [products]);
+  const summarizeDemandRecipes = (recipes) => demandIngredients(recipes, inventoryUnitById);
+  const totalDemand = (entries) => cartTotalDemand(entries, productsById);
+  const cartDemand = useMemo(() => cartTotalDemand(cartEntries, productsById), [cartEntries, productsById]);
+  const cartIngredientDemand = useMemo(() => demandIngredients(cartDemand.recipes, inventoryUnitById), [cartDemand, inventoryUnitById]);
+  const cartStockUse = cartDemand.stock;
+  // The first product whose finished stock the demand would exceed, given what is already used.
+  const findStockShortage = (stock, alreadyUsed = {}) => {
+    const hit = Object.entries(stock).find(([productId, units]) => {
+      const product = productsById[productId];
+      return product && Number(product.stock || 0) < Number(alreadyUsed[productId] || 0) + units;
+    });
+    return hit ? productsById[hit[0]] : null;
   };
-  const cartIngredientDemand = useMemo(
-    () =>
-      cartEntries.reduce((summary, entry) => {
-        const demand = summarizeRecipeLines(
-          buildConfiguredRecipeLines(
-            entry.product,
-            entry.variation || "",
-            entry.addons || [],
-            entry.removals || []
-          ),
-          entry.quantity,
-          inventoryUnitById
-        );
-        Object.values(demand).forEach((line) => {
-          const bucket = summary[line.inventory_id] || { ...line, quantity: 0 };
-          bucket.quantity += Number(line.quantity || 0);
-          summary[line.inventory_id] = bucket;
-        });
-        return summary;
-      }, {}),
-    [cartEntries, inventoryUnitById]
-  );
   const cartProductCounts = useMemo(
     () =>
       cartEntries.reduce((counts, entry) => {
@@ -505,17 +516,22 @@ export const Billing = () => {
       return availableStock < reservedStock + Number(line.quantity || 0);
     });
   };
-  const getConfiguredAvailability = (product, variationName = "", addonNames = [], removalNames = [], extraQuantity = 1) => {
+  const getConfiguredAvailability = (product, variationName = "", addonNames = [], removalNames = [], extraQuantity = 1, modifierIds = []) => {
     const recipeLines = buildConfiguredRecipeLines(product, variationName, addonNames, removalNames);
-    const reservedProductUnits = Number(cartProductCounts[product.id] || 0);
-    const ingredientShortages = getIngredientShortages(recipeLines, extraQuantity);
-    const productShortage = Number(product.stock || 0) < reservedProductUnits + extraQuantity;
+    const demand = saleDemand({ product, quantity: extraQuantity, variation: variationName, addons: addonNames, removals: removalNames, modifierIds, productsById, recipeFor: buildConfiguredRecipeLines });
+    const ingredientShortages = !ingredientStockKnown ? [] : Object.values(summarizeDemandRecipes(demand.recipes)).filter((line) => {
+      if (!Object.prototype.hasOwnProperty.call(inventoryStockById, line.inventory_id)) return false;
+      return Number(inventoryStockById[line.inventory_id] || 0) < Number(cartIngredientDemand[line.inventory_id]?.quantity || 0) + Number(line.quantity || 0);
+    });
+    const shortProduct = findStockShortage(demand.stock, cartStockUse)
+      || (!productsById[product.id] && Number(product.stock || 0) < Number(cartStockUse[product.id] || 0) + extraQuantity ? product : null);
+    const productShortage = Boolean(shortProduct);
     return {
       recipeLines,
       ingredientShortages,
       productShortage,
       blockedReason: productShortage
-        ? "Finished goods stock is fully reserved in this bill"
+        ? shortProduct.id === product.id ? "Finished goods stock is fully reserved in this bill" : `Only ${Math.max(0, Number(shortProduct.stock || 0) - Number(cartStockUse[shortProduct.id] || 0))} ${shortProduct.name} left for this bill`
         : ingredientShortages.length
           ? `Low ingredient stock: ${ingredientShortages[0].ingredient_name}`
           : "",
@@ -538,7 +554,9 @@ export const Billing = () => {
         customizingProduct,
         customization.variation,
         customization.addons,
-        customization.removals
+        customization.removals,
+        1,
+        customization.modifiers || []
       ).ingredientShortages || []
     : [];
   const customizationWarningNames = [...new Set(customizationItemWarning.map((line) => line.ingredient_name).filter(Boolean))];
@@ -733,7 +751,7 @@ export const Billing = () => {
       return false;
     }
 
-    const availability = getConfiguredAvailability(product, variationName, addonNames, removalNames);
+    const availability = getConfiguredAvailability(product, variationName, addonNames, removalNames, 1, modifierIds);
     if (availability.blockedReason) {
       toast.error(availability.blockedReason);
       return false;
@@ -804,31 +822,17 @@ export const Billing = () => {
         return next;
       }
       if (delta > 0) {
-        if (nextQty > Number(existing.product?.stock || 0)) {
-          toast.error("Finished goods stock limit reached");
-          return current;
-        }
         const nextEntries = Object.values(current).map((entry) =>
           entry.key === productId ? { ...entry, quantity: nextQty } : entry
         );
-        const nextDemand = nextEntries.reduce((summary, entry) => {
-          const demand = summarizeRecipeLines(
-            buildConfiguredRecipeLines(
-              entry.product,
-              entry.variation || "",
-              entry.addons || [],
-              entry.removals || []
-            ),
-            entry.quantity,
-            inventoryUnitById
-          );
-          Object.values(demand).forEach((line) => {
-            const bucket = summary[line.inventory_id] || { ...line, quantity: 0 };
-            bucket.quantity += Number(line.quantity || 0);
-            summary[line.inventory_id] = bucket;
-          });
-          return summary;
-        }, {});
+        const next = totalDemand(nextEntries);
+        const shortProduct = findStockShortage(next.stock)
+          || (!productsById[existing.product?.id] && nextQty > Number(existing.product?.stock || 0) ? existing.product : null);
+        if (shortProduct) {
+          toast.error(shortProduct.id === existing.product?.id ? "Finished goods stock limit reached" : `Only ${shortProduct.stock} ${shortProduct.name} left`);
+          return current;
+        }
+        const nextDemand = summarizeDemandRecipes(next.recipes);
         const shortage = Object.values(nextDemand).find(
           (line) => Number(inventoryStockById[line.inventory_id] || 0) < Number(line.quantity || 0)
         );
@@ -1273,12 +1277,12 @@ export const Billing = () => {
                 return (
               <button
                 key={product.id}
-                className={`cf-product-card ${Number(product.stock || 0) <= Number(cartProductCounts[product.id] || 0) || product.active === false ? "is-disabled" : ""}`}
+                className={`cf-product-card ${Number(product.stock || 0) <= Number(cartStockUse[product.id] || 0) || product.active === false ? "is-disabled" : ""}`}
                 data-testid={`product-card-${product.id}`}
-                disabled={Number(product.stock || 0) <= Number(cartProductCounts[product.id] || 0) || product.active === false}
+                disabled={Number(product.stock || 0) <= Number(cartStockUse[product.id] || 0) || product.active === false}
                 onClick={() => addToCart(product)}
                 style={
-                  hasLowIngredientWarning && Number(product.stock || 0) > Number(cartProductCounts[product.id] || 0) && product.active !== false
+                  hasLowIngredientWarning && Number(product.stock || 0) > Number(cartStockUse[product.id] || 0) && product.active !== false
                     ? { border: "1px solid #f79009", background: "#fffaeb" }
                     : undefined
                 }
@@ -1286,7 +1290,7 @@ export const Billing = () => {
                 title={
                   product.active === false
                     ? `${product.name} is disabled and cannot be added to the bill`
-                    : Number(product.stock || 0) <= Number(cartProductCounts[product.id] || 0)
+                    : Number(product.stock || 0) <= Number(cartStockUse[product.id] || 0)
                       ? `${product.name} has no stock left for this bill`
                       : hasLowIngredientWarning
                         ? `${product.name} has low ingredients: ${lowIngredientWarning.join(", ")}`
@@ -1304,7 +1308,7 @@ export const Billing = () => {
                     <span className="cf-product-card__count">In bill: {cartProductCounts[product.id]}</span>
                   ) : product.active === false ? (
                     <span className="cf-product-card__count cf-product-card__count--warn">Disabled</span>
-                  ) : Number(product.stock || 0) <= Number(cartProductCounts[product.id] || 0) ? (
+                  ) : Number(product.stock || 0) <= Number(cartStockUse[product.id] || 0) ? (
                     <span className="cf-product-card__count cf-product-card__count--warn">Out of stock</span>
                   ) : null}
                 </div>
@@ -1329,7 +1333,7 @@ export const Billing = () => {
                 <div className={`cf-product-card__stock ${product.stock > 0 && product.stock <= LOW_STOCK_THRESHOLD ? "is-low" : ""}`}>
                   {product.active === false
                     ? "Disabled for billing"
-                    : Number(product.stock || 0) <= Number(cartProductCounts[product.id] || 0)
+                    : Number(product.stock || 0) <= Number(cartStockUse[product.id] || 0)
                     ? "Unavailable for billing"
                     : hasLowIngredientWarning
                     ? `Low ingredients: ${lowIngredientWarning.slice(0, 2).join(", ")}`
