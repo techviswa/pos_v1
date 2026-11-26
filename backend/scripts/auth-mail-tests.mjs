@@ -9,6 +9,7 @@ await mailer.send({ email: "user@example.invalid", token: "test-token", type: "i
 assert.match(sent[0].text, /https:\/\/pos\.example\.invalid\/reset-password\?token=test-token/);
 assert.match(sent[1].text, /https:\/\/pos\.example\.invalid\/invite\/test-token/);
 assert.throws(() => createAuthMailer({ config: {} }).requireConfigured(), /not configured/);
+assert.throws(() => createAuthMailer({ config: { SMTP_HOST: "smtp.gmail.com", SMTP_FROM: "a@b.co", SMTP_USER: "a@b.co", AUTH_PUBLIC_URL: "https://pos.example" } }).requireConfigured(), /not configured/, "a user name without its password is not a working mail account");
 assert.throws(() => createAuthMailer({ config: { ...config, AUTH_PUBLIC_URL: "http://pos.example.invalid" } }).requireConfigured(), /secure/);
 await assert.rejects(createAuthMailer({ config, transport: { sendMail: async () => ({ accepted: [] }) } }).send({ email: "user@example.invalid", token: "test", type: "invite" }), /not accepted/);
 console.log("Account email links, missing configuration, TLS URL and delivery rejection checks passed; no email sent");

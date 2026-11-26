@@ -8,7 +8,7 @@ import prisma from "../src/database/prisma/client.js";
 import { connectDatabase } from "../src/config/db.js";
 import { usersService } from "../src/core/users/users.service.js";
 import { reportSchedules } from "../src/core/reports/reports.service.js";
-import { isDue, reportPeriod, runDueSchedules, setReportMailTransport } from "../src/core/reports/report-schedules.js";
+import { isDue, mailConfigured, reportPeriod, runDueSchedules, setReportMailTransport } from "../src/core/reports/report-schedules.js";
 import { stopRealtime } from "../src/services/realtime/realtime.service.js";
 
 const suffix = randomUUID().slice(0, 8), id = `sched-${suffix}`, tenantId = `tenant-${id}`, password = randomUUID();
@@ -23,6 +23,9 @@ const call = async (method, path, body, session) => {
 };
 try {
   await connectDatabase();
+  // A mail account with a user name is not ready until its password is set too.
+  eq(mailConfigured({ SMTP_HOST: "smtp.gmail.com", SMTP_FROM: "a@b.co", SMTP_USER: "a@b.co" }), false);
+  eq(mailConfigured({ SMTP_HOST: "smtp.gmail.com", SMTP_FROM: "a@b.co", SMTP_USER: "a@b.co", SMTP_PASSWORD: "x" }), true);
   // Periods are finished UTC days.
   const tuesday = new Date("2026-12-01T03:00:00Z");
   eq(reportPeriod("daily", tuesday), { from: "2026-11-30", to: "2026-11-30" });

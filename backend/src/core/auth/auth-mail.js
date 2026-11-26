@@ -2,7 +2,7 @@ import nodemailer from "nodemailer";
 import { createHttpError } from "../../shared/utils/http-error.js";
 
 export const createAuthMailer = ({ config = process.env, transport } = {}) => {
-  const configured = () => Boolean(config.SMTP_HOST && config.SMTP_FROM && config.AUTH_PUBLIC_URL);
+  const configured = () => Boolean(config.SMTP_HOST && config.SMTP_FROM && config.AUTH_PUBLIC_URL && (!config.SMTP_USER || config.SMTP_PASSWORD));
   const requireConfigured = () => {
     if (!configured()) throw createHttpError({ statusCode: 503, code: "AUTH_MAIL_NOT_CONFIGURED", message: "Account email delivery is not configured" });
     const url = new URL(config.AUTH_PUBLIC_URL);

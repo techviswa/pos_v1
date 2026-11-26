@@ -59,7 +59,8 @@ export const isDue = (schedule, now = new Date()) => {
   return (schedule.last_period?.to || "") < reportPeriod(schedule.frequency, now).to;
 };
 
-export const mailConfigured = (config = process.env) => Boolean(config.SMTP_HOST && config.SMTP_FROM);
+// A mail account with a user name also needs its password before anything is reported as deliverable.
+export const mailConfigured = (config = process.env) => Boolean(config.SMTP_HOST && config.SMTP_FROM && (!config.SMTP_USER || config.SMTP_PASSWORD));
 let transport = null;
 export const setReportMailTransport = (value) => { transport = value; };
 const sendMail = async ({ to, subject, text, attachment }) => {
