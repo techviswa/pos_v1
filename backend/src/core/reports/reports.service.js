@@ -1,7 +1,5 @@
-import { readFile } from "fs/promises";
+import { createReportSchedules } from "./report-schedules.js";
 import { randomUUID } from "node:crypto";
-import path from "path";
-import { fileURLToPath } from "url";
 
 import prisma from "../../database/prisma/client.js";
 import { createHttpError } from "../../shared/utils/http-error.js";
@@ -23,10 +21,6 @@ import {
   toAnalyticsNumber,
 } from "../billing/bill-analytics.utils.js";
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-const DATA_DIR = path.resolve(__dirname, "../../../data");
-const SCHEDULE_FILE = path.join(DATA_DIR, "scheduled-reports.json");
 
 const toIso = (value) => (value ? new Date(value).toISOString() : null);
 
@@ -443,59 +437,7 @@ class ReportsService {
       content: JSON.stringify(report, null, 2),
     };
   }
-
-  async readSchedules() {
-    try {
-      return JSON.parse(await readFile(SCHEDULE_FILE, "utf8"));
-    } catch {
-      return [];
-    }
-  }
-
-  async listSchedules({ businessId }) {
-    if (!businessId) throw createHttpError({ statusCode: 400, message: "A business is required" });
-    const legacy = (await this.readSchedules()).filter((item) => item.business_id === businessId);
-    const stored = await prisma.stateDocument.findMany({ where: { key: { startsWith: `report-schedule:${businessId}:` } } });
-    return [...new Map([...legacy, ...stored.map((row) => row.data)].map((item) => [item.id, item])).values()];
-  }
-
-  async createSchedule({ businessId, payload, user }) {
-    if (!businessId) throw createHttpError({ statusCode: 400, message: "A business is required" });
-    const item = {
-      id: `sch_${randomUUID()}`,
-      business_id: businessId,
-      report_key: payload.report_key || "gst",
-      format: payload.format || "csv",
-      frequency: payload.frequency || "daily",
-      recipients: payload.recipients || [],
-      active: payload.active !== false,
-      created_by: user?.id || null,
-      created_by_name: user?.name || null,
-      created_at: new Date().toISOString(),
-      last_run_at: null,
-    };
-    await prisma.stateDocument.create({ data: { key: `report-schedule:${businessId}:${item.id}`, data: item } });
-    return item;
-  }
-
-  async runSchedule({ tenantId, businessId, scheduleId }) {
-    const schedules = await this.listSchedules({ businessId });
-    const schedule = schedules.find((item) => item.id === scheduleId && item.business_id === businessId);
-    if (!schedule) return null;
-    const exportPayload = await this.exportReport({
-      tenantId,
-      key: schedule.report_key,
-      format: schedule.format,
-    });
-    schedule.last_run_at = new Date().toISOString();
-    schedule.last_export = {
-      filename: exportPayload.filename,
-      content_type: exportPayload.content_type,
-    };
-    const key = `report-schedule:${businessId}:${schedule.id}`;
-    await prisma.stateDocument.upsert({ where: { key }, create: { key, data: schedule }, update: { data: schedule } });
-    return { schedule, export: exportPayload };
-  }
 }
 
 export const reportsService = new ReportsService();
+export const reportSchedules = createReportSchedules({ reports: reportsService });

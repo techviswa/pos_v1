@@ -1,3 +1,5 @@
+import { startReportScheduler, stopReportScheduler } from "./core/reports/report-schedules.js";
+import { reportSchedules } from "./core/reports/reports.service.js";
 import app from "./app.js";
 import env, { getProductionConfigIssues } from "./config/env.js";
 import { connectDatabase } from "./config/db.js";
@@ -37,6 +39,7 @@ const shutdown = async (signal) => {
   clearTimeout(dbRetryTimer);
   jobQueue.stop();
   stopMarketingWorker();
+  stopReportScheduler();
   logger.info(`${signal} received. Shutting down gracefully.`);
 
   try {
@@ -77,6 +80,7 @@ const startServer = async () => {
   }
   jobQueue.start();
   startMarketingWorker();
+  startReportScheduler({ schedules: reportSchedules });
   server = app.listen(env.port, () => {
     logger.info(`${env.appName} listening on port ${env.port}`);
     void connectDatabaseInBackground();

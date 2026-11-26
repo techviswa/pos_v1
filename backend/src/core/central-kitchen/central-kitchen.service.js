@@ -5,10 +5,14 @@ import { admincoreChangeSyncService } from "../admincore/admincore-change-sync.s
 import { inventoryForecast } from "../inventory/inventory-forecast.js";
 import { outletsService } from "../outlets/outlets.service.js";
 import { operationalWrite } from "../../shared/utils/operational-write.js";
+import { inventoryOperationsService } from "../inventory/inventory-operations.service.js";
 
 const fail = (message, statusCode = 400) => { throw createHttpError({ statusCode, message }); };
 const active = { notIn: ["inactive", "Inactive", "INACTIVE", "archived", "Archived"] };
 const pending = ["pending", "approved", "pending_approval", "dispatched", "in_transit"];
+// Route life cycle: scheduled -> in_transit -> completed (older rows may say "dispatched" or "In Transit").
+const ROUTE_OPEN = ["scheduled", "Scheduled", "dispatched", "In Transit", "in_transit", "in-transit"];
+const isManager = (user) => ["Owner", "Manager"].includes(user?.role);
 const key = (value, name, max = 200) => {
   if (typeof value !== "string" || !value.trim() || value.length > max) fail(`Enter a valid ${name}`);
   return value.trim();
@@ -57,21 +61,25 @@ export const centralKitchenService = {
     });
     const week = new Date(); week.setUTCHours(0, 0, 0, 0); week.setUTCDate(week.getUTCDate() - (week.getUTCDay() + 6) % 7);
     const fulfilled = transfers.filter((row) => ["received", "completed"].includes(row.status));
+    // A purchase order is open until the stock it asked for has been received at the outlet.
+    const transferFor = (orderId) => transfers.find((row) => row.purchaseOrderId === orderId) || null;
+    const orderStatus = (row) => { const transfer = transferFor(row.id); return transfer && ["received", "completed"].includes(transfer.status) ? "fulfilled" : row.status; };
     return {
       stock_location: outletIds ? "Selected outlets" : "Central store", observation_days: 30, checked_at: new Date().toISOString(), week_start: week.toISOString(),
-      overview: { total_outlets: outlets.length, open_purchase_orders: orders.filter((row) => pending.includes(row.status)).length,
-        scheduled_routes: routes.filter((row) => ["scheduled", "Scheduled", "dispatched", "In Transit"].includes(row.status)).length,
+      overview: { total_outlets: outlets.length, open_purchase_orders: orders.filter((row) => pending.includes(orderStatus(row))).length,
+        scheduled_routes: routes.filter((row) => ROUTE_OPEN.includes(row.status)).length,
         central_inventory_value: stock.reduce((sum, row) => sum + row.current_stock * row.conversion_cost, 0),
         restocks_this_week: fulfilled.filter((row) => row.updatedAt >= week).length,
         pending_transfers: transfers.filter((row) => pending.includes(row.status)).length },
       outlets: outlets.map((row) => ({ id: row.id, name: row.name, code: row.code, location: row.location || "", status: row.status,
         delivery_window: outletDetails.find((detail) => detail.data.outlet_id === row.id)?.data.delivery_window || "", notes: outletDetails.find((detail) => detail.data.outlet_id === row.id)?.data.notes || "",
         inventory_lines: balances.filter((item) => item.outletId === row.id && item.enabled).length,
-        open_purchase_orders: orders.filter((order) => order.outletId === row.id && pending.includes(order.status)).length })),
+        open_purchase_orders: orders.filter((order) => order.outletId === row.id && pending.includes(orderStatus(order))).length })),
       central_inventory: stock, low_stock_items: stock.filter((row) => row.stock_configured && row.low_stock),
       outlet_inventory: balances.filter((row) => row.enabled).map((row) => ({ id: row.id, outlet_id: row.outletId, outlet_name: row.outlet.name,
         inventory_id: row.inventoryItemId, inventory_name: row.inventoryItem.name, current_stock: row.stock, stock: row.stock, reorder_level: row.reorderLevel, unit: row.inventoryItem.unit })),
-      purchase_orders: orders.map((row) => ({ id: row.id, outlet_id: row.outletId, outlet_name: row.outlet.name, priority: row.priority, status: row.status, required_by: row.requiredBy, notes: row.notes, items: row.items, created_at: row.createdAt })),
+      purchase_orders: orders.map((row) => ({ id: row.id, outlet_id: row.outletId, outlet_name: row.outlet.name, priority: row.priority, status: orderStatus(row), required_by: row.requiredBy, notes: row.notes, items: row.items, created_at: row.createdAt,
+        transfer_id: transferFor(row.id)?.id || null, transfer_status: transferFor(row.id)?.status || null })),
       route_plans: routes.filter((row) => row.stops.length).map((row) => ({ id: row.id, route_name: row.routeName, dispatch_date: row.dispatchDate, driver_name: row.driverName, vehicle_number: row.vehicleNumber, status: row.status, stops: row.stops.map((stop) => ({ outlet_id: stop.outletId, outlet_name: stop.outlet.name, eta: stop.eta })) })),
       restock_logs: transfers.map((row) => ({ id: row.id, outlet_id: row.outletId, outlet_name: row.outlet.name, status: row.status, created_at: row.createdAt, updated_at: row.updatedAt,
         items: (row.items || []).map((line) => { const item = ingredients.find((ingredient) => ingredient.id === line.inventory_id); return { ...line, inventory_name: line.inventory_name || item?.name || "Ingredient", unit: (!line.unit || line.unit === "unit") ? item?.unit || line.unit : line.unit }; }) })),
@@ -107,6 +115,78 @@ export const centralKitchenService = {
       await admincoreChangeSyncService.notifyChange({ businessId: business.id, tenantId, resource: "inventory", action: "demand_created", recordId: row.id, outletId }, { tx });
       return { id: row.id, status: row.status };
     });
+  },
+  /**
+   * A manager's decision on an outlet's request for stock. Approving dispatches the requested quantities from the
+   * central store as a stock transfer linked to the request (the outlet then confirms receipt, as with any transfer).
+   * Only a pending request can be decided; deciding the same way twice returns the first result.
+   */
+  async decidePurchaseOrder({ tenantId, user, purchaseOrderId, approve, reason = "", outletScope = null }) {
+    if (!isManager(user)) fail("Only an owner or manager can decide purchase orders", 403);
+    const business = await ensureBusiness({ tenantId });
+    const order = await prisma.purchaseOrder.findFirst({ where: { id: purchaseOrderId, businessId: business.id, priority: { not: "stock_audit" } } });
+    if (!order) fail("Purchase order not found", 404);
+    if (outletScope && !outletScope.includes(order.outletId)) fail("This outlet is not assigned to you", 403);
+    const target = approve ? "approved" : "rejected";
+    if (order.status !== "pending") {
+      if (order.status === target) {
+        const linked = await prisma.allocation.findFirst({ where: { businessId: business.id, purchaseOrderId: order.id } });
+        return { id: order.id, status: order.status, transfer_id: linked?.id || null };
+      }
+      fail("This purchase order is already " + order.status, 409);
+    }
+    if (!approve) {
+      const note = String(reason || "").trim().slice(0, 300);
+      if (!note) fail("Give a reason for rejecting the request");
+      const claimed = await prisma.purchaseOrder.updateMany({ where: { id: order.id, businessId: business.id, status: "pending" },
+        data: { status: "rejected", notes: [order.notes, "Rejected by " + (user?.name || "manager") + ": " + note].filter(Boolean).join("\n").slice(0, 2000) } });
+      if (!claimed.count) fail("This purchase order was decided by someone else", 409);
+      await admincoreChangeSyncService.notifyChange({ businessId: business.id, tenantId, resource: "inventory", action: "demand_rejected", recordId: order.id, outletId: order.outletId });
+      return { id: order.id, status: "rejected", transfer_id: null };
+    }
+    // Check the central store first so a short request is refused before anything changes.
+    const lines = (Array.isArray(order.items) ? order.items : []).map((line) => ({ inventory_id: line.inventory_id, quantity: Number(line.requested_quantity ?? line.quantity) }));
+    if (!lines.length) fail("This purchase order has no items");
+    const stocked = await prisma.inventoryItem.findMany({ where: { businessId: business.id, id: { in: lines.map((line) => line.inventory_id) } } });
+    const short = lines.filter((line) => { const item = stocked.find((row) => row.id === line.inventory_id); return !item || Number(item.stock) < line.quantity; });
+    if (short.length) {
+      const names = short.map((line) => { const item = stocked.find((row) => row.id === line.inventory_id); return item ? item.name + " (have " + Number(item.stock) + " " + item.unit + ", need " + line.quantity + ")" : "an ingredient no longer in inventory"; });
+      fail("Not enough central stock for: " + names.join(", ") + ". Receive stock into the central kitchen first.", 409);
+    }
+    const transfer = await prisma.$transaction(async (tx) => {
+      const claimed = await tx.purchaseOrder.updateMany({ where: { id: order.id, businessId: business.id, status: "pending" }, data: { status: "approved" } });
+      if (!claimed.count) fail("This purchase order was decided by someone else", 409);
+      const created = await tx.allocation.create({ data: { businessId: business.id, outletId: order.outletId, purchaseOrderId: order.id, routePlanId: null,
+        sourceLocation: "central-store", status: "pending_approval",
+        items: (order.items || []).map((line) => ({ inventory_id: line.inventory_id, inventory_name: line.inventory_name, unit: line.unit, requested_quantity: Number(line.requested_quantity ?? line.quantity) })) } });
+      await admincoreChangeSyncService.notifyChange({ businessId: business.id, tenantId, resource: "inventory", action: "demand_approved", recordId: order.id, outletId: order.outletId }, { tx });
+      return created;
+    });
+    // Approving the request is the dispatch approval: the stock leaves the central store now.
+    try {
+      await inventoryOperationsService.approveTransfer({ tenantId, allocationId: transfer.id, user });
+    } catch (error) {
+      // Stock changed between the check and the dispatch: the transfer waits for approval in the transfer list.
+      return { id: order.id, status: "approved", transfer_id: transfer.id, dispatched: false, message: "Approved, but dispatch failed: " + error.message + ". Approve the transfer once stock is available." };
+    }
+    return { id: order.id, status: "approved", transfer_id: transfer.id, dispatched: true };
+  },
+  /** Moves a delivery route along: scheduled -> in_transit (start) -> completed (complete). */
+  async updateRouteStatus({ tenantId, user, routeId, action, outletScope = null }) {
+    if (!isManager(user)) fail("Only an owner or manager can update delivery routes", 403);
+    if (!["start", "complete"].includes(action)) fail("Unknown route action");
+    const business = await ensureBusiness({ tenantId });
+    const route = await prisma.routePlan.findFirst({ where: { id: routeId, businessId: business.id }, include: { stops: true } });
+    if (!route) fail("Route not found", 404);
+    if (outletScope && !route.stops.some((stop) => outletScope.includes(stop.outletId))) fail("This route does not serve your outlets", 403);
+    const from = action === "start" ? ["scheduled", "Scheduled", "planned"] : ["in_transit", "In Transit", "in-transit", "dispatched"];
+    const to = action === "start" ? "in_transit" : "completed";
+    if (route.status === to) return { id: route.id, status: to };
+    if (!from.includes(route.status)) fail(action === "start" ? "Only a scheduled route can be started (this one is " + route.status + ")" : "Only a route in transit can be completed (this one is " + route.status + ")", 409);
+    const claimed = await prisma.routePlan.updateMany({ where: { id: route.id, businessId: business.id, status: { in: from } }, data: { status: to } });
+    if (!claimed.count) fail("This route was updated by someone else", 409);
+    await admincoreChangeSyncService.notifyChange({ businessId: business.id, tenantId, resource: "inventory", action: action === "start" ? "route_started" : "route_completed", recordId: route.id });
+    return { id: route.id, status: to };
   },
   async route({ tenantId, payload }) {
     const business = await ensureBusiness({ tenantId });

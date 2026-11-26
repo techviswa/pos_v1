@@ -1024,6 +1024,22 @@ router.post("/central-kitchen/purchase-orders", requireRole("Owner", "Manager"),
   }
 });
 
+// An outlet's stock request: approve (dispatches it from the central store) or reject with a reason.
+router.post("/central-kitchen/purchase-orders/:purchaseOrderId/:decision(approve|reject)", requireRole("Owner", "Manager"), requirePermission("central_kitchen"), async (req, res, next) => {
+  try {
+    res.status(200).json(await centralKitchenService.decidePurchaseOrder({ tenantId: req.context.tenantId, user: req.user, purchaseOrderId: req.params.purchaseOrderId,
+      approve: req.params.decision === "approve", reason: req.body?.reason, outletScope: req.context.outletScope }));
+  } catch (error) { next(error); }
+});
+
+// Delivery route progress: start (in transit) and complete.
+router.post("/central-kitchen/routes/:routeId/:action(start|complete)", requireRole("Owner", "Manager"), requirePermission("central_kitchen"), async (req, res, next) => {
+  try {
+    res.status(200).json(await centralKitchenService.updateRouteStatus({ tenantId: req.context.tenantId, user: req.user, routeId: req.params.routeId,
+      action: req.params.action, outletScope: req.context.outletScope }));
+  } catch (error) { next(error); }
+});
+
 router.post("/central-kitchen/restocks", requireRole("Owner", "Manager"), requirePermission("inventory"), async (req, res, next) => {
   try {
     const transfer = await inventoryOperationsService.createTransferRequest({ tenantId: req.context.tenantId, user: req.user,

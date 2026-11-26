@@ -24,5 +24,7 @@ router.get("/exports/:reportKey", asyncHandler(reportsController.export));
 router.get("/schedules", asyncHandler(reportsController.listSchedules));
 router.post("/schedules", asyncHandler(reportsController.createSchedule));
 router.post("/schedules/:scheduleId/run", asyncHandler(reportsController.runSchedule));
+router.put("/schedules/:scheduleId", asyncHandler(reportsController.updateSchedule));
+router.delete("/schedules/:scheduleId", asyncHandler(reportsController.deleteSchedule));
 
 export default router;

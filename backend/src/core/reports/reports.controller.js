@@ -1,6 +1,6 @@
 import { apiResponse } from "../../shared/utils/apiResponse.js";
 import { createHttpError } from "../../shared/utils/http-error.js";
-import { reportsService } from "./reports.service.js";
+import { reportsService, reportSchedules } from "./reports.service.js";
 
 const reportInput = (req) => ({
   tenantId: req.context.tenantId,
@@ -8,6 +8,11 @@ const reportInput = (req) => ({
   to: req.query?.to,
   outletId: req.query?.outlet_id || req.query?.outletId || null,
 });
+
+// Schedules cover every outlet, so outlet-restricted staff cannot create, run or change them.
+const assertWholeBusiness = (req) => {
+  if (req.context?.outletScope) throw createHttpError({ statusCode: 403, code: "OUTLET_RESTRICTED", message: "Scheduled reports cover every outlet; ask an owner or manager" });
+};
 
 class ReportsController {
   async overview(req, res) {
@@ -62,12 +67,13 @@ class ReportsController {
   }
 
   async listSchedules(req, res) {
-    const data = await reportsService.listSchedules({ businessId: req.context.businessId });
+    const data = await reportSchedules.list({ businessId: req.context.businessId });
     res.status(200).json(apiResponse({ message: "Scheduled reports fetched successfully", data }));
   }
 
   async createSchedule(req, res) {
-    const data = await reportsService.createSchedule({
+    assertWholeBusiness(req);
+    const data = await reportSchedules.create({
       businessId: req.context.businessId,
       payload: req.body,
       user: req.user,
@@ -76,15 +82,26 @@ class ReportsController {
   }
 
   async runSchedule(req, res) {
-    const data = await reportsService.runSchedule({
+    assertWholeBusiness(req);
+    const data = await reportSchedules.run({
       tenantId: req.context.tenantId,
       businessId: req.context.businessId,
       scheduleId: req.params.scheduleId,
+      deliver: req.body?.send === true,
     });
-    if (!data) {
-      throw createHttpError({ statusCode: 404, message: "Scheduled report not found" });
-    }
     res.status(200).json(apiResponse({ message: "Scheduled report run successfully", data }));
+  }
+
+  async updateSchedule(req, res) {
+    assertWholeBusiness(req);
+    const data = await reportSchedules.update({ businessId: req.context.businessId, scheduleId: req.params.scheduleId, payload: req.body || {} });
+    res.status(200).json(apiResponse({ message: "Scheduled report updated", data }));
+  }
+
+  async deleteSchedule(req, res) {
+    assertWholeBusiness(req);
+    const data = await reportSchedules.remove({ businessId: req.context.businessId, scheduleId: req.params.scheduleId });
+    res.status(200).json(apiResponse({ message: "Scheduled report deleted", data }));
   }
 }
 

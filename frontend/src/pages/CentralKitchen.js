@@ -48,6 +48,16 @@ const defaultRouteForm = {
   stops: [{ outlet_id: "", eta: "" }],
 };
 
+const PO_STATUS_LABELS = {
+  pending: "Waiting for approval",
+  approved_approved: "Dispatched — awaiting outlet receipt",
+  approved_pending_approval: "Approved — transfer not yet dispatched",
+  approved_none: "Approved",
+  fulfilled: "Received at outlet",
+  rejected: "Rejected",
+};
+const ROUTE_STATUS_LABELS = { scheduled: "Scheduled", Scheduled: "Scheduled", planned: "Scheduled", in_transit: "In transit", "in-transit": "In transit", "In Transit": "In transit", dispatched: "In transit", completed: "Delivered" };
+
 export const CentralKitchen = () => {
   const { user } = useAuth();
   const canManage = ["owner", "manager"].includes(String(user?.role || "").toLowerCase()) && hasPermission(user, "central_kitchen");
@@ -209,6 +219,36 @@ export const CentralKitchen = () => {
     try { await axios.post(`${API_URL}/api/inventory/transfers/${id}/${action}`, {}, { withCredentials: true }); toast.success(action === "approve" ? "Dispatched from the source store. Awaiting outlet receipt." : "Receipt confirmed. Outlet stock updated."); await fetchSnapshot(); }
     catch (failure) { toast.error(getApiErrorMessage(failure, "Unable to update transfer")); }
     finally { setTransferBusy(null); }
+  };
+
+  // Managers decide an outlet's stock request here. Approving dispatches the stock from the central store at once.
+  const [decisionBusy, setDecisionBusy] = useState(null);
+  const decidePurchaseOrder = async (order, approve) => {
+    let reason = "";
+    if (!approve) {
+      reason = (window.prompt(`Reject the request from ${order.outlet_name}? Tell them why:`) || "").trim();
+      if (!reason) return;
+    }
+    setDecisionBusy(order.id);
+    try {
+      const response = await axios.post(`${API_URL}/api/central-kitchen/purchase-orders/${order.id}/${approve ? "approve" : "reject"}`, approve ? {} : { reason }, { withCredentials: true });
+      const result = apiData(response) || {};
+      if (!approve) toast.success("Request rejected");
+      else if (result.dispatched === false) toast.warning(result.message || "Approved; approve the transfer once stock is available");
+      else toast.success("Approved and dispatched from the central kitchen. The outlet confirms receipt in Stock transfers.");
+      await fetchSnapshot();
+    } catch (failure) { toast.error(getApiErrorMessage(failure, "Unable to update the request")); }
+    finally { setDecisionBusy(null); }
+  };
+  const [routeBusy, setRouteBusy] = useState(null);
+  const updateRoute = async (route, action) => {
+    setRouteBusy(route.id);
+    try {
+      await axios.post(`${API_URL}/api/central-kitchen/routes/${route.id}/${action}`, {}, { withCredentials: true });
+      toast.success(action === "start" ? "Route started: vehicle is on the way" : "Route completed");
+      await fetchSnapshot();
+    } catch (failure) { toast.error(getApiErrorMessage(failure, "Unable to update the route")); }
+    finally { setRouteBusy(null); }
   };
 
   const updatePoItem = (index, key, value) => {
@@ -599,8 +639,9 @@ export const CentralKitchen = () => {
                 <tr>
                   <th>Outlet</th>
                   <th>Priority</th>
-                  <th>Status</th>
                   <th>Items</th>
+                  <th>Status</th>
+                  <th>Next step</th>
                 </tr>
               </thead>
               <tbody>
@@ -608,13 +649,20 @@ export const CentralKitchen = () => {
                   <tr key={order.id}>
                     <td>{order.outlet_name}</td>
                     <td>{order.priority}</td>
-                    <td>{order.status}</td>
-                    <td className="cf-table__mono">{order.items?.length || 0}</td>
+                    <td>{(order.items || []).map((item, index) => <div key={index}>{item.inventory_name || "Ingredient"}: {formatQuantity(item.requested_quantity, item.unit)}</div>)}</td>
+                    <td>{PO_STATUS_LABELS[order.status === "approved" ? `approved_${order.transfer_status || "none"}` : order.status] || order.status}
+                      {order.status === "rejected" && order.notes ? <div className="cf-card__meta">{String(order.notes).split("\n").filter((line) => line.startsWith("Rejected")).pop()}</div> : null}</td>
+                    <td>{order.status === "pending" ? (canManage ? (
+                      <span style={{ display: "inline-flex", gap: 6 }}>
+                        <button className="cf-btn cf-btn--small cf-btn--primary" disabled={Boolean(decisionBusy)} onClick={() => decidePurchaseOrder(order, true)} type="button">Approve &amp; dispatch</button>
+                        <button className="cf-btn cf-btn--small" disabled={Boolean(decisionBusy)} onClick={() => decidePurchaseOrder(order, false)} type="button">Reject</button>
+                      </span>
+                    ) : "Awaiting a manager") : order.status === "approved" && order.transfer_status === "approved" ? "Outlet confirms receipt in Stock transfers" : order.status === "approved" && order.transfer_status === "pending_approval" ? "Approve the transfer in Stock transfers" : "-"}</td>
                   </tr>
                 ))}
                 {!snapshot.purchase_orders.length ? (
                   <tr>
-                    <td colSpan="4" style={{ color: "var(--cf-text-3)" }}>No purchase orders yet.</td>
+                    <td colSpan="5" style={{ color: "var(--cf-text-3)" }}>No purchase orders yet.</td>
                   </tr>
                 ) : null}
               </tbody>
@@ -631,6 +679,8 @@ export const CentralKitchen = () => {
                   <th>Dispatch</th>
                   <th>Vehicle</th>
                   <th>Stops</th>
+                  <th>Status</th>
+                  <th>Next step</th>
                 </tr>
               </thead>
               <tbody>
@@ -639,12 +689,16 @@ export const CentralKitchen = () => {
                     <td>{route.route_name}</td>
                     <td>{route.dispatch_date || "-"}</td>
                     <td>{route.vehicle_number || "-"}</td>
-                    <td className="cf-table__mono">{route.stops?.length || 0}</td>
+                    <td>{(route.stops || []).map((stop) => stop.outlet_name).join(" → ") || "-"}</td>
+                    <td>{ROUTE_STATUS_LABELS[route.status] || route.status}</td>
+                    <td>{canManage && ["scheduled", "Scheduled", "planned"].includes(route.status) ? <button className="cf-btn cf-btn--small" disabled={Boolean(routeBusy)} onClick={() => updateRoute(route, "start")} type="button">Start route</button>
+                      : canManage && ["in_transit", "In Transit", "in-transit", "dispatched"].includes(route.status) ? <button className="cf-btn cf-btn--small" disabled={Boolean(routeBusy)} onClick={() => updateRoute(route, "complete")} type="button">Mark delivered</button>
+                      : route.status === "completed" ? "Done" : "-"}</td>
                   </tr>
                 ))}
                 {!snapshot.route_plans.length ? (
                   <tr>
-                    <td colSpan="4" style={{ color: "var(--cf-text-3)" }}>No route plans created yet.</td>
+                    <td colSpan="6" style={{ color: "var(--cf-text-3)" }}>No route plans created yet.</td>
                   </tr>
                 ) : null}
               </tbody>

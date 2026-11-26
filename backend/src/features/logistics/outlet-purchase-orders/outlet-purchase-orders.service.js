@@ -5,7 +5,7 @@ import {
 } from "../../../database/prisma/helpers.js";
 import { logisticsWorkflowService } from "../../../services/workflows/logistics-workflow.service.js";
 import { assertOwnedIds } from "../../../database/prisma/scope.js";
-import { createNotFoundError } from "../../../shared/utils/http-error.js";
+import { createHttpError } from "../../../shared/utils/http-error.js";
 
 class OutletPurchaseOrdersService {
   async listPurchaseOrders({ tenantId }) {
@@ -92,10 +92,10 @@ class OutletPurchaseOrdersService {
     const business = await ensureBusiness({ tenantId });
     const purchaseOrder = await prisma.$transaction(async (tx) => {
       const claimed = await tx.purchaseOrder.updateMany({
-        where: { id: purchaseOrderId, businessId: business.id },
+        where: { id: purchaseOrderId, businessId: business.id, status: "pending" },
         data: { status: "approved" },
       });
-      if (!claimed.count) throw createNotFoundError("Purchase order", { purchaseOrderId });
+      if (!claimed.count) throw createHttpError({ statusCode: 409, message: "Only a pending purchase order can be approved" });
       const approvedPurchaseOrder = await tx.purchaseOrder.findFirstOrThrow({ where: { id: purchaseOrderId, businessId: business.id } });
 
       await logisticsWorkflowService.handlePurchaseOrderApproved({
@@ -112,11 +112,10 @@ class OutletPurchaseOrdersService {
   }
 
   async rejectPurchaseOrder({ tenantId, purchaseOrderId }) {
-    return this.updatePurchaseOrder({
-      tenantId,
-      purchaseOrderId,
-      payload: { status: "rejected" },
-    });
+    const business = await ensureBusiness({ tenantId });
+    const claimed = await prisma.purchaseOrder.updateMany({ where: { id: purchaseOrderId, businessId: business.id, status: "pending" }, data: { status: "rejected" } });
+    if (!claimed.count) throw createHttpError({ statusCode: 409, message: "Only a pending purchase order can be rejected" });
+    return (await this.getPurchaseOrderById({ tenantId, purchaseOrderId })).item;
   }
 }
 

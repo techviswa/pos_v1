@@ -9,6 +9,7 @@ jest.mock("../contexts/UiContext", () => ({ useUi: () => ({ settings: { currency
 jest.mock("../core/outlets/store/ActiveOutletContext", () => ({ useActiveOutlet: () => ({ selectedOutletId: "main" }) }));
 jest.mock("../core/reports/SalesVisuals", () => ({ SalesVisuals: () => <div>Sales chart</div> }));
 jest.mock("sonner", () => ({ toast: { error: jest.fn() } }));
+jest.mock("../contexts/AuthContext", () => ({ useAuth: () => ({ user: { role: "Owner" } }) }));
 
 let root, element;
 const reportCalls = () => axios.get.mock.calls.filter(([url]) => url.endsWith("/api/reports"));

@@ -10,6 +10,8 @@ let retry;
 let stopped = false;
 let marketingStarted = false;
 let marketingStopped = false;
+let reportsStarted = false;
+let reportsStopped = false;
 const signals = {};
 const context = vm.createContext({
   app: { listen: (_port, ready) => { queueMicrotask(ready); return { on() {}, close(done) { done(); } }; } },
@@ -19,6 +21,9 @@ const context = vm.createContext({
   jobQueue: { start() {}, stop() { stopped = true; } },
   startMarketingWorker: () => { marketingStarted = true; },
   stopMarketingWorker: () => { marketingStopped = true; },
+  startReportScheduler: () => { reportsStarted = true; },
+  stopReportScheduler: () => { reportsStopped = true; },
+  reportSchedules: {},
   initErrorReporting: () => false,
   flushErrorReporting: async () => {},
   errorMonitor: { captureException() {} }, logger: { info() {}, error() {} },
@@ -30,6 +35,7 @@ vm.runInContext(source, context);
 await new Promise(setImmediate);
 assert.equal(calls, 1);
 assert.equal(marketingStarted, true, "the marketing sender starts with the server");
+assert.equal(reportsStarted, true, "the scheduled-report sender starts with the server");
 assert.equal(typeof retry, "function", "A failed startup must schedule recovery");
 retry();
 await new Promise(setImmediate);
@@ -38,6 +44,7 @@ signals.SIGTERM();
 await new Promise(setImmediate);
 assert.equal(stopped, true);
 assert.equal(marketingStopped, true, "the marketing sender stops during shutdown");
+assert.equal(reportsStopped, true, "the scheduled-report sender stops during shutdown");
 console.log("Startup retries a temporary database failure and stops jobs and the marketing sender during shutdown");
 let listened = false, startedWorkers = false, exitCode;
 const rejected = vm.createContext({

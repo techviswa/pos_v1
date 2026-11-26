@@ -27,3 +27,34 @@ test("kitchen shows precise quantities, real transfer state and preserves dirty 
     expect(field.value).toBe("23");
   } finally { await act(async () => root.unmount()); }
 });
+
+test("managers approve or reject outlet stock requests and move delivery routes along", async () => {
+  global.IS_REACT_ACT_ENVIRONMENT = true;
+  const snapshot = { stock_location: "Central store", overview: {}, outlets: [{ id: "a", name: "Outlet", code: "A" }], central_inventory: [], low_stock_items: [], outlet_inventory: [], restock_logs: [],
+    purchase_orders: [
+      { id: "po-1", outlet_name: "Outlet", priority: "High", status: "pending", items: [{ inventory_name: "Flour", requested_quantity: 4, unit: "kg" }] },
+      { id: "po-2", outlet_name: "Outlet", priority: "Low", status: "approved", transfer_status: "approved", items: [] },
+      { id: "po-3", outlet_name: "Outlet", priority: "Low", status: "rejected", notes: "Rejected by Owner: too much", items: [] },
+    ],
+    route_plans: [{ id: "r-1", route_name: "Morning run", status: "scheduled", stops: [{ outlet_name: "Outlet" }] }, { id: "r-2", route_name: "Evening run", status: "in_transit", stops: [] }] };
+  axios.get.mockResolvedValue({ data: snapshot });
+  axios.post.mockResolvedValue({ data: { status: "approved", dispatched: true } });
+  const prompt = jest.spyOn(window, "prompt").mockReturnValue("Order a smaller batch");
+  const node = document.createElement("div"), root = createRoot(node);
+  const click = (text) => act(async () => [...node.querySelectorAll("button")].find((button) => button.textContent === text).click());
+  try {
+    await act(async () => root.render(<CentralKitchen />));
+    expect(node.textContent).toContain("Flour: 4 kg");
+    expect(node.textContent).toContain("Dispatched — awaiting outlet receipt");
+    expect(node.textContent).toContain("Rejected by Owner: too much");
+    await click("Approve & dispatch");
+    expect(axios.post).toHaveBeenCalledWith("http://api/api/central-kitchen/purchase-orders/po-1/approve", {}, { withCredentials: true });
+    await click("Reject");
+    expect(axios.post).toHaveBeenCalledWith("http://api/api/central-kitchen/purchase-orders/po-1/reject", { reason: "Order a smaller batch" }, { withCredentials: true });
+    await click("Start route");
+    expect(axios.post).toHaveBeenCalledWith("http://api/api/central-kitchen/routes/r-1/start", {}, { withCredentials: true });
+    await click("Mark delivered");
+    expect(axios.post).toHaveBeenCalledWith("http://api/api/central-kitchen/routes/r-2/complete", {}, { withCredentials: true });
+    expect(node.textContent).toContain("In transit");
+  } finally { prompt.mockRestore(); await act(async () => root.unmount()); }
+});

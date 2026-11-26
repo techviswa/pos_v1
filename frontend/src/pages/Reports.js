@@ -10,6 +10,8 @@ import { useUi } from "../contexts/UiContext";
 import { toast } from "sonner";
 import { SalesVisuals } from "../core/reports/SalesVisuals";
 import { useActiveOutlet } from "../core/outlets/store/ActiveOutletContext";
+import { ScheduledReports } from "../core/reports/ScheduledReports";
+import { useAuth } from "../contexts/AuthContext";
 
 const EMPTY_ARRAY = [];
 const EMPTY_OBJECT = {};
@@ -20,6 +22,7 @@ export const Reports = () => {
   const { selectedOutletId, selectedOutlet } = useActiveOutlet();
   const requestId = useRef(0);
   const [loading, setLoading] = useState(true);
+  const { user } = useAuth();
   const [activeTab, setActiveTab] = useState("date");
   const [period, setPeriod] = useState("today");
   const [customDateRange, setCustomDateRange] = useState(() => { const today = new Date().toISOString().slice(0, 10); return { from: today, to: today }; });
@@ -264,9 +267,17 @@ export const Reports = () => {
           <button className={`cf-tab ${activeTab === "recipes" ? "is-active" : ""}`} onClick={() => setActiveTab("recipes")}>
             Recipe Analytics
           </button>
+          {/* Scheduled reports cover every outlet, so outlet-restricted staff do not get this tab. */}
+          {!user?.assigned_outlets?.length ? (
+            <button className={`cf-tab ${activeTab === "scheduled" ? "is-active" : ""}`} onClick={() => setActiveTab("scheduled")}>
+              Scheduled
+            </button>
+          ) : null}
         </div>
 
-        {activeTab === "date" ? (
+        {activeTab === "scheduled" ? (
+          <ScheduledReports />
+        ) : activeTab === "date" ? (
           <>
             {renderPeriodControls()}
             <SalesVisuals rows={dateRows} hourly={reportOverview.hourly?.rows || []} products={productRows.map((row) => ({ name: row.name, value: row.rev }))} outlets={(reportOverview.outlets?.rows || []).map((row) => ({ name: row.outlet_name || row.name, value: row.sales }))} currency={settings.currency} periodLabel={`${selectedOutlet?.name || "Accessible outlets"} · ${periodLabel} · UTC calendar days`} />
