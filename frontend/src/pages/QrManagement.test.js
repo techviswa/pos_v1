@@ -1,10 +1,15 @@
 import React, { act } from "react";
 import { createRoot } from "react-dom/client";
 import { QrManagement } from "./QrManagement";
+import axios from "axios";
+import { verifyQrDesign } from "../core/qr/qrArt";
 import { fulfillmentService } from "../features/billing/fulfillment/services/fulfillment.service";
 
 jest.mock("../components/Layout", () => ({ Layout: ({ children }) => <div>{children}</div> }));
 jest.mock("qrcode", () => ({ toDataURL: () => Promise.resolve("data:image/png;base64,test-qr") }));
+// Saved design is optional; the drawing engine's test-scan is exercised in the browser checks.
+jest.mock("../core/outlets/store/ActiveOutletContext", () => ({ useActiveOutlet: () => ({ outlets: [], selectedOutletId: "" }) }));
+jest.mock("../core/qr/qrArt", () => ({ ...jest.requireActual("../core/qr/qrArt"), verifyQrDesign: jest.fn() }));
 jest.mock("../features/billing/fulfillment/services/fulfillment.service", () => ({ fulfillmentService: {
   fetchTableManagement: jest.fn(() => Promise.resolve({ tables: { items: [{ id: "table-1", name: "Table 1", qr_ordering: { token: "active-token", active: true } }] } })),
   deleteTableQrCode: jest.fn(() => Promise.resolve({ deleted: true })),
@@ -13,13 +18,15 @@ jest.mock("../features/billing/fulfillment/services/fulfillment.service", () => 
 } }));
 
 beforeEach(() => {
+  jest.spyOn(axios, "get").mockRejectedValue(new Error("offline"));
+  verifyQrDesign.mockImplementation(({ subtitle }) => Promise.resolve({ ok: true, svg: `<svg xmlns="http://www.w3.org/2000/svg"><text>${subtitle}</text></svg>` }));
   fulfillmentService.fetchTableManagement.mockResolvedValue({ tables: { items: [{ id: "table-1", name: "Table 1", qr_ordering: { token: "active-token", active: true } }] } });
   fulfillmentService.deleteTableQrCode.mockResolvedValue({ deleted: true });
   fulfillmentService.fetchSettings.mockResolvedValue({ capabilities: { qrOrderingEnabled: true } });
   fulfillmentService.updateSettings.mockImplementation((settings) => Promise.resolve(settings));
 });
 
-test("QR workspace displays a scannable image, download and menu link for each active table", async () => {
+test("QR workspace displays a test-scanned image, downloads and menu link for each active table", async () => {
   global.IS_REACT_ACT_ENVIRONMENT = true;
   const element = document.createElement("div");
   const root = createRoot(element);
@@ -27,9 +34,8 @@ test("QR workspace displays a scannable image, download and menu link for each a
     await act(async () => root.render(<QrManagement />));
     const image = element.querySelector('img[alt="Scan to order at Table 1"]');
     expect(image).not.toBeNull();
-    expect(image.src).toBe("data:image/png;base64,test-qr");
-    expect(image.width).toBe(128);
-    expect(element.querySelector('a[download]').download).toBe("table-table-1-qr.png");
+    expect(decodeURIComponent(image.src)).toContain("<text>Table 1</text>");
+    expect([...element.querySelectorAll("button")].map((button) => button.textContent)).toEqual(expect.arrayContaining(["PNG", "SVG"]));
     expect([...element.querySelectorAll("a")].find((link) => link.textContent === "Open menu").href).toContain("/qr/active-token");
     expect(element.querySelector('[aria-label="Scannable table QR codes"]')).not.toBeNull();
   } finally { await act(async () => root.unmount()); }

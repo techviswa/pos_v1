@@ -16,7 +16,7 @@ const inBusiness = (businessId, work, tenantId = `tenant-${businessId}`) => rest
   return work(tx);
 });
 try {
-  check((await verifyRlsConnection(restricted)).protected_models, 62);
+  check((await verifyRlsConnection(restricted)).protected_models, 64);
   // A table owner/system URL must fail the runtime credential health check.
   const owner = new PrismaClient();
   try { await denied(verifyRlsConnection(owner)); } finally { await owner.$disconnect(); }
@@ -26,6 +26,7 @@ try {
   const order = await prisma.order.create({ data: { businessId: a, customerName: "RLS fixture", channel: "pos", status: "open", total: 10 } });
   const vb = await prisma.variation.create({ data: { productId: pb.id, name: "B variation", price: 2 } });
   await prisma.stateDocument.create({ data: { key: `print:${b}:secret`, data: { business_id: b } } });
+  const lb = await prisma.qrLink.create({ data: { businessId: b, token: `rls-${id}`, kind: "link", name: "B link", config: { url: "https://b.test" } } });
   // These use an unextended Prisma client: no application where filters/guard.
   check(await restricted.product.count(), 0);
   check(await restricted.business.count(), 0);
@@ -34,6 +35,7 @@ try {
     check(await tx.product.findUnique({ where: { id: pb.id } }), null);
     check(await tx.variation.findUnique({ where: { id: vb.id } }), null);
     check(await tx.stateDocument.findUnique({ where: { key: `print:${b}:secret` } }), null);
+    check(await tx.qrLink.findUnique({ where: { token: `rls-${id}` } }), null);
     check((await tx.product.updateMany({ where: { id: pb.id }, data: { name: "attack" } })).count, 0);
     check((await tx.product.deleteMany({ where: { id: pb.id } })).count, 0);
     check((await tx.$queryRaw`SELECT id FROM "Product"`).map((row) => row.id), [pa.id]);
@@ -41,6 +43,7 @@ try {
   await denied(inBusiness(a, (tx) => tx.product.create({ data: { businessId: b, name: "Attack", category: "Food", price: 1 } })));
   await denied(inBusiness(a, (tx) => tx.product.update({ where: { id: pa.id }, data: { businessId: b } })));
   await denied(inBusiness(a, (tx) => tx.orderItem.create({ data: { orderId: order.id, productId: pb.id, name: "Foreign reference", quantity: 1, price: 1 } })));
+  await denied(inBusiness(a, (tx) => tx.qrLinkScan.create({ data: { qrLinkId: lb.id, businessId: a } })));
   await denied(inBusiness(a, (tx) => tx.stateDocument.create({ data: { key: `print:${b}:forged`, data: { business_id: a } } })));
   await denied(restricted.product.create({ data: { businessId: a, name: "No scope", category: "Food", price: 1 } }));
   await denied(inBusiness(a, (tx) => tx.$executeRawUnsafe('TRUNCATE TABLE "Product" CASCADE')));

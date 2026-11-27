@@ -22,6 +22,8 @@ import kotRoutes from "../features/kitchen/kot/kot.routes.js";
 import barcodeRoutes from "../features/barcode/barcode.routes.js";
 import tableManagementRoutes from "../features/sales-extensions/table-management/table-management.routes.js";
 import qrOrderingRoutes from "../features/sales-extensions/qr-ordering/qr-ordering.routes.js";
+import qrStudioRoutes from "../features/sales-extensions/qr-studio/qr-studio.routes.js";
+import qrStudioPublicRoutes from "../features/sales-extensions/qr-studio/qr-studio-public.routes.js";
 import batchTrackingRoutes from "../features/inventory-advanced/batch-tracking/batch-tracking.routes.js";
 import outletInventoryAllocationRoutes from "../features/logistics/outlet-inventory-allocation/outlet-inventory-allocation.routes.js";
 import outletPurchaseOrdersRoutes from "../features/logistics/outlet-purchase-orders/outlet-purchase-orders.routes.js";
@@ -104,11 +106,13 @@ export const coreRouteModules = [
     path: `/${API_ROUTE_SEGMENTS.SYNC}`,
     router: syncRoutes,
   },
+  { type: "core", key: "public-qr-studio", path: "/public/qr-studio", router: qrStudioPublicRoutes },
   { type: "core", key: "public-qr-ordering", path: "/public/qr", router: qrOrderingRoutes },
 ];
 
 export const featureRouteModules = [
   { type: "feature", key: FEATURE_KEYS.KOT, path: `/${API_ROUTE_SEGMENTS.KOT}`, router: kotRoutes },
+  { type: "feature", key: FEATURE_KEYS.QR_STUDIO, path: `/${API_ROUTE_SEGMENTS.QR_STUDIO}`, router: qrStudioRoutes },
   { type: "feature", key: FEATURE_KEYS.BARCODE, path: `/${API_ROUTE_SEGMENTS.BARCODE}`, router: barcodeRoutes },
   {
     type: "feature",

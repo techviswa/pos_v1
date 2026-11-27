@@ -21,6 +21,7 @@ import { guestProgress } from "./guest-progress.js";
 import { guestMenuDetails, qrSaleState } from "../../../core/products/qr-menu-details.js";
 import { recipeAllergenDetails } from "../../../core/products/ingredient-allergens.js";
 import { resolveTableOutlet } from "./table-outlet.js";
+import { qrBrandService } from "../qr-studio/qr-brand.service.js";
 
 const cloneJson = (value, fallback) => {
   if (value === undefined || value === null) return fallback;
@@ -313,11 +314,27 @@ class QrOrderingService {
       requestMeta.refresh ? Promise.resolve() : this.recordScan(qrCode, requestMeta),
       requestMeta.refresh ? prisma.tableSession.findUnique({ where: { sessionKey: todaySessionKey(qrCode.tableId) } }) : this.ensureTableSession({ qrCode }),
     ]);
-    const outletId = qrCode.outletId;
+    const [items, brand] = await Promise.all([
+      this.buildGuestMenuItems({ businessId: qrCode.businessId, outletId: qrCode.outletId }),
+      qrBrandService.publicBrand({ businessId: qrCode.businessId, outletId: qrCode.outletId }),
+    ]);
+    return {
+      ...this.serializeContext({ ...qrCode, currentTableSession }),
+      brand,
+      availability: {
+        outlet_id: qrCode.outletId,
+        checked_at: new Date().toISOString(),
+      },
+      items,
+    };
+  }
+
+  /** The guest menu for one outlet: what QR guests may order now, at the price they will be charged. */
+  async buildGuestMenuItems({ businessId, outletId }) {
     const [products, rules] = await Promise.all([
       prisma.product.findMany({
         where: {
-          businessId: qrCode.businessId,
+          businessId,
         },
         include: {
           business: true,
@@ -326,18 +343,12 @@ class QrOrderingService {
         },
         orderBy: [{ category: "asc" }, { name: "asc" }],
       }),
-      loadActiveRules(prisma, qrCode.businessId),
+      loadActiveRules(prisma, businessId),
     ]);
     const at = new Date();
-    const allergenDetails = await recipeAllergenDetails(products, qrCode.businessId);
+    const allergenDetails = await recipeAllergenDetails(products, businessId);
 
-    return {
-      ...this.serializeContext({ ...qrCode, currentTableSession }),
-      availability: {
-        outlet_id: outletId,
-        checked_at: new Date().toISOString(),
-      },
-      items: (await attachProductImages(products, qrCode.businessId))
+    return (await attachProductImages(products, businessId))
         .filter((product) => product.active !== false)
         .filter((product) => isProductAvailableForQr({ product, outletId }))
         .filter((product) => availability(product, { outletLink: product.outletLinks?.[0] || null, channel: "Dine-In" }).available)
@@ -356,8 +367,7 @@ class QrOrderingService {
             price: priced.price,
             price_rule: priced.rule ? { id: priced.rule.id, name: priced.rule.name } : null,
           };
-        }),
-    };
+        });
   }
 
   async requestPhoneVerification({ token, phone }) {

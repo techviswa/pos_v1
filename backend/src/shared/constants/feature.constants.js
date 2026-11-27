@@ -2,6 +2,12 @@ import { FEATURE_KEYS } from "./module.constants.js";
 
 export const FEATURE_REGISTRY = [
   {
+    key: FEATURE_KEYS.QR_STUDIO,
+    domain: "sales-extensions",
+    label: "QR Studio",
+    description: "Smart QR codes (menu, offer, review, contact card, link), branded guest menu and QR performance.",
+  },
+  {
     key: FEATURE_KEYS.KOT,
     domain: "kitchen",
     label: "Kitchen Order Tickets",

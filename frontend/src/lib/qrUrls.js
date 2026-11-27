@@ -18,3 +18,6 @@ export const getPublicQrUrl =(token, configured = process.env.REACT_APP_PUBLIC_F
   if (isLan(page.hostname) && (isLan(base.hostname) || isLoopback(base.hostname))) base.host = page.host;
   return `${base.href.replace(/\/$/, "")}/qr/${encodeURIComponent(token)}`;
 };
+
+/** The printed address of a smart code (menu, offer, review, card, link): /q/<token>. */
+export const getSmartQrUrl = (token, configured, pageOrigin) => getPublicQrUrl(token, configured, pageOrigin).replace(/\/qr\/([^/]+)$/, "/q/$1");

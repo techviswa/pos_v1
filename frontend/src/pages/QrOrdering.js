@@ -4,6 +4,7 @@ import { useParams } from "react-router-dom";
 import { ApiErrorPanel } from "../components/ApiErrorPanel";
 import { formatCurrency, newClientKey } from "../lib/pos";
 import { resolveQrApiBaseUrl } from "../lib/qrUrls";
+import { QrBrandHeader, QrChefPicks, QrVideos } from "../components/QrBrand";
 import { ProductPhoto } from "../components/ProductPhoto";
 import { QrTableAssistance } from "../components/QrTableAssistance";
 import { QrItemSheet } from "../components/QrItemSheet";
@@ -116,7 +117,7 @@ export const QrOrdering = () => {
       .then((response) => {
         if (!active) return;
         const data = unwrap(response);
-        setContext({ business: data.business, table: data.table, qr: data.qr, ordering: data.ordering, table_session: data.table_session });
+        setContext({ business: data.business, table: data.table, qr: data.qr, ordering: data.ordering, table_session: data.table_session, brand: data.brand || null });
         setMenuItems(data.items || []);
         setPreviousOrders(visitOrders(visitKey(token, data.table_session)));
       })
@@ -428,7 +429,8 @@ export const QrOrdering = () => {
   return (
     <div className="cf-qr-page">
       <div className="cf-qr-shell">
-        <header className="cf-qr-header">
+        {context?.brand ? <QrBrandHeader brand={context.brand} title={context.business?.name || "Menu"} overline="Order from your table"
+          detail={`${context.table?.area_name ? `${context.table.area_name} | ` : ""}${context.table?.name ? `Table ${context.table.name}` : "Table order"}`} /> : <header className="cf-qr-header">
           <div>
             <div className="cf-page__overline">QR Ordering</div>
             <h1>{context?.business?.name || "Menu"}</h1>
@@ -437,7 +439,7 @@ export const QrOrdering = () => {
               {context?.table?.name ? `Table ${context.table.name}` : "Table order"}
             </p>
           </div>
-        </header>
+        </header>}
         <QrTableAssistance token={token} sessionKey={context?.table_session?.session_key} />
 
         {context?.ordering ? (
@@ -473,6 +475,8 @@ export const QrOrdering = () => {
         {menuNotice ? <p role="status">{menuNotice}</p> : null}
         <p className="cf-card__meta">Have an allergy? Check the item's food information and speak to staff.</p>
 
+        <QrChefPicks brand={context?.brand} items={menuItems} onOpen={openItem} />
+        <QrVideos brand={context?.brand} />
         <QrOffers items={menuItems} offersOnly={offersOnly} onToggle={() => { setOffersOnly((value) => !value); setActiveCategory("all"); setSearchTerm(""); }} />
         <main className="cf-qr-layout">
           <section className="cf-qr-menu">

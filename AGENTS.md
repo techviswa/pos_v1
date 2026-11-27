@@ -166,6 +166,7 @@ If migrations fail because Postgres user lacks schema permission, run as `postgr
 - Billing/orders: `backend/src/core/billing`, `backend/src/core/orders`
 - KOT/kitchen: `backend/src/features/kitchen/kot`
 - QR ordering/table management: `backend/src/features/sales-extensions/qr-ordering`, `backend/src/features/sales-extensions/table-management`
+- QR Studio: `backend/src/features/sales-extensions/qr-studio` (printed design on all plans via `/api/table-management/qr-design`; smart codes `/q/<token>`, guest-menu branding and per-code performance under `/api/qr-studio`, plan feature `qr-studio` on Growth/Enterprise). Frontend `frontend/src/core/qr` — every printed code is decoded with jsQR before save/print (`qrArt.js`).
 - Reports: `backend/src/core/reports`
 - Inventory: `backend/src/core/inventory`
 - Printer/payment foundations: `backend/src/core/printer`, `backend/src/core/payments`

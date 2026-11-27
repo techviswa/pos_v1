@@ -16,7 +16,7 @@ const STATUS_TEXT = {
 };
 
 const USAGE_LABELS = { outlets: "Outlets", staff: "Active staff", products: "Active menu items", qr_tables: "QR tables", monthly_orders: "Orders this month" };
-const FEATURE_LABELS = { billing: "Billing", products: "Menu", reports: "Reports", staff: "Staff", "table-management": "Tables", kot: "Kitchen tickets (KOT)", inventory: "Inventory", barcode: "Barcodes", "batch-tracking": "Batch tracking", "outlet-inventory-allocation": "Outlet stock allocation", "outlet-purchase-orders": "Outlet purchase orders", "delivery-route-plan": "Delivery routes" };
+const FEATURE_LABELS = { billing: "Billing", products: "Menu", reports: "Reports", staff: "Staff", "table-management": "Tables", kot: "Kitchen tickets (KOT)", inventory: "Inventory", barcode: "Barcodes", "batch-tracking": "Batch tracking", "outlet-inventory-allocation": "Outlet stock allocation", "outlet-purchase-orders": "Outlet purchase orders", "delivery-route-plan": "Delivery routes", "qr-studio": "QR Studio (smart codes, branded menu, QR performance)" };
 
 /** The Owner's Taskoora plan: pay by UPI Autopay or card mandate through Razorpay, see payments, stop auto-pay. */
 export const PlanBilling = () => {

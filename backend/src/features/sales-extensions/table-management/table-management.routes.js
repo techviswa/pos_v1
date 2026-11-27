@@ -3,6 +3,7 @@ import { hasEffectivePermission, requireAnyPermission, requireAuth } from "../..
 import { requireSaasLimit } from "../../../shared/middleware/saasLimit.middleware.js";
 import { createFeatureRouter } from "../../../shared/utils/create-feature-router.js";
 import { tableManagementController } from "./table-management.controller.js";
+import { qrDesignService } from "../qr-studio/qr-design.js";
 
 // Floor layout, QR codes and table settings belong to the QR & tables and Reservations screens.
 const FLOOR_SCREENS = ["qr_management", "reservations"];
@@ -23,6 +24,9 @@ const limitStaffTableEdits = (req, res, next) => {
 export default createFeatureRouter({
   featureKey: FEATURE_KEYS.TABLE_MANAGEMENT,
   definitions: [
+    // The printed look of every QR code (all plans that have tables).
+    { method: "get", path: "/qr-design", middleware: manage, handler: async (req, res) => res.json({ success: true, data: await qrDesignService.get(req.context.businessId) }) },
+    { method: "put", path: "/qr-design", middleware: manage, handler: async (req, res) => res.json({ success: true, data: await qrDesignService.save(req.context.businessId, req.body || {}, req.user) }) },
     { method: "get", path: "/settings", handler: tableManagementController.getSettings },
     { method: "put", path: "/settings", middleware: manage, handler: tableManagementController.updateSettings },
     { method: "get", path: "/areas", handler: tableManagementController.listAreas },

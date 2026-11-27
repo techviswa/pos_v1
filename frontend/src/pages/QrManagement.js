@@ -4,7 +4,16 @@ import { toast } from "sonner";
 import { Layout } from "../components/Layout";
 import { fulfillmentService } from "../features/billing/fulfillment/services/fulfillment.service";
 import { getPublicQrUrl, isLocalNetworkUrl } from "../lib/qrUrls";
-import { LocalQrCode } from "../components/LocalQrCode";
+import axios from "axios";
+import { API_URL } from "../lib/apiUrl";
+import { apiData } from "../lib/apiData";
+import { useServerFeatureEnabled } from "../core/platform/store/serverFeatures";
+import { DesignedQr } from "../core/qr/DesignedQr";
+import { QrDesigner } from "../core/qr/QrDesigner";
+import { SmartCodes } from "../core/qr/SmartCodes";
+import { MenuBranding } from "../core/qr/MenuBranding";
+import { QrInsights } from "../core/qr/QrInsights";
+import { DEFAULT_DESIGN } from "../core/qr/qrArt";
 import { ApiErrorPanel } from "../components/ApiErrorPanel";
 import { QrServiceAnalytics } from "../components/QrServiceAnalytics";
 
@@ -46,6 +55,8 @@ export const QrManagement = () => {
   const [tableData, setTableData] = useState(null);
   const [settings, setSettings] = useState(normalizeSettings());
   const [lastGeneratedTableId, setLastGeneratedTableId] = useState("");
+  const [design, setDesign] = useState(DEFAULT_DESIGN);
+  const studioEnabled = useServerFeatureEnabled("qr-studio");
 
   const tables = useMemo(() => tableData?.tables?.items || [], [tableData]);
   const qrTables = useMemo(() => tables.filter((table) => table.qr_ordering), [tables]);
@@ -57,10 +68,13 @@ export const QrManagement = () => {
   const load = async () => {
     setLoading(true);
     try {
-      const [nextTableData, nextSettings] = await Promise.all([
+      const [nextTableData, nextSettings, nextDesign] = await Promise.all([
         fulfillmentService.fetchTableManagement({ force: true, includeHistory: true }),
         fulfillmentService.fetchSettings(),
+        // The printed look is optional: without it codes print in the plain default design.
+        axios.get(`${API_URL}/api/table-management/qr-design`, { withCredentials: true, skipCache: true }).then(apiData).catch(() => null),
       ]);
+      if (nextDesign) setDesign(nextDesign);
       setTableData(nextTableData);
       setSettings(normalizeSettings(nextSettings));
       setLoadError(null);
@@ -160,7 +174,7 @@ export const QrManagement = () => {
         <div className="cf-page__header">
           <div>
             <h1>QR Ordering</h1>
-            <p>{section === "codes" ? "Manage table QR links, scan activity, and public ordering rules." : "Review offers, guest feedback, and service performance."}</p>
+            <p>{{ codes: "Manage table QR links, scan activity, and public ordering rules.", design: "One printed look for every QR code, test-scanned before printing.", studio: "Smart codes for posters and counters, and how your guest menu looks." }[section] || "Review QR performance, offers, guest feedback, and service."}</p>
           </div>
           {section === "codes" ? <div className="cf-page__header-actions">
             <button className="cf-btn cf-btn--secondary" disabled={loading} onClick={load} type="button">
@@ -175,9 +189,18 @@ export const QrManagement = () => {
 
         <nav aria-label="QR workspace sections" style={{ display: "flex", gap: 12, marginBottom: 20 }}>
           <button className="cf-btn cf-btn--secondary" type="button" aria-pressed={section === "codes"} onClick={() => setSection("codes")}>QR codes & settings</button>
+          <button className="cf-btn cf-btn--secondary" type="button" aria-pressed={section === "design"} onClick={() => setSection("design")}>Design & print</button>
+          <button className="cf-btn cf-btn--secondary" type="button" aria-pressed={section === "studio"} onClick={() => setSection("studio")}>Smart codes & menu look</button>
           <button className="cf-btn cf-btn--secondary" type="button" aria-pressed={section === "analytics"} onClick={() => setSection("analytics")}>Offers, feedback & analytics</button>
         </nav>
-        {section === "analytics" ? <QrServiceAnalytics /> : loadError ? <ApiErrorPanel error={loadError} onRetry={load} /> : loading ? (
+        {section === "analytics" ? <>{studioEnabled ? <QrInsights /> : null}<QrServiceAnalytics /></> : section === "studio" ? (studioEnabled ? <><SmartCodes design={design} /><MenuBranding /></> : (
+          <section className="cf-card cf-card--padded" data-testid="qr-studio-upsell">
+            <div className="cf-card__title"><span>Smart codes & menu look</span></div>
+            <p>Codes for posters, counters and reviews whose destination you can change without reprinting, a branded guest menu with chef's picks and videos, and per-code performance.</p>
+            <p className="cf-card__meta">Included in the Growth and Enterprise plans. Your table codes, their design and QR ordering keep working on every plan.</p>
+            <a className="cf-btn cf-btn--secondary" href="/plan">See plans</a>
+          </section>
+        )) : section === "design" && !loading && !loadError ? <QrDesigner tables={qrTables} design={design} onSaved={setDesign} /> : loadError ? <ApiErrorPanel error={loadError} onRetry={load} /> : loading ? (
           <div className="cf-card cf-card--padded">
             <div className="cf-card__meta">Loading QR workspace...</div>
           </div>
@@ -197,7 +220,7 @@ export const QrManagement = () => {
                 {qrTables.map((table) => <article className="cf-card cf-card--padded" key={table.id} style={{ textAlign: "center" }}>
                   <h3>{table.name}</h3>
                   <p className="cf-card__meta">{table.area_name || "Unassigned"} · {!table.qr_ordering.active ? "Inactive — activate before use" : orderingBlocked ? `Code ready · ordering ${orderingBlocked}` : "Active"}</p>
-                  {table.qr_ordering.active ? <LocalQrCode size={128} value={getPublicQrUrl(table.qr_ordering.token)} label={`Scan to order at ${table.name}`} filename={`table-${table.code || table.id}-qr.png`} /> : <p>Generate an active QR code for this table below.</p>}
+                  {table.qr_ordering.active ? <DesignedQr size={150} value={getPublicQrUrl(table.qr_ordering.token)} design={design} title={design.business_name || ""} subtitle={table.name} label={`Scan to order at ${table.name}`} filename={`table-${(table.code || table.name).toString().replace(/W+/g, "-").toLowerCase()}-qr`} /> : <p>Generate an active QR code for this table below.</p>}
                   <a className="cf-btn cf-btn--secondary cf-btn--small" style={{ marginTop: 12 }} href={getPublicQrUrl(table.qr_ordering.token)} target="_blank" rel="noreferrer">Open menu</a>
                   <button className="cf-btn cf-btn--danger cf-btn--small" style={{ marginTop: 8 }} type="button" disabled={busyTableId === table.id} onClick={() => deleteQr(table)}>Delete QR</button>
                 </article>)}

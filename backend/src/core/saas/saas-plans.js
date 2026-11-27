@@ -11,7 +11,7 @@ export const SAAS_PLANS = {
     name: "Growth",
     monthly_price: 2499,
     limits: { outlets: 3, staff: 25, products: 2000, qr_tables: 100, monthly_orders: 10000 },
-    features: ["billing", "products", "reports", "staff", "table-management", "kot", "inventory"],
+    features: ["billing", "products", "reports", "staff", "table-management", "kot", "inventory", "qr-studio"],
   },
   enterprise: {
     key: "enterprise",
@@ -31,6 +31,7 @@ export const SAAS_PLANS = {
       "outlet-inventory-allocation",
       "outlet-purchase-orders",
       "delivery-route-plan",
+      "qr-studio",
     ],
   },
 };

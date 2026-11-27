@@ -76,6 +76,7 @@ model Business {
   diningAreas             DiningArea[]
   diningTables            DiningTable[]
   tableQrCodes            TableQrCode[]
+  qrLinks                 QrLink[]
   tableSessions           TableSession[]
   tableReservations       TableReservation[]
   feedback                Feedback[]
@@ -664,6 +665,40 @@ model TableQrCode {
   createdAt     DateTime           @default(now())
   updatedAt     DateTime           @updatedAt
   rotatedAt     DateTime?
+}
+
+/// A permanent short QR link (menu, offer, review, contact card, web link) whose destination can change without reprinting.
+model QrLink {
+  id            String       @id @default(cuid())
+  businessId    String
+  outletId      String?
+  token         String       @unique
+  /// menu | offer | review | card | link
+  kind          String
+  name          String
+  config        Json
+  active        Boolean      @default(true)
+  scanCount     Int          @default(0)
+  lastScannedAt DateTime?
+  business      Business     @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  scans         QrLinkScan[]
+  createdAt     DateTime     @default(now())
+  updatedAt     DateTime     @updatedAt
+
+  @@index([businessId])
+}
+
+model QrLinkScan {
+  id         String   @id @default(cuid())
+  qrLinkId   String
+  qrLink     QrLink   @relation(fields: [qrLinkId], references: [id], onDelete: Cascade)
+  businessId String
+  userAgent  String?
+  ipHash     String?
+  scannedAt  DateTime @default(now())
+
+  @@index([qrLinkId, scannedAt])
+  @@index([businessId, scannedAt])
 }
 
 model TableQrScanEvent {
