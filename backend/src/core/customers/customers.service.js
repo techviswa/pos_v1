@@ -1,4 +1,5 @@
 import prisma from "../../database/prisma/client.js";
+import { Prisma } from "@prisma/client";
 import { randomUUID } from 'node:crypto';
 import { createHttpError } from "../../shared/utils/http-error.js";
 import { syncService } from "../sync/sync.service.js";
@@ -87,6 +88,18 @@ const daysUntil = (date, now = new Date()) => {
   return Math.round((next - today) / 86400000);
 };
 
+/** Ids of records of a model that hold this guest's data, read 2,000 at a time. */
+async function erasureCandidates(model, businessId, marker) {
+  const ids = [];
+  let cursor = null;
+  for (;;) {
+    const rows = await prisma[model].findMany({ where: { businessId }, orderBy: { id: "asc" }, take: 2000, ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}) });
+    for (const row of rows) if (matchesErasure(row, marker)) ids.push(row.id);
+    if (rows.length < 2000) return ids;
+    cursor = rows.at(-1).id;
+  }
+}
+
 class CustomersService {
   /** AdminCore export (unchanged contract), enriched with profile fields where a profile exists. */
   async listCustomers({ tenantId, businessId, query = {} }) {
@@ -104,11 +117,13 @@ class CustomersService {
     await synchronizeCustomerHistory(businessId);
     const search = String(query.search || "").trim();
     const digits = search.replace(/\D/g, "");
-    const qrOrders = await prisma.order.findMany({ where: { businessId, channel: "qr" }, orderBy: { createdAt: "desc" }, select: { customerName: true, metadata: true } });
+    // Names guests typed on QR orders, as distinct phone/name pairs (not every QR order).
+    const qrOrders = await prisma.$queryRaw(Prisma.sql`SELECT DISTINCT o.metadata->>'customer_phone' AS phone, o."customerName" AS name FROM "Order" o
+      WHERE o."businessId" = ${businessId} AND o.channel = 'qr' AND COALESCE(o.metadata->>'customer_phone', '') <> ''`);
     const qrNames = new Map();
     for (const order of qrOrders) {
-      const phone = normalizePhone(order.metadata?.customer_phone);
-      const name = String(order.customerName || "").trim();
+      const phone = normalizePhone(order.phone);
+      const name = String(order.name || "").trim();
       if (!phone || !name || ["walk-in", "guest", "erased customer"].includes(name.toLowerCase())) continue;
       const names = qrNames.get(phone) || [];
       if (!names.includes(name)) names.push(name);
@@ -239,6 +254,21 @@ class CustomersService {
   async anonymize({ businessId, customerId, actor, payload = {} }) {
     const reason = String(payload.reason || "").trim();
     if (!reason) fail(400, "REASON_REQUIRED", "Record why the data is being erased (e.g. customer request)");
+    // Find matching records in batches before the transaction (a busy business has far more bills than one
+    // transaction can read in time). Inside it, only those candidates and anything created since are re-checked.
+    const before = await prisma.customer.findFirst({ where: { id: String(customerId), businessId, anonymizedAt: null } });
+    if (!before) fail(404, "CUSTOMER_NOT_FOUND", "Customer not found");
+    const scanStarted = new Date(Date.now() - 60 * 1000);
+    const preMarker = erasureMarker(before);
+    const candidates = {};
+    for (const model of ['bill', 'order', 'tableSession', 'tableReservation']) candidates[model] = await erasureCandidates(model, businessId, preMarker);
+    const recheck = async (tx, model, marker) => {
+      const rows = [];
+      for (let offset = 0; offset < candidates[model].length; offset += 1000) rows.push(...await tx[model].findMany({ where: { businessId, id: { in: candidates[model].slice(offset, offset + 1000) } } }));
+      const seen = new Set(rows.map((row) => row.id));
+      rows.push(...(await tx[model].findMany({ where: { businessId, createdAt: { gte: scanStarted } } })).filter((row) => !seen.has(row.id)));
+      return rows.filter((row) => matchesErasure(row, marker));
+    };
     return prisma.$transaction(async (tx) => {
       const found = await tx.customer.findFirst({ where: { id: String(customerId), businessId, anonymizedAt: null } });
       if (!found) fail(404, "CUSTOMER_NOT_FOUND", "Customer not found");
@@ -261,14 +291,12 @@ class CustomersService {
       const markerKey = `privacy-erasure:${businessId}:${customer.id}`;
       await tx.stateDocument.upsert({ where: { key: markerKey }, create: { key: markerKey, data: marker }, update: { data: marker } });
       await tx.giftCard.updateMany({ where: { businessId, customerId: customer.id }, data: { customerId: null, recipientName: null } });
-      const candidates = await tx.bill.findMany({ where: { businessId }, select: { id: true, metadata: true } });
-      const bills = candidates.filter(bill => matchesErasure(bill, marker));
+      const bills = await recheck(tx, 'bill', marker);
       for (const bill of bills) {
         await tx.bill.update({ where: { id: bill.id }, data: { customerName: "Erased customer",
           metadata: { ...eraseReceipt(bill.metadata || {}), customer_name: "Erased customer", customer_phone: null, privacy_erased: true } } });
       }
-      const orders = await tx.order.findMany({ where: { businessId }, select: { id: true, metadata: true } });
-      const matchingOrders = orders.filter(order => matchesErasure(order, marker));
+      const matchingOrders = await recheck(tx, 'order', marker);
       const billIds = bills.map(bill => bill.id), orderIds = matchingOrders.map(order => order.id);
       // Bound marker documents so large customer histories remain pageable.
       for (const [kind, ids] of [['bill_ids', billIds], ['order_ids', orderIds]]) {
@@ -283,8 +311,7 @@ class CustomersService {
         await tx.order.update({ where: { id: order.id }, data: { customerName: "Erased customer", metadata: { ...eraseReceipt(order.metadata || {}), privacy_erased: true } } });
       }
       for (const model of ['tableSession', 'tableReservation']) {
-        const rows = await tx[model].findMany({ where: { businessId } });
-        for (const row of rows) if (matchesErasure(row, marker)) {
+        for (const row of await recheck(tx, model, marker)) {
           const jsonField = model === 'tableSession' ? 'metadata' : 'meta';
           await tx[model].update({ where: { id: row.id }, data: { customerName: 'Erased customer', customerPhone: null,
             [jsonField]: eraseReceipt(row[jsonField] || {}), ...(model === 'tableReservation' ? { notes: null } : {}) } });

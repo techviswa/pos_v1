@@ -1,4 +1,5 @@
 import { apiResponse, sendRawResponse } from "../../shared/utils/apiResponse.js";
+import { isAdminCoreSyncRequest } from "../sync/sync-contract.js";
 import { sendSyncOrRaw } from "../sync/sync-contract.js";
 import { outletsService } from "./outlets.service.js";
 import { filterByOutletScope } from "../../shared/middleware/outletScope.js";
@@ -8,6 +9,7 @@ class OutletsController {
     const data = filterByOutletScope(req, await outletsService.listOutlets({
       tenantId: req.context.tenantId,
       businessId: req.context.businessId,
+      includeSales: req.query?.analytics === "1" || isAdminCoreSyncRequest(req),
     }), (outlet) => outlet.id);
     sendSyncOrRaw(req, res, {
       resource: "outlets",

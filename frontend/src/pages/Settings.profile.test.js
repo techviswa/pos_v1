@@ -11,6 +11,8 @@ jest.mock('../components/Layout', () => ({ Layout: ({ children }) => <div>{child
 jest.mock('../contexts/UiContext', () => ({ useUi: jest.fn() }));
 jest.mock('../contexts/AuthContext', () => ({ API_URL: '', useAuth: jest.fn() }));
 jest.mock('axios', () => ({ put: jest.fn(), post: jest.fn() }));
+// The backup row loads its own status; it is covered by the backend backup tests.
+jest.mock('../core/platform/BackupStatus', () => ({ BackupStatusRow: () => null, DownloadBusinessData: () => null }));
 jest.mock('../core/payments/PaymentGatewaySettings', () => ({ PaymentGatewaySettings: () => null }));
 jest.mock('../features/billing/fulfillment/services/fulfillment.service', () => ({ fulfillmentService: { fetchSettings: jest.fn(), updateSettings: jest.fn() } }));
 jest.mock('sonner', () => ({ toast: { error: jest.fn(), success: jest.fn(), info: jest.fn() } }));

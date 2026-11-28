@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
+import { businessDay, periodRange } from "../lib/businessDate";
 import { formatQuantity } from "../lib/quantity";
 import { API_URL } from "../lib/apiUrl";
 import axios from "axios";
@@ -25,7 +26,7 @@ export const Reports = () => {
   const { user } = useAuth();
   const [activeTab, setActiveTab] = useState("date");
   const [period, setPeriod] = useState("today");
-  const [customDateRange, setCustomDateRange] = useState(() => { const today = new Date().toISOString().slice(0, 10); return { from: today, to: today }; });
+  const [customDateRange, setCustomDateRange] = useState(() => { const today = businessDay(new Date(), settings.timezone); return { from: today, to: today }; });
   const [dateDraft, setDateDraft] = useState(customDateRange);
   const [dateError, setDateError] = useState("");
   const [inventory, setInventory] = useState([]);
@@ -43,31 +44,39 @@ export const Reports = () => {
   const [customerView, setCustomerView] = useState("tracked");
   const [recipeView, setRecipeView] = useState("with");
 
+  const reportParams = () => {
+    if (period === "custom") return { from: customDateRange.from || undefined, to: customDateRange.to || undefined };
+    // Presets are the business's local days (UTC days start at 5:30 am in India).
+    return periodRange(period, settings.timezone);
+  };
+  // Guest analytics read every bill of the period, so they load only when the Customers tab is open.
+  const [guestState, setGuestState] = useState({ status: "idle", message: "" });
+  const guestRequest = useRef(0);
+  const fetchGuests = async () => {
+    const current = ++guestRequest.current;
+    setGuestState({ status: "loading", message: "" });
+    try {
+      const response = await axios.get(`${API_URL}/api/customer-analytics`, { withCredentials: true, skipCache: true, params: { ...reportParams(), outlet_id: selectedOutletId || undefined } });
+      if (current !== guestRequest.current) return;
+      setCustomerAnalytics(apiData(response) || { summary: {}, customers: [], item_sales_by_channel: [], campaign_suggestions: [] });
+      setGuestState({ status: "ready", message: "" });
+    } catch (error) {
+      if (current !== guestRequest.current) return;
+      setCustomerAnalytics({ summary: {}, customers: [], item_sales_by_channel: [], campaign_suggestions: [] });
+      setGuestState({ status: "error", message: error?.response?.data?.error?.message || error?.response?.data?.message || "Guest analytics could not be loaded. Try again." });
+    }
+  };
+
   const fetchData = async () => {
     const currentRequest = ++requestId.current;
     setLoading(true);
     try {
-      const reportParams = (() => {
-        if (period === "custom") return { from: customDateRange.from || undefined, to: customDateRange.to || undefined };
-        const now = new Date();
-        const today = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
-        const to = today.toISOString().slice(0, 10);
-        if (period === "today") return { from: to, to };
-        if (period === "week") {
-          const startWeek = new Date(today);
-          startWeek.setUTCDate(startWeek.getUTCDate() - startWeek.getUTCDay());
-          return { from: startWeek.toISOString().slice(0, 10), to };
-        }
-        const startMonth = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
-        return { from: startMonth.toISOString().slice(0, 10), to };
-      })();
-      const reportsRes = await axios.get(`${API_URL}/api/reports`, { withCredentials: true, skipCache: true, params: { ...reportParams, outlet_id: selectedOutletId || undefined } });
+      const reportsRes = await axios.get(`${API_URL}/api/reports`, { withCredentials: true, skipCache: true, params: { ...reportParams(), outlet_id: selectedOutletId || undefined, guests: "0" } });
       if (currentRequest !== requestId.current) return;
       const data = apiData(reportsRes) || {};
       setReportOverview(data);
       setInventory(data.inventory || []);
       setFeedback(data.feedback || { items: [], summary: {} });
-      setCustomerAnalytics(data.customer_insights || { summary: {}, customers: [], item_sales_by_channel: [], campaign_suggestions: [] });
       setLoadError(null);
     } catch (error) {
       if (currentRequest !== requestId.current) return;
@@ -87,6 +96,12 @@ export const Reports = () => {
     // Reports must refetch when the selected reporting period changes.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [period, customDateRange.from, customDateRange.to, selectedOutletId]);
+
+  useEffect(() => {
+    if (activeTab === "customers") void fetchGuests();
+    // Guests reload with the period and outlet while their tab is open.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeTab, period, customDateRange.from, customDateRange.to, selectedOutletId]);
 
   const dateRows = reportOverview.sales?.rows || EMPTY_ARRAY;
   const productRows = useMemo(
@@ -122,7 +137,8 @@ export const Reports = () => {
   }, [feedbackItems, feedbackView]);
   const customerRows = useMemo(() => {
     if (customerView === "repeat") {
-      return customers.filter((customer) => Number(customer.visits || 0) >= 2);
+      // Walk-ins without a phone are one combined row, never "repeat guests".
+      return customers.filter((customer) => !customer.anonymous && Number(customer.visits || 0) >= 2);
     }
     if (customerView === "loyalty") {
       return [...customers].sort((left, right) => Number(right.loyalty_points || 0) - Number(left.loyalty_points || 0));
@@ -280,7 +296,7 @@ export const Reports = () => {
         ) : activeTab === "date" ? (
           <>
             {renderPeriodControls()}
-            <SalesVisuals rows={dateRows} hourly={reportOverview.hourly?.rows || []} products={productRows.map((row) => ({ name: row.name, value: row.rev }))} outlets={(reportOverview.outlets?.rows || []).map((row) => ({ name: row.outlet_name || row.name, value: row.sales }))} currency={settings.currency} periodLabel={`${selectedOutlet?.name || "Accessible outlets"} · ${periodLabel} · UTC calendar days`} />
+            <SalesVisuals rows={dateRows} hourly={reportOverview.hourly?.rows || []} products={productRows.map((row) => ({ name: row.name, value: row.rev }))} outlets={(reportOverview.outlets?.rows || []).map((row) => ({ name: row.outlet_name || row.name, value: row.sales }))} currency={settings.currency} periodLabel={`${selectedOutlet?.name || "Accessible outlets"} · ${periodLabel} · days in ${reportOverview.scope?.timezone || settings.timezone || "local time"}`} />
           <div className="cf-table-wrap">
             <table className="cf-table">
               <thead>
@@ -508,6 +524,8 @@ export const Reports = () => {
                 </div>
               </button>
             </div>
+            {guestState.status === "loading" ? <p role="status" className="cf-card__meta">Loading guest analytics for this period…</p> : null}
+            {guestState.status === "error" ? <p role="alert" className="cf-card__meta" data-testid="customers-range-note">{guestState.message}</p> : null}
             <div className="cf-table-toolbar">
               <span style={{ color: "var(--cf-text-3)", fontSize: 12 }}>
                 {customerView === "repeat"

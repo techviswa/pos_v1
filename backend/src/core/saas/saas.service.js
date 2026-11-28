@@ -316,29 +316,48 @@ class SaasService {
     }
   }
 
-  async exportTenant({ businessId }) {
+  /**
+   * Writes the business's data as one JSON object (same shape as before) to write(chunk). Orders and bills are read
+   * 1,000 at a time, so the export works for any history length without holding it all in memory.
+   */
+  async streamTenantExport({ businessId, write }) {
     const targetBusinessId = normalizeId(businessId, env.defaultBusinessId);
     const business = await this.getBusinessOrThrow(targetBusinessId);
-    const [config, products, orders, bills, inventoryItems, tables] = await Promise.all([
+    const [config, products, inventoryItems, tables] = await Promise.all([
       this.getConfigForBusiness(business),
       prisma.product.findMany({ where: { businessId: targetBusinessId }, include: { business: true, variations: true, addons: true } }),
-      prisma.order.findMany({ where: { businessId: targetBusinessId }, include: { business: true, items: true } }),
-      prisma.bill.findMany({ where: { businessId: targetBusinessId }, include: { business: true, items: true } }),
       prisma.inventoryItem.findMany({ where: { businessId: targetBusinessId }, include: { business: true } }),
       prisma.diningTable.findMany({ where: { businessId: targetBusinessId } }),
     ]);
-    return {
-      exported_at: new Date().toISOString(),
-      business: serializeBusiness(business),
-      saas: config,
-      users: business.users.map(serializeUser),
-      outlets: business.outlets.map(serializeOutlet),
-      products: products.map(serializeProduct),
-      orders: orders.map(serializeOrder),
-      bills: bills.map(serializeBill),
-      inventory: inventoryItems.map(serializeInventoryItem),
-      tables,
-    };
+    const field = (name, value, first = false) => write(`${first ? "" : ","}${JSON.stringify(name)}:${JSON.stringify(value)}`);
+    await write("{");
+    await field("exported_at", new Date().toISOString(), true);
+    await field("business", serializeBusiness(business));
+    await field("saas", config);
+    await field("users", business.users.map(serializeUser));
+    await field("outlets", business.outlets.map(serializeOutlet));
+    await field("products", products.map(serializeProduct));
+    for (const [name, delegate, serialize] of [["orders", prisma.order, serializeOrder], ["bills", prisma.bill, serializeBill]]) {
+      await write(`,${JSON.stringify(name)}:[`);
+      let cursor = null, first = true;
+      for (;;) {
+        const rows = await delegate.findMany({ where: { businessId: targetBusinessId }, include: { business: true, items: true }, orderBy: { id: "asc" }, take: 1000, ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}) });
+        for (const row of rows) { await write(`${first ? "" : ","}${JSON.stringify(serialize(row))}`); first = false; }
+        if (rows.length < 1000) break;
+        cursor = rows.at(-1).id;
+      }
+      await write("]");
+    }
+    await field("inventory", inventoryItems.map(serializeInventoryItem));
+    await field("tables", tables);
+    await write("}");
+  }
+
+  /** The whole export as an object (tests and small businesses). */
+  async exportTenant({ businessId }) {
+    let text = "";
+    await this.streamTenantExport({ businessId, write: (chunk) => { text += chunk; } });
+    return JSON.parse(text);
   }
 }
 

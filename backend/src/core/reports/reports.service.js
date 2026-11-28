@@ -1,36 +1,25 @@
 import { createReportSchedules } from "./report-schedules.js";
-import { randomUUID } from "node:crypto";
 
 import prisma from "../../database/prisma/client.js";
-import { createHttpError } from "../../shared/utils/http-error.js";
 import { ensureBusiness } from "../../database/prisma/helpers.js";
-import { normalizeBillingMetadata } from "../billing/billing-metadata.utils.js";
+import { readBusinessProfile } from "../businesses/business-profile.js";
 import { centralKitchenService } from "../central-kitchen/central-kitchen.service.js";
 import { recipeAnalytics } from "../dashboard/recipe-analytics.js";
-import { customerInsights, reportCustomerKey } from "./customer-insights.js";
+import { getBillOutletId } from "../billing/bill-analytics.utils.js";
+import { MAX_DETAIL_DAYS, businessTimezone, reportRange, scanBills } from "./report-scan.js";
+import { readReportRollup, readSalesRollup } from "../dashboard/sales-rollup.js";
 import {
-  getAllocatedLineRevenue,
-  getBillLineCost,
-  getBillChannel,
-  getBillOutletId,
-  getBillRefundAmount,
-  getBillRevenue,
-  getBillSubtotal,
-  getBillTax,
-  isRevenueBill,
-  toAnalyticsNumber,
-} from "../billing/bill-analytics.utils.js";
-
-
-const toIso = (value) => (value ? new Date(value).toISOString() : null);
-
-const inRange = (date, { from, to } = {}) => {
-  const time = new Date(date).getTime();
-  if (Number.isNaN(time)) return false;
-  if (from && time < new Date(`${from}T00:00:00Z`).getTime()) return false;
-  if (to && time > new Date(`${to}T23:59:59.999Z`).getTime()) return false;
-  return true;
-};
+  customerInsightsTally,
+  customerTally,
+  gstTally,
+  hourlyTally,
+  outletTally,
+  productInvoiceTally,
+  profitSummaryTally,
+  profitabilityTally,
+  salesTally,
+  staffTally,
+} from "./report-accumulators.js";
 
 const csvEscape = (value) => {
   const text = String(value ?? "");
@@ -46,356 +35,129 @@ const toCsv = (rows = []) => {
   return [headers.map(csvEscape).join(","), ...rows.map((row) => headers.map((key) => csvEscape(row[key])).join(","))].join("\n");
 };
 
-const normalizeBill = (bill) => ({
-  ...normalizeBillingMetadata(bill.metadata || {}),
-  metadata: bill.metadata || {},
-  id: bill.id,
-  invoice_number: bill.invoiceNumber,
-  customer_name: bill.customerName,
-  subtotal: bill.subtotal,
-  tax: bill.tax,
-  total: bill.total,
-  status: bill.status,
-  order: bill.order || null,
-  created_at: bill.createdAt.toISOString(),
-  updated_at: bill.updatedAt.toISOString(),
-  items: bill.items || [],
-});
-
 class ReportsService {
-  async getReportContext({ tenantId, from, to, outletId = null, context = null }) {
-    if (context) return context;
-    for (const date of [from, to]) {
-      if (date != null && (typeof date !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(date) || !Number.isFinite(Date.parse(date)) || new Date(date).toISOString().slice(0, 10) !== date)) throw createHttpError({ statusCode: 400, message: "Report dates must be valid YYYY-MM-DD dates" });
-    }
-    if (from && to && from > to) throw createHttpError({ statusCode: 400, message: "Report start date must not follow end date" });
+  /**
+   * Everything a report needs except the bills: the business, its calendar, the validated period (local days,
+   * at most 366) and the reference lists. Bills are then streamed with scan().
+   */
+  async prepare({ tenantId, from, to, outletId = null }, maxDays) {
     const business = await ensureBusiness({ tenantId });
-    const [bills, products, outlets, users, feedback] = await Promise.all([
-      prisma.bill.findMany({
-        where: { businessId: business.id, ...((from || to) ? { createdAt: { ...(from ? { gte: new Date(`${from}T00:00:00Z`) } : {}), ...(to ? { lt: new Date(Date.parse(`${to}T00:00:00Z`) + 86400000) } : {}) } } : {}) },
-        include: { items: true, order: { select: { outletId: true } } },
-        orderBy: { createdAt: "desc" },
-      }),
-      prisma.product.findMany({ where: { businessId: business.id } }),
-      prisma.outlet.findMany({ where: { businessId: business.id } }),
-      prisma.user.findMany({ where: { businessId: business.id }, include: { role: true } }),
-      prisma.feedback.findMany({ where: { businessId: business.id }, include: { bill: { select: { metadata: true, order: { select: { outletId: true } } } } } }),
-    ]);
-
-    return {
-      business,
-      bills: bills
-        .map(normalizeBill)
-        .filter((bill) => !outletId || getBillOutletId(bill) === outletId)
-        .filter((bill) => inRange(bill.created_at, { from, to })),
-      products,
-      outlets,
-      users,
-      feedback: feedback.filter((row) => inRange(row.createdAt, { from, to }) && (!outletId || (row.bill && getBillOutletId(row.bill) === outletId))),
-    };
+    const timezone = businessTimezone(await readBusinessProfile(business.id));
+    const range = reportRange({ from, to }, timezone, maxDays);
+    return { business, timezone, range, outletId };
   }
 
-  async gstTaxReport(input) {
-    const { business, bills } = await this.getReportContext(input);
-    const rows = bills.filter(isRevenueBill).map((bill) => {
-      const gst = bill.gst_breakup || {};
-      const taxableValue = getBillSubtotal(bill);
-      const taxTotal = getBillTax(bill);
-      const splitTotal = toAnalyticsNumber(gst.cgst) + toAnalyticsNumber(gst.sgst) + toAnalyticsNumber(gst.igst);
-      const total = getBillRevenue(bill);
-      return {
-        invoice_number: bill.invoice_number || bill.id,
-        date: bill.created_at.slice(0, 10),
-        customer_name: bill.customer_name || bill.customerName || "Walk-in",
-        taxable_value: taxableValue,
-        cgst: splitTotal > 0 ? taxTotal * toAnalyticsNumber(gst.cgst) / splitTotal : taxTotal / 2,
-        sgst: splitTotal > 0 ? taxTotal * toAnalyticsNumber(gst.sgst) / splitTotal : taxTotal / 2,
-        igst: splitTotal > 0 ? taxTotal * toAnalyticsNumber(gst.igst) / splitTotal : 0,
-        tax_total: taxTotal,
-        invoice_total: total,
-        status: bill.status,
-      };
+  async scan(context, tallies) {
+    const list = Object.values(tallies);
+    const billCount = await scanBills({ businessId: context.business.id, bounds: context.range.bounds, outletId: context.outletId }, (bills) => {
+      for (const bill of bills) for (const tally of list) tally.add(bill);
     });
+    return { billCount, ...Object.fromEntries(Object.entries(tallies).map(([key, tally]) => [key, tally.result()])) };
+  }
 
-    return {
-      business_id: business.id,
-      generated_at: new Date().toISOString(),
-      summary: rows.reduce(
-        (sum, row) => ({
-          taxable_value: sum.taxable_value + row.taxable_value,
-          cgst: sum.cgst + row.cgst,
-          sgst: sum.sgst + row.sgst,
-          igst: sum.igst + row.igst,
-          tax_total: sum.tax_total + row.tax_total,
-          invoice_total: sum.invoice_total + row.invoice_total,
-        }),
-        { taxable_value: 0, cgst: 0, sgst: 0, igst: 0, tax_total: 0, invoice_total: 0 },
-      ),
-      rows,
-    };
+  scope(context) {
+    return { from: context.range.from, to: context.range.to, days: context.range.days, defaulted: context.range.defaulted, outlet_id: context.outletId || null, timezone: context.timezone };
+  }
+
+  /** Feedback of the period (and outlet), keyed by bill. */
+  async feedbackFor(context) {
+    const rows = await prisma.feedback.findMany({
+      where: { businessId: context.business.id, createdAt: context.range.bounds },
+      include: { bill: { select: { metadata: true, order: { select: { outletId: true } } } } },
+      orderBy: { createdAt: "desc" },
+    });
+    return rows.filter((row) => !context.outletId || (row.bill && getBillOutletId(row.bill) === context.outletId));
+  }
+
+  /** Sums from the saved days (same tallies, computed when the bills were last changed). */
+  async summed(input) {
+    const context = await this.prepare(input);
+    const outlets = await prisma.outlet.findMany({ where: { businessId: context.business.id } });
+    const figures = await readReportRollup({ businessId: context.business.id, timezone: context.timezone, from: context.range.from, to: context.range.to, outletId: context.outletId, outlets });
+    return { context, figures };
+  }
+
+  async fromDays(input, section) {
+    const { context, figures } = await this.summed(input);
+    return { business_id: context.business.id, ...figures[section], scope: this.scope(context) };
+  }
+
+  async single(input, makeTally) {
+    const context = await this.prepare(input, MAX_DETAIL_DAYS);
+    const tally = await makeTally(context);
+    const { report } = await this.scan(context, { report: tally });
+    return { business_id: context.business.id, ...report, scope: this.scope(context) };
+  }
+
+  gstTaxReport(input) { return this.single(input, (context) => gstTally(context.timezone)).then((report) => ({ ...report, generated_at: new Date().toISOString() })); }
+  salesByDate(input) { return this.fromDays(input, "sales"); }
+  hourlySales(input) { return this.fromDays(input, "hourly"); }
+  productProfitability(input) { return this.fromDays(input, "profitability"); }
+  staffPerformance(input) { return this.fromDays(input, "staff"); }
+  outletComparison(input) { return this.fromDays(input, "outlets"); }
+  async customerAnalytics(input) {
+    return this.single(input, async (context) => {
+      const byBill = new Map();
+      for (const row of await this.feedbackFor(context)) byBill.set(row.billId, [...(byBill.get(row.billId) || []), row.rating]);
+      return customerTally(byBill);
+    });
+  }
+
+  /** Guests, favourites and item sales by channel for the period (Reports > Customers). */
+  async customerInsights(input) {
+    const context = await this.prepare(input, MAX_DETAIL_DAYS);
+    const [profiles, feedback] = await Promise.all([
+      prisma.customer.findMany({ where: { businessId: context.business.id, anonymizedAt: null }, select: { phone: true, loyaltyPoints: true } }),
+      this.feedbackFor(context),
+    ]);
+    const { insights } = await this.scan(context, { insights: customerInsightsTally(profiles, feedback.map((row) => row.rating)) });
+    return { ...insights, scope: this.scope(context) };
   }
 
   /**
-   * Profit for a time window, computed exactly like productProfitability so the dashboard and reports agree:
-   * revenue excludes GST and refunds, cost is what each bill recorded when it was sold. Returns per-bill figures too.
+   * Profit for a window of instants [start, end) as the dashboard shows it; same calculation as productProfitability.
+   * keepBills adds per-bill figures (only for small windows).
    */
-  async profitSummary({ tenantId, outletId = null, start = null, end = null }) {
-    const context = await this.getReportContext({ tenantId, outletId });
-    const inWindow = (bill) => { const at = Date.parse(bill.created_at); return (!start || at >= start.getTime()) && (!end || at < end.getTime()); };
-    const productById = new Map(context.products.map((product) => [product.id, product]));
-    const bills = new Map();
-    const missing = new Set();
-    for (const bill of context.bills.filter((row) => isRevenueBill(row) && inWindow(row))) {
-      let goodsCost = 0;
-      for (const item of bill.items || []) {
-        const cost = getBillLineCost(bill, item, productById.get(item.productId));
-        goodsCost += cost.amount;
-        if (cost.missing) missing.add(item.productId || item.name);
-      }
-      const netSales = getBillSubtotal(bill);
-      bills.set(bill.id, { net_sales: netSales, goods_cost: goodsCost, gross_profit: netSales - goodsCost });
-    }
-    const totals = [...bills.values()].reduce((sum, row) => ({ net_sales: sum.net_sales + row.net_sales, goods_cost: sum.goods_cost + row.goods_cost }), { net_sales: 0, goods_cost: 0 });
-    const grossProfit = totals.net_sales - totals.goods_cost;
-    return { ...totals, gross_profit: grossProfit, margin_percent: totals.net_sales ? (grossProfit / totals.net_sales) * 100 : 0, items_without_cost: missing.size, bills };
-  }
-
-  async productProfitability(input) {
-    const { business, bills, products } = await this.getReportContext(input);
-    const productById = new Map(products.map((product) => [product.id, product]));
-    const rowsByKey = new Map();
-
-    bills.forEach((bill) => {
-      (bill.items || []).forEach((item) => {
-        const product = productById.get(item.productId);
-        const key = item.productId || item.name;
-        const row = rowsByKey.get(key) || {
-          product_id: item.productId || null,
-          name: item.name,
-          category: product?.category || "Unmapped",
-          quantity_sold: 0,
-          revenue: 0,
-          cogs: 0,
-          estimated_cost: false,
-          cost_missing: false,
-          gross_profit: 0,
-          margin_percent: 0,
-        };
-        const quantity = toAnalyticsNumber(item.quantity, 0);
-        row.quantity_sold += quantity;
-        row.revenue += isRevenueBill(bill) ? getAllocatedLineRevenue(bill, item) : 0;
-        const cost = getBillLineCost(bill, item, product);
-        row.cogs += cost.amount;
-        row.estimated_cost ||= cost.estimated;
-        row.cost_missing ||= cost.missing && isRevenueBill(bill);
-        row.gross_profit = row.revenue - row.cogs;
-        row.margin_percent = row.revenue > 0 ? (row.gross_profit / row.revenue) * 100 : 0;
-        rowsByKey.set(key, row);
-      });
-    });
-
-    const rows = Array.from(rowsByKey.values()).sort((left, right) => right.gross_profit - left.gross_profit);
-    return {
-      business_id: business.id,
-      summary: rows.reduce(
-        (sum, row) => ({
-          quantity_sold: sum.quantity_sold + row.quantity_sold,
-          revenue: sum.revenue + row.revenue,
-          cogs: sum.cogs + row.cogs,
-          gross_profit: sum.gross_profit + row.gross_profit,
-          items_without_cost: sum.items_without_cost + (row.cost_missing ? 1 : 0),
-        }),
-        { quantity_sold: 0, revenue: 0, cogs: 0, gross_profit: 0, items_without_cost: 0 },
-      ),
-      rows,
-    };
-  }
-
-  async salesByDate(input) {
-    const { business, bills } = await this.getReportContext(input);
-    const rowsByDate = new Map();
-    bills.filter(isRevenueBill).forEach((bill) => {
-      const date = bill.created_at.slice(0, 10);
-      const row = rowsByDate.get(date) || { date, bills: 0, sales: 0, tax: 0, net: 0, refunds: 0 };
-      const tax = getBillTax(bill);
-      const revenue = getBillRevenue(bill);
-      row.bills += 1;
-      row.sales += revenue;
-      row.tax += tax;
-      row.net += Math.max(0, revenue - tax);
-      row.refunds += getBillRefundAmount(bill);
-      rowsByDate.set(date, row);
-    });
-    const rows = Array.from(rowsByDate.values()).sort((a, b) => b.date.localeCompare(a.date));
-    return {
-      business_id: business.id,
-      summary: rows.reduce(
-        (sum, row) => ({
-          bills: sum.bills + row.bills,
-          sales: sum.sales + row.sales,
-          tax: sum.tax + row.tax,
-          net: sum.net + row.net,
-          refunds: sum.refunds + row.refunds,
-        }),
-        { bills: 0, sales: 0, tax: 0, net: 0, refunds: 0 },
-      ),
-      rows,
-    };
-  }
-
-  async hourlySales(input) {
-    const { business, bills } = await this.getReportContext(input);
-    const rows = Array.from({ length: 24 }, (_, hour) => ({
-      hour,
-      label: `${String(hour).padStart(2, "0")}:00`,
-      bills: 0,
-      sales: 0,
-      tax: 0,
-      average_bill: 0,
-    }));
-
-    bills.filter(isRevenueBill).forEach((bill) => {
-      const hour = new Date(bill.created_at).getUTCHours();
-      rows[hour].bills += 1;
-      rows[hour].sales += getBillRevenue(bill);
-      rows[hour].tax += getBillTax(bill);
-      rows[hour].average_bill = rows[hour].bills ? rows[hour].sales / rows[hour].bills : 0;
-    });
-
-    return { business_id: business.id, rows };
-  }
-
-  async staffPerformance(input) {
-    const { business, bills, users } = await this.getReportContext(input);
-    const usersById = new Map(users.map((user) => [user.id, user]));
-    const rowsById = new Map();
-
-    bills.filter(isRevenueBill).forEach((bill) => {
-      const staffId = bill.created_by || "unknown";
-      const user = usersById.get(staffId);
-      const row = rowsById.get(staffId) || {
-        staff_id: staffId,
-        name: bill.created_by_name || user?.name || "Unknown",
-        role: bill.created_by_role || user?.role?.name || "Unknown",
-        bills: 0,
-        sales: 0,
-        discounts: 0,
-        refunds: 0,
-        voids: 0,
-        average_bill: 0,
-      };
-      row.bills += 1;
-      row.sales += getBillRevenue(bill);
-      row.discounts += toAnalyticsNumber(bill.discount_amount, 0);
-      row.refunds += getBillRefundAmount(bill);
-      row.voids += 0;
-      row.average_bill = row.bills ? row.sales / row.bills : 0;
-      rowsById.set(staffId, row);
-    });
-
-    return { business_id: business.id, rows: Array.from(rowsById.values()).sort((a, b) => b.sales - a.sales) };
-  }
-
-  async outletComparison(input) {
-    const { business, bills, outlets } = await this.getReportContext(input);
-    const outletsById = new Map(outlets.map((outlet) => [outlet.id, outlet]));
-    const rowsById = new Map();
-
-    bills.filter(isRevenueBill).forEach((bill) => {
-      const outletId = getBillOutletId(bill) || "unassigned";
-      const outlet = outletsById.get(outletId);
-      const row = rowsById.get(outletId) || {
-        outlet_id: outletId,
-        outlet_name: outlet?.name || "Unassigned",
-        bills: 0,
-        sales: 0,
-        tax: 0,
-        refunds: 0,
-        average_bill: 0,
-      };
-      row.bills += 1;
-      row.sales += getBillRevenue(bill);
-      row.tax += getBillTax(bill);
-      row.refunds += getBillRefundAmount(bill);
-      row.average_bill = row.bills ? row.sales / row.bills : 0;
-      rowsById.set(outletId, row);
-    });
-
-    return { business_id: business.id, rows: Array.from(rowsById.values()).sort((a, b) => b.sales - a.sales) };
-  }
-
-  async customerAnalytics(input) {
-    const { business, bills, feedback } = await this.getReportContext(input);
-    const customerForBill = new Map(bills.map((bill) => [bill.id, reportCustomerKey(bill)]));
-    const rowsByCustomer = new Map();
-    bills.filter(isRevenueBill).forEach((bill) => {
-      const key = reportCustomerKey(bill);
-      const row = rowsByCustomer.get(key) || {
-        customer_key: key,
-        customer_name: bill.customer_name || bill.customerName || "Walk-in",
-        customer_phone: bill.customer_phone || null,
-        visits: 0,
-        total_spent: 0,
-        average_spend: 0,
-        last_visit: null,
-        preferred_channel: getBillChannel(bill) === "online" ? "Online" : "Dine-In",
-        feedback_count: 0,
-        average_rating: null,
-        rated_feedback: 0,
-      };
-      row.visits += 1;
-      row.total_spent += getBillRevenue(bill);
-      row.average_spend = row.total_spent / row.visits;
-      row.last_visit = !row.last_visit || bill.created_at > row.last_visit ? bill.created_at : row.last_visit;
-      rowsByCustomer.set(key, row);
-    });
-
-    feedback.forEach((item) => {
-      const key = customerForBill.get(item.billId);
-      if (!key || !rowsByCustomer.has(key)) return;
-      const row = rowsByCustomer.get(key);
-      row.feedback_count += 1;
-      if (Number.isInteger(item.rating) && item.rating >= 1 && item.rating <= 5) {
-        row.average_rating = ((row.average_rating || 0) * row.rated_feedback + item.rating) / (row.rated_feedback + 1);
-        row.rated_feedback += 1;
-      }
-    });
-
-    const rows = Array.from(rowsByCustomer.values()).sort((a, b) => b.total_spent - a.total_spent);
-    return {
-      business_id: business.id,
-      summary: {
-        total_customers: rows.length,
-        repeat_customers: rows.filter((row) => row.visits > 1).length,
-        total_spend: rows.reduce((sum, row) => sum + row.total_spent, 0),
-        average_customer_value: rows.length
-          ? rows.reduce((sum, row) => sum + row.total_spent, 0) / rows.length
-          : 0,
-      },
-      rows,
-    };
+  async profitSummary({ tenantId, outletId = null, start = null, end = null, keepBills = false }) {
+    const business = await ensureBusiness({ tenantId });
+    const tally = profitSummaryTally(await prisma.product.findMany({ where: { businessId: business.id } }), { keepBills });
+    await scanBills({ businessId: business.id, bounds: { ...(start ? { gte: start } : {}), ...(end ? { lt: end } : {}) }, outletId }, (bills) => { for (const bill of bills) tally.add(bill); });
+    return tally.result();
   }
 
   async getDashboard(input) {
-    const context = await this.getReportContext(input);
-    const scoped = { ...input, context };
-    const [sales, gst, profitability, hourly, staff, outlets, customers] = await Promise.all([
-      this.salesByDate(scoped),
-      this.gstTaxReport(scoped),
-      this.productProfitability(scoped),
-      this.hourlySales(scoped),
-      this.staffPerformance(scoped),
-      this.outletComparison(scoped),
-      this.customerAnalytics(scoped),
+    const { context, figures } = await this.summed(input);
+    const businessId = context.business.id;
+    const detailed = input.guests !== false && context.range.days <= MAX_DETAIL_DAYS;
+    const [feedbackRows, profiles, sales] = await Promise.all([
+      this.feedbackFor(context),
+      detailed ? prisma.customer.findMany({ where: { businessId, anonymizedAt: null }, select: { phone: true, loyaltyPoints: true } }) : [],
+      readSalesRollup({ businessId, timezone: context.timezone, from: context.range.from, to: context.range.to, outletId: context.outletId, refresh: false }),
     ]);
-    const [kitchen, recipes, profiles] = await Promise.all([
-      centralKitchenService.snapshot({ tenantId: input.tenantId, outletIds: input.outletId ? [input.outletId] : null }),
-      recipeAnalytics({ businessId: context.business.id, outletId: input.outletId, bills: context.bills.filter(isRevenueBill), period: { ...(input.from ? { start: new Date(`${input.from}T00:00:00Z`) } : {}), ...(input.to ? { end: new Date(Date.parse(`${input.to}T00:00:00Z`) + 86400000) } : {}) } }),
-      prisma.customer.findMany({ where: { businessId: context.business.id, anonymizedAt: null }, select: { phone: true, loyaltyPoints: true } }),
+    // Guests can only be counted by reading the period's bills (a guest repeats across days), so the guest
+    // sections are computed for periods up to 92 days and say so otherwise.
+    let guests = null;
+    if (detailed) {
+      const ratingsByBill = new Map();
+      for (const row of feedbackRows) ratingsByBill.set(row.billId, [...(ratingsByBill.get(row.billId) || []), row.rating]);
+      guests = await this.scan(context, { customers: customerTally(ratingsByBill), customer_insights: customerInsightsTally(profiles, feedbackRows.map((row) => row.rating)) });
+    }
+    const unavailable = input.guests === false
+      ? { available: false, deferred: true, message: "Guest analytics load separately.", summary: {}, rows: [], customers: [], item_sales_by_channel: [], campaign_suggestions: [] }
+      : { available: false, message: `Guest analytics cover at most ${MAX_DETAIL_DAYS} days. Choose a shorter period.`, summary: {}, rows: [], customers: [], item_sales_by_channel: [], campaign_suggestions: [] };
+    const [kitchen, recipes] = await Promise.all([
+      centralKitchenService.snapshot({ tenantId: input.tenantId, outletIds: context.outletId ? [context.outletId] : null }),
+      recipeAnalytics({ businessId, outletId: context.outletId, invoiceCounts: sales.product_bills, period: { start: context.range.bounds.gte, end: context.range.bounds.lt } }),
     ]);
-    const rated = context.feedback.filter((row) => Number.isInteger(row.rating) && row.rating >= 1 && row.rating <= 5);
-    const feedback = { items: context.feedback.map((row) => ({ id: row.id, customer_name: row.customerName || "Guest", rating: row.rating, comment: row.comment || "", created_at: row.createdAt.toISOString() })), summary: { total_feedback: context.feedback.length, rated_feedback: rated.length, average_rating: rated.length ? rated.reduce((sum, row) => sum + row.rating, 0) / rated.length : null, five_star: rated.filter((row) => row.rating === 5).length } };
-    return { sales, gst, profitability, hourly, staff, outlets, customers, inventory: kitchen.central_inventory, inventory_location: kitchen.stock_location, recipes, feedback, customer_insights: customerInsights(context.bills, profiles, context.feedback), scope: { from: input.from || null, to: input.to || null, outlet_id: input.outletId || null, timezone: "UTC", inventory: "Current balances; forecast uses last 30 days", loyalty: "Current points held by guests appearing in this period" } };
+    const rated = feedbackRows.filter((row) => Number.isInteger(row.rating) && row.rating >= 1 && row.rating <= 5);
+    const feedback = { items: feedbackRows.map((row) => ({ id: row.id, customer_name: row.customerName || "Guest", rating: row.rating, comment: row.comment || "", created_at: row.createdAt.toISOString() })), summary: { total_feedback: feedbackRows.length, rated_feedback: rated.length, average_rating: rated.length ? rated.reduce((sum, row) => sum + row.rating, 0) / rated.length : null, five_star: rated.filter((row) => row.rating === 5).length } };
+    const id = { business_id: businessId };
+    return {
+      sales: { ...id, ...figures.sales }, gst: { ...id, ...figures.gst }, profitability: { ...id, ...figures.profitability }, hourly: { ...id, ...figures.hourly },
+      staff: { ...id, ...figures.staff }, outlets: { ...id, ...figures.outlets }, customers: { ...id, ...(guests ? guests.customers : unavailable) },
+      inventory: kitchen.central_inventory, inventory_location: kitchen.stock_location, recipes, feedback, customer_insights: guests ? guests.customer_insights : unavailable,
+      scope: { ...this.scope(context), bills: sales.all_bills, inventory: "Current balances; forecast uses last 30 days", loyalty: "Current points held by guests appearing in this period" },
+    };
   }
 
   async getReportByKey(key, input) {
@@ -418,24 +180,12 @@ class ReportsService {
     const report = await this.getReportByKey(key, input);
     const rows = report.rows || [];
     if (format === "csv" || format === "excel") {
-      return {
-        filename: `${key}-report.csv`,
-        content_type: "text/csv",
-        content: toCsv(rows),
-      };
+      return { filename: `${key}-report.csv`, content_type: "text/csv", content: toCsv(rows) };
     }
     if (format === "pdf") {
-      return {
-        filename: `${key}-report.html`,
-        content_type: "text/html",
-        content: `<html><body><h1>${htmlEscape(key)} report</h1><pre>${htmlEscape(JSON.stringify(report, null, 2))}</pre></body></html>`,
-      };
+      return { filename: `${key}-report.html`, content_type: "text/html", content: `<html><body><h1>${htmlEscape(key)} report</h1><pre>${htmlEscape(JSON.stringify(report, null, 2))}</pre></body></html>` };
     }
-    return {
-      filename: `${key}-report.json`,
-      content_type: "application/json",
-      content: JSON.stringify(report, null, 2),
-    };
+    return { filename: `${key}-report.json`, content_type: "application/json", content: JSON.stringify(report, null, 2) };
   }
 }
 

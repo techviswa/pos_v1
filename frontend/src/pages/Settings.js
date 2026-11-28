@@ -1,4 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
+import { BackupStatusRow, DownloadBusinessData } from "../core/platform/BackupStatus";
+import { timeZoneOptions } from "../lib/businessDate";
 import axios from "axios";
 import { Layout } from "../components/Layout";
 import { useUi } from "../contexts/UiContext";
@@ -317,6 +319,13 @@ export const Settings = () => {
               <input className="cf-input" maxLength="3" value={form.currency} onChange={(event) => setForm({ ...form, currency: event.target.value || "\u20B9" })} />
             </div>
             <div className="cf-field">
+              <label htmlFor="business-timezone">Time zone</label>
+              <select id="business-timezone" className="cf-select" value={form.timezone || "Asia/Kolkata"} onChange={(event) => setForm({ ...form, timezone: event.target.value })}>
+                {timeZoneOptions().map((zone) => <option key={zone} value={zone}>{zone}</option>)}
+              </select>
+              <span className="cf-card__meta">Reports, the dashboard and bill dates count days and hours in this time zone.</span>
+            </div>
+            <div className="cf-field">
               <label>Payment Methods</label>
               <div className="cf-checkbox-row">
                 <label>
@@ -381,12 +390,10 @@ export const Settings = () => {
                   <td style={{ color: "var(--cf-text-2)" }}>Payment Methods</td>
                   <td className="cf-table__mono">{settings.paymentMethods.join(", ")}</td>
                 </tr>
-                <tr>
-                  <td style={{ color: "var(--cf-text-2)" }}>Last Backup</td>
-                  <td className="cf-table__mono">Status unavailable</td>
-                </tr>
+                <BackupStatusRow />
               </tbody>
             </table>
+            {user?.role === "Owner" ? <DownloadBusinessData /> : null}
           </div>
 
           <div className="cf-settings-card">

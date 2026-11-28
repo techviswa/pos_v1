@@ -1,4 +1,7 @@
-import React from "react";
+import React, { useEffect, useState } from "react";
+import axios from "axios";
+import { API_URL } from "../../../lib/apiUrl";
+import { apiData } from "../../../lib/apiData";
 
 import { useUi } from "../../../contexts/UiContext";
 import { formatCurrency } from "../../../lib/pos";
@@ -10,6 +13,16 @@ export const OutletOverviewPanel = ({
 }) => {
   const { settings } = useUi();
   const { outlets, selectedOutletId, setSelectedOutletId, loading } = useActiveOutlet();
+  // All-time sales per outlet come from a separate request: the shared outlet list stays light for every screen.
+  const [sales, setSales] = useState(null);
+  useEffect(() => {
+    let active = true;
+    axios.get(`${API_URL}/api/outlets`, { params: { analytics: "1" }, withCredentials: true })
+      .then((response) => { if (active) setSales(new Map((apiData(response) || []).map((row) => [row.id, row.analytics || {}]))); })
+      .catch(() => { if (active) setSales(new Map()); });
+    return () => { active = false; };
+  }, []);
+  const figures = (outlet) => sales?.get(outlet.id) || {};
 
   if (loading) {
     return (
@@ -53,11 +66,11 @@ export const OutletOverviewPanel = ({
               <div className="cf-outlet-card__stats">
                 <div>
                   <span>Revenue</span>
-                  <strong>{formatCurrency(outlet.analytics?.total_sales || 0, settings.currency)}</strong>
+                  <strong>{sales ? formatCurrency(figures(outlet).total_sales || 0, settings.currency) : "…"}</strong>
                 </div>
                 <div>
                   <span>Bills</span>
-                  <strong>{outlet.analytics?.bill_count || 0}</strong>
+                  <strong>{sales ? figures(outlet).bill_count || 0 : "…"}</strong>
                 </div>
                 <div>
                   <span>Activity</span>

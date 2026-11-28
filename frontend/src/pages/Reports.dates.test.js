@@ -42,7 +42,7 @@ test("invalid draft dates stay editable and never trigger a report request", asy
   expect(element.textContent).toContain("End date must be on or after");
   await change('[aria-label="To date"]', "2026-10-24");
   await click("Apply dates");
-  expect(reportCalls().at(-1)[1].params).toEqual({ from: "2026-10-23", to: "2026-10-24", outlet_id: "main" });
+  expect(reportCalls().at(-1)[1].params).toEqual({ from: "2026-10-23", to: "2026-10-24", outlet_id: "main", guests: "0" });
   expect(element.textContent).toContain("Sales chart");
 });
 

@@ -857,7 +857,7 @@ class SyncService {
     } else if (normalizedResource === "businesses") {
       data = await businessesService.listBusinesses({ businessId });
     } else if (normalizedResource === "outlets") {
-      data = await outletsService.listOutlets({ tenantId, businessId });
+      data = await outletsService.listOutlets({ tenantId, businessId, includeSales: true });
     } else if (normalizedResource === "products") {
       data = await productsService.listProducts({ tenantId, query });
     } else if (normalizedResource === "orders") {

@@ -1,6 +1,6 @@
 import prisma from "../../database/prisma/client.js";
 import { createHttpError } from "../../shared/utils/http-error.js";
-import { hashPassword, verifyPassword } from "../auth/passwords.js";
+import { hashPassword, verifyPassword, verifyPasswordAsync } from "../auth/passwords.js";
 import { publishChange } from "../../services/realtime/realtime.service.js";
 
 /**
@@ -273,7 +273,7 @@ class AttendanceService {
       if (user.clockPinLockedUntil && user.clockPinLockedUntil > new Date()) {
         return { error: [423, "PIN_LOCKED", "Too many wrong PINs. Try again in a few minutes or ask a manager."] };
       }
-      if (!PIN_PATTERN.test(String(pin ?? "")) || !verifyPassword(String(pin), user.clockPinHash)) {
+      if (!PIN_PATTERN.test(String(pin ?? "")) || !await verifyPasswordAsync(String(pin), user.clockPinHash)) {
         const failures = user.clockPinFailures + 1;
         const locked = failures >= PIN_MAX_FAILURES;
         await tx.user.update({ where: { id: userId }, data: locked

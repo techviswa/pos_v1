@@ -1,4 +1,7 @@
 import { randomUUID } from "node:crypto";
+import { DEFAULT_TIMEZONE, addDays, localDate, localHour } from "../../shared/utils/business-time.js";
+import { readBusinessProfile } from "../businesses/business-profile.js";
+import { businessTimezone } from "./report-scan.js";
 import nodemailer from "nodemailer";
 import prisma from "../../database/prisma/client.js";
 import { runTenantScope } from "../../database/prisma/tenant-context.js";
@@ -7,22 +10,20 @@ import { logger } from "../../shared/utils/logger.js";
 
 /**
  * Scheduled reports: a report (GST, sales, ...) for the last finished period, emailed to the chosen people.
- * Periods are UTC calendar days, like every report screen: daily = yesterday, weekly = the 7 days up to yesterday
- * (sent on Mondays), monthly = last calendar month (sent on the 1st). Nothing is ever claimed as sent unless the mail
+ * Periods are the business's local days (Settings time zone), like every report screen: daily = yesterday, weekly =
+ * the 7 days up to yesterday (sent on Mondays), monthly = last calendar month (sent on the 1st), from 07:00 local. Nothing is ever claimed as sent unless the mail
  * server accepted it; without email settings the schedule records "not sent" and "Run now" still downloads the file.
  */
 export const REPORT_KEYS = { gst: "GST / tax", sales: "Sales by date", profitability: "Product profitability", hourly: "Hourly sales", staff: "Staff performance", outlets: "Outlet comparison", customers: "Customers" };
 export const FREQUENCIES = ["daily", "weekly", "monthly"];
 export const FORMATS = ["csv", "json"];
-const SEND_HOUR_UTC = 2; // 07:30 in India: yesterday's figures are final by then.
+const SEND_HOUR_LOCAL = 7; // yesterday's figures are final by then
 const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const keyFor = (businessId, id) => `report-schedule:${businessId}:${id}`;
 // One record per schedule and period, created before sending: whichever server creates it sends, the others skip.
 const claimKey = (businessId, id, period) => `report-schedule:${businessId}:run:${id}:${period.to}`;
 const isSchedule = (data) => Boolean(data?.report_key && data?.id && !data?.claim);
 const fail = (message, statusCode = 400) => { throw createHttpError({ statusCode, code: "REPORT_SCHEDULE_INVALID", message }); };
-const day = (date) => date.toISOString().slice(0, 10);
-const startOfUtcDay = (date) => new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()));
 
 export const validateSchedule = (payload = {}) => {
   const reportKey = String(payload.report_key || "");
@@ -39,24 +40,25 @@ export const validateSchedule = (payload = {}) => {
 };
 
 /** The finished period a run at `now` reports on. */
-export const reportPeriod = (frequency, now = new Date()) => {
-  const today = startOfUtcDay(now);
-  const yesterday = new Date(today.getTime() - 86400000);
+export const reportPeriod = (frequency, now = new Date(), timezone = DEFAULT_TIMEZONE) => {
+  const today = localDate(now, timezone);
+  const yesterday = addDays(today, -1);
   if (frequency === "monthly") {
-    const first = new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth() - 1, 1));
-    const last = new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), 0));
-    return { from: day(first), to: day(last) };
+    const firstOfThisMonth = `${today.slice(0, 8)}01`;
+    const last = addDays(firstOfThisMonth, -1);
+    return { from: `${last.slice(0, 8)}01`, to: last };
   }
-  if (frequency === "weekly") return { from: day(new Date(today.getTime() - 7 * 86400000)), to: day(yesterday) };
-  return { from: day(yesterday), to: day(yesterday) };
+  if (frequency === "weekly") return { from: addDays(today, -7), to: yesterday };
+  return { from: yesterday, to: yesterday };
 };
 
 /** True when the schedule has not yet covered the period that has just finished. */
-export const isDue = (schedule, now = new Date()) => {
-  if (schedule.active === false || now.getUTCHours() < SEND_HOUR_UTC) return false;
-  if (schedule.frequency === "weekly" && now.getUTCDay() !== 1) return false;
-  if (schedule.frequency === "monthly" && now.getUTCDate() !== 1) return false;
-  return (schedule.last_period?.to || "") < reportPeriod(schedule.frequency, now).to;
+export const isDue = (schedule, now = new Date(), timezone = DEFAULT_TIMEZONE) => {
+  const today = localDate(now, timezone);
+  if (schedule.active === false || localHour(now, timezone) < SEND_HOUR_LOCAL) return false;
+  if (schedule.frequency === "weekly" && new Date(`${today}T00:00:00Z`).getUTCDay() !== 1) return false;
+  if (schedule.frequency === "monthly" && !today.endsWith("-01")) return false;
+  return (schedule.last_period?.to || "") < reportPeriod(schedule.frequency, now, timezone).to;
 };
 
 // A mail account with a user name also needs its password before anything is reported as deliverable.
@@ -111,7 +113,8 @@ export const createReportSchedules = ({ reports }) => {
     /** Builds the report for the last finished period; emails it when `deliver` is set and email is configured. */
     async run({ tenantId, businessId, scheduleId, now = new Date(), deliver = false }) {
       const schedule = await find(businessId, scheduleId);
-      const period = reportPeriod(schedule.frequency, now);
+      const timezone = businessTimezone(await readBusinessProfile(businessId));
+      const period = reportPeriod(schedule.frequency, now, timezone);
       let file;
       try {
         file = await reports.exportReport({ tenantId, key: schedule.report_key, format: schedule.format, ...period });
@@ -125,7 +128,7 @@ export const createReportSchedules = ({ reports }) => {
         else {
           try {
             await sendMail({ to: schedule.recipients.join(", "), subject: `${REPORT_KEYS[schedule.report_key]} report ${period.from === period.to ? period.from : `${period.from} to ${period.to}`}`,
-              text: `Attached: ${REPORT_KEYS[schedule.report_key]} report for ${period.from} to ${period.to} (UTC days).`,
+              text: `Attached: ${REPORT_KEYS[schedule.report_key]} report for ${period.from} to ${period.to} (days in ${timezone}).`,
               attachment: { filename: file.filename, content: file.content, contentType: file.content_type } });
             status = "emailed";
           } catch (error) {
@@ -144,14 +147,17 @@ export const createReportSchedules = ({ reports }) => {
 let timer = null;
 export const runDueSchedules = async ({ schedules, now = new Date() }) => {
   const rows = await prisma.stateDocument.findMany({ where: { key: { startsWith: "report-schedule:" } } });
-  const due = rows.map((row) => row.data).filter((schedule) => isSchedule(schedule) && schedule.business_id && isDue(schedule, now));
+  const candidates = rows.map((row) => row.data).filter((schedule) => isSchedule(schedule) && schedule.business_id && schedule.active !== false);
   let sent = 0;
-  for (const schedule of due) {
+  for (const schedule of candidates) {
     const business = await prisma.business.findUnique({ where: { id: schedule.business_id }, select: { id: true, tenantId: true } });
     if (!business) continue;
-    const period = reportPeriod(schedule.frequency, now);
     try {
       await runTenantScope({ businessId: business.id, tenantId: business.tenantId }, async () => {
+        // Each business sends on its own calendar.
+        const timezone = businessTimezone(await readBusinessProfile(business.id));
+        if (!isDue(schedule, now, timezone)) return;
+        const period = reportPeriod(schedule.frequency, now, timezone);
         try {
           await prisma.stateDocument.create({ data: { key: claimKey(business.id, schedule.id, period), data: { business_id: business.id, schedule_id: schedule.id, period, claim: true, claimed_at: now.toISOString() } } });
         } catch (error) {

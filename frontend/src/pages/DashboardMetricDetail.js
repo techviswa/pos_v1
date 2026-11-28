@@ -56,6 +56,8 @@ export const DashboardMetricDetail = () => {
         withCredentials: true,
         params: {
           period,
+          // The per-bill lists are sent only to this page; the main dashboard loads totals only.
+          detail: "1",
           ...(selectedOutletId ? { outlet_id: selectedOutletId } : {}),
         },
       });
@@ -167,6 +169,9 @@ export const DashboardMetricDetail = () => {
                 )}
               </tbody>
             </table>
+            {Number(stats?.bills_count_today || 0) > (stats?.today_bills || []).length ? (
+              <p className="cf-card__meta" role="status">Showing the latest {(stats?.today_bills || []).length} of {Number(stats.bills_count_today)} bills today. Totals include every bill; see Bills for the full list.</p>
+            ) : null}
           </div>
         ) : metric === "online" ? (
           <div className="cf-table-wrap">
@@ -518,6 +523,11 @@ export const DashboardMetricDetail = () => {
                 )}
               </tbody>
             </table>
+            {Number(revenueDetail.order_count || 0) > filteredRevenueBills.length ? (
+              <p className="cf-card__meta" role="status" data-testid="bills-shown-note">
+                Showing the latest {filteredRevenueBills.length} of {Number(revenueDetail.order_count)} bills. The totals above include every bill; see Bills for the full list.
+              </p>
+            ) : null}
           </div>
         )}
       </div>

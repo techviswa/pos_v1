@@ -2,11 +2,14 @@ import prisma from '../../database/prisma/client.js';
 import { hasActiveTransaction } from '../../database/prisma/rls-runtime.js';
 import { createHttpError, createNotFoundError } from '../../shared/utils/http-error.js';
 import { admincoreChangeSyncService } from '../admincore/admincore-change-sync.service.js';
+import { DEFAULT_TIMEZONE, isValidTimezone } from '../../shared/utils/business-time.js';
 
 // Shared settings belong to the business, never to a browser or signed-in staff member.
 export const PROFILE_DEFAULTS = {
   gst: '', address: '', phone: '', taxRate: 18, footer: 'Thank you, visit again!',
   receiptOfferTitle: '', receiptOfferMessage: '', currency: '\u20b9', paymentMethods: ['Cash', 'UPI', 'Card'],
+  // The business's calendar: reports, dashboard days and date filters count in this time zone.
+  timezone: DEFAULT_TIMEZONE,
 };
 const keyFor = id => `business-profile:${id}`;
 const fail = (message, statusCode = 400) => { throw createHttpError({ statusCode, code: 'BUSINESS_PROFILE_INVALID', message }); };
@@ -22,6 +25,10 @@ const validate = patch => {
   if (Object.hasOwn(patch, 'taxRate')) {
     if (typeof patch.taxRate !== 'number' || !Number.isFinite(patch.taxRate) || patch.taxRate < 0 || patch.taxRate > 100) fail('taxRate must be between 0 and 100');
     result.taxRate = patch.taxRate;
+  }
+  if (Object.hasOwn(patch, 'timezone')) {
+    if (!isValidTimezone(patch.timezone)) fail('Choose a valid time zone, for example Asia/Kolkata');
+    result.timezone = patch.timezone;
   }
   if (Object.hasOwn(patch, 'paymentMethods')) {
     if (!Array.isArray(patch.paymentMethods) || !patch.paymentMethods.length || patch.paymentMethods.some(method => !['Cash', 'UPI', 'Card'].includes(method))) fail('Select at least one supported payment method');

@@ -33,7 +33,7 @@ try {
 
   const login = await fetch(`http://127.0.0.1:${server.address().port}/api/auth/login`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ email: owner.email, password }) });
   const session = (await login.json()).data.session_id;
-  const response = await fetch(`http://127.0.0.1:${server.address().port}/api/dashboard/stats`, { headers: { "x-cf-session-id": session } });
+  const response = await fetch(`http://127.0.0.1:${server.address().port}/api/dashboard/stats?detail=1`, { headers: { "x-cf-session-id": session } });
   assert.equal(response.status, 200);
   const body = await response.json();
   const stats = body.data ?? body;

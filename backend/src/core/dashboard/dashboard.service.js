@@ -4,11 +4,8 @@ import { isDatabaseAvailable } from "../../config/db.js";
 import { ensureBusiness } from "../../database/prisma/helpers.js";
 import { assertOwnedIds } from '../../database/prisma/scope.js';
 import { createHttpError } from '../../shared/utils/http-error.js';
-import {
-  getBillOutletId,
-  getBillRevenue,
-  isRevenueBill,
-} from "../billing/bill-analytics.utils.js";
+import { Prisma } from "@prisma/client";
+import { billFromSql, billOutletSql, billRevenueSql, isRevenueBillSql } from "../billing/bill-analytics.sql.js";
 
 const DASHBOARD_CACHE_TTL_MS = 10000;
 const dashboardStatsCache = new Map();
@@ -42,11 +39,13 @@ class DashboardService {
         routeCount,
         allocationCount,
       ] = await Promise.all([
-        prisma.bill.findMany({
-          where: { businessId: business.id },
-          include: { order: { select: { outletId: true } } },
-          orderBy: { createdAt: "desc" },
-        }),
+        // All-time totals per outlet, summed in PostgreSQL (a year of bills no longer travels to the server).
+        prisma.$queryRaw(Prisma.sql`SELECT ${billOutletSql} AS outlet_id,
+            COUNT(*) FILTER (WHERE ${isRevenueBillSql})::int AS revenue_bills,
+            COALESCE(SUM(${billRevenueSql}) FILTER (WHERE ${isRevenueBillSql}), 0)::float8 AS revenue
+          FROM ${billFromSql} WHERE b."businessId" = ${business.id}
+          ${outletId ? Prisma.sql`AND ${billOutletSql} = ${outletId}` : Prisma.empty}
+          GROUP BY 1`),
         prisma.inventoryItem.findMany({
           where: { businessId: business.id, ...(outletId ? { outletLinks: { some: { outletId, enabled: true } } } : {}) },
           ...(outletId ? { include: { outletLinks: { where: { outletId, enabled: true } } } } : {}),
@@ -87,26 +86,22 @@ class DashboardService {
         prisma.allocation.count({ where: allocationWhere }),
       ]);
 
-      const scopedBills = bills.filter(bill => !outletId || getBillOutletId(bill) === outletId);
+      const totalsByOutlet = new Map(bills.map((row) => [row.outlet_id, row]));
       const scopedInventory = inventory.map(item => outletId ? { ...item, stock: item.outletLinks[0].stock, reorderLevel: item.outletLinks[0].reorderLevel } : item);
-      const revenueBills = scopedBills.filter(isRevenueBill);
-      const historicalOutletIds = new Set(scopedBills.map(getBillOutletId));
-      const salesByOutlet = reportOutlets(outlets, historicalOutletIds, outletId).map((outlet) => {
-        const outletBills = revenueBills.filter((bill) => getBillOutletId(bill) === outlet.id);
-        return {
-          outlet_id: outlet.id,
-          outlet_name: outlet.name,
-          status: outlet.status || 'active',
-          sales: outletBills.reduce((sum, bill) => sum + getBillRevenue(bill), 0),
-        };
-      });
+      const historicalOutletIds = new Set(bills.map((row) => row.outlet_id));
+      const salesByOutlet = reportOutlets(outlets, historicalOutletIds, outletId).map((outlet) => ({
+        outlet_id: outlet.id,
+        outlet_name: outlet.name,
+        status: outlet.status || 'active',
+        sales: Number(totalsByOutlet.get(outlet.id)?.revenue || 0),
+      }));
 
       const data = {
         generated_at: new Date().toISOString(),
         outlet_id: outletId,
         overview: {
-          total_sales: revenueBills.reduce((sum, bill) => sum + getBillRevenue(bill), 0),
-          total_bills: revenueBills.length,
+          total_sales: bills.reduce((sum, row) => sum + Number(row.revenue), 0),
+          total_bills: bills.reduce((sum, row) => sum + row.revenue_bills, 0),
           total_products: products.length,
           total_inventory_items: inventory.length,
           total_outlets: outlets.length,

@@ -16,7 +16,8 @@ const assertWholeBusiness = (req) => {
 
 class ReportsController {
   async overview(req, res) {
-    const data = await reportsService.getDashboard(reportInput(req));
+    // guests=0: the Reports screen loads guest analytics separately, only when its Customers tab is opened.
+    const data = await reportsService.getDashboard({ ...reportInput(req), guests: req.query?.guests !== "0" });
     res.status(200).json(apiResponse({ message: "Reports overview fetched successfully", data }));
   }
 

@@ -1,10 +1,16 @@
 import { randomUUID } from "crypto";
+import { sqlTime } from "../database/prisma/sql-time.js";
+import { recentMovementTotals } from "../core/inventory/movement-totals.js";
 import { Router } from "express";
-import { buildSalesCharts } from "../core/dashboard/sales-charts.js";
+import { Prisma } from "@prisma/client";
+import { last30Days, loadSalesDays, onlineWindow, summarizeSalesDays } from "../core/dashboard/sales-rollup.js";
+import { billFromSql, billOutletSql, isRevenueBillSql } from "../core/billing/bill-analytics.sql.js";
+import { businessTimezone, normalizeBill } from "../core/reports/report-scan.js";
+import { readBusinessProfile } from "../core/businesses/business-profile.js";
+import { DEFAULT_TIMEZONE, addDays, localDate, localDayBounds } from "../shared/utils/business-time.js";
 import { reportOutlets } from '../core/dashboard/outlet-report-policy.js';
 import { recipeAnalytics } from "../core/dashboard/recipe-analytics.js";
 import { reportsService } from "../core/reports/reports.service.js";
-import { customerInsights } from "../core/reports/customer-insights.js";
 
 import prisma from "../database/prisma/client.js";
 import { readState, writeState } from "../database/prisma/state-store.js";
@@ -17,9 +23,10 @@ import { admincoreChangeSyncService } from "../core/admincore/admincore-change-s
 import { normalizeLegacyBillRecord, toLegacyBillRecord } from "../core/billing/billing-legacy.serializer.js";
 import {
   getBillChannel,
+  getBillLineCost,
   getBillOutletId,
   getBillRevenue as getBillNetRevenue,
-  isRevenueBill,
+  getBillSubtotal,
 } from "../core/billing/bill-analytics.utils.js";
 import { authService } from "../core/auth/auth.service.js";
 import { signFeedbackToken } from "../core/feedback/feedback-token.js";
@@ -63,88 +70,15 @@ const toNumber = (value, fallback = 0) => {
   return Number.isFinite(parsed) ? parsed : fallback;
 };
 
-const getPeriodRange = (period = "all", now = new Date()) => {
-  const normalized = String(period || "all").toLowerCase();
-  const startToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-  const startTomorrow = new Date(startToday);
-  startTomorrow.setDate(startTomorrow.getDate() + 1);
-
-  if (normalized === "today") {
-    return { key: "today", start: startToday, end: startTomorrow };
-  }
-
-  if (normalized === "yesterday") {
-    const startYesterday = new Date(startToday);
-    startYesterday.setDate(startYesterday.getDate() - 1);
-    return { key: "yesterday", start: startYesterday, end: startToday };
-  }
-
-  if (normalized === "week") {
-    const startWeek = new Date(startToday);
-    startWeek.setDate(startWeek.getDate() - startWeek.getDay());
-    return { key: "week", start: startWeek, end: startTomorrow };
-  }
-
-  if (normalized === "month") {
-    return { key: "month", start: new Date(now.getFullYear(), now.getMonth(), 1), end: startTomorrow };
-  }
-
-  return { key: "all", start: null, end: null };
-};
-
-const isBillInPeriod = (bill, periodRange) => {
-  const createdAt = new Date(bill.created_at);
-  if (Number.isNaN(createdAt.getTime())) return false;
-  if (periodRange.start && createdAt < periodRange.start) return false;
-  if (periodRange.end && createdAt >= periodRange.end) return false;
-  return true;
-};
-
-// Sales are what customers paid (incl. GST, less refunds). Profit uses the same calculation as Reports:
-// GST excluded, and each bill's cost as recorded when it was sold. Items sold with no cost known are counted
-// so the margin is not presented as complete.
-const buildRevenueAnalytics = async ({ tenantId, bills, period = "all", outletId = null }) => {
-  const periodRange = getPeriodRange(period);
-  const selectedBills = bills
-    .filter((bill) => isRevenueBill(bill))
-    .filter((bill) => isBillInPeriod(bill, periodRange));
-  const profit = await reportsService.profitSummary({ tenantId, outletId, start: periodRange.start || null, end: periodRange.end || null });
-
-  const billRows = selectedBills.map((bill) => {
-    const revenue = getBillNetRevenue(bill);
-    const figures = profit.bills.get(bill.id) || { net_sales: revenue, goods_cost: 0, gross_profit: revenue };
-    return {
-      ...bill,
-      revenue,
-      net_sales: figures.net_sales,
-      goods_cost: figures.goods_cost,
-      gross_profit: figures.gross_profit,
-      channel: getBillChannel(bill),
-    };
-  });
-
-  const revenue = billRows.reduce((sum, bill) => sum + bill.revenue, 0);
-  const onlineRevenue = billRows
-    .filter((bill) => bill.channel === "online")
-    .reduce((sum, bill) => sum + bill.revenue, 0);
-  const dineInRevenue = billRows
-    .filter((bill) => bill.channel === "dine_in")
-    .reduce((sum, bill) => sum + bill.revenue, 0);
-
-  return {
-    period: periodRange.key,
-    revenue,
-    net_sales: profit.net_sales,
-    goods_cost: profit.goods_cost,
-    gross_profit: profit.gross_profit,
-    margin_percent: profit.margin_percent,
-    items_without_cost: profit.items_without_cost,
-    online_revenue: onlineRevenue,
-    dine_in_revenue: dineInRevenue,
-    order_count: billRows.length,
-    avg_order_value: billRows.length ? revenue / billRows.length : 0,
-    bills: billRows,
-  };
+// Dashboard periods are local days in the business's time zone (not the server clock, which is UTC on hosting).
+const periodDays = (period = "all", timezone = DEFAULT_TIMEZONE) => {
+  const today = localDate(new Date(), timezone);
+  const key = String(period || "all").toLowerCase();
+  if (key === "today") return { key, from: today, to: today };
+  if (key === "yesterday") return { key, from: addDays(today, -1), to: addDays(today, -1) };
+  if (key === "week") return { key, from: addDays(today, -new Date(`${today}T00:00:00Z`).getUTCDay()), to: today };
+  if (key === "month") return { key, from: `${today.slice(0, 8)}01`, to: today };
+  return { key: "all", from: null, to: null };
 };
 
 const daysBetween = (isoDate) => {
@@ -265,27 +199,17 @@ const SHIFT_SWAP_STATUSES = new Set(["pending", "approved", "rejected", "cancell
 const getInventoryItems = async (tenantId) => {
   try {
     const business = await ensureBusiness({ tenantId });
-    const items = await prisma.inventoryItem.findMany({
-      where: { businessId: business.id },
-      include: { movements: true },
-      orderBy: { createdAt: "asc" },
-    });
+    const [items, totals] = await Promise.all([
+      prisma.inventoryItem.findMany({ where: { businessId: business.id }, orderBy: { createdAt: "asc" } }),
+      // Central-stock movements of the last 30 days, summed per item in PostgreSQL.
+      recentMovementTotals({ businessId: business.id, since: new Date(Date.now() - 30 * 86400000) }),
+    ]);
 
     return items.map((item) => {
-      const last30DaysStart = new Date();
-      last30DaysStart.setDate(last30DaysStart.getDate() - 30);
-      last30DaysStart.setHours(0, 0, 0, 0);
-
-      const recentMovements = (item.movements || []).filter((movement) => movement.createdAt >= last30DaysStart && movement.outletId == null);
-      const consumptionIn30Days = recentMovements
-        .filter((movement) => ["consumption", "bill_deduction"].includes(movement.movementType))
-        .reduce((sum, movement) => sum + Math.abs(toNumber(movement.quantity, 0)), 0);
-      const wastageIn30Days = recentMovements
-        .filter((movement) => movement.movementType === "wastage")
-        .reduce((sum, movement) => sum + Math.abs(toNumber(movement.quantity, 0)), 0);
-      const pilferageIn30Days = recentMovements
-        .filter((movement) => movement.movementType === "pilferage")
-        .reduce((sum, movement) => sum + Math.abs(toNumber(movement.quantity, 0)), 0);
+      const recent = totals.get(item.id) || { consumed: 0, wastage: 0, pilferage: 0 };
+      const consumptionIn30Days = recent.consumed;
+      const wastageIn30Days = recent.wastage;
+      const pilferageIn30Days = recent.pilferage;
 
       return normalizeInventoryItem({
         id: item.id,
@@ -372,94 +296,112 @@ const getBills = async (tenantId, limit, outletId = null, query = {}) => {
   }
 };
 
-const getAllRevenueBills = async (tenantId, outletId = null) => {
-  try {
-    const business = await ensureBusiness({ tenantId });
-    const rows = await prisma.bill.findMany({
-      where: { businessId: business.id },
-      include: { business: true, feedback: true, items: true, order: { select: { outletId: true } } },
-      orderBy: { createdAt: "desc" },
-    });
-    const bills = rows.map((bill) => {
-      const serializedBill = serializeBill(bill);
-      return toLegacyBillRecord({
-        ...serializedBill,
-        outlet_id: getBillOutletId(bill) || serializedBill.outlet_id,
-      });
-    });
-    return outletId ? bills.filter((bill) => getBillOutletId(bill) === outletId) : bills;
-  } catch (error) {
-    // A failed sales query must never turn sample or truncated data into owner metrics.
-    throw error;
-  }
+// Lists on the dashboard show the newest bills; totals always come from every bill.
+const DETAIL_LIMIT = 200;
+const onlineBillSql = Prisma.sql`AND lower(COALESCE(NULLIF(trim(b.metadata->>'order_type'), ''), 'dine-in')) ~ '(online|website|web|delivery|swiggy|zomato|qr)'`;
+const revenueBillSql = Prisma.sql`AND ${isRevenueBillSql}`;
+
+/** Newest bills of a window/outlet (at most `limit`), as raw rows and legacy records. */
+const newestBills = async ({ businessId, outletId = null, bounds = {}, limit, where = Prisma.empty }) => {
+  const ids = await prisma.$queryRaw(Prisma.sql`SELECT b.id FROM ${billFromSql} WHERE b."businessId" = ${businessId}
+    ${bounds.gte ? Prisma.sql`AND b."createdAt" >= ${sqlTime(bounds.gte)}` : Prisma.empty}
+    ${bounds.lt ? Prisma.sql`AND b."createdAt" < ${sqlTime(bounds.lt)}` : Prisma.empty}
+    ${outletId ? Prisma.sql`AND ${billOutletSql} = ${outletId}` : Prisma.empty} ${where}
+    ORDER BY b."createdAt" DESC, b.id DESC LIMIT ${limit}`);
+  const rows = await prisma.bill.findMany({ where: { businessId, id: { in: ids.map((row) => row.id) } }, include: { business: { select: { tenantId: true } }, feedback: true, items: true, order: { select: { outletId: true } } }, orderBy: [{ createdAt: "desc" }, { id: "desc" }] });
+  return rows.map((bill) => {
+    const serializedBill = serializeBill(bill);
+    return { raw: bill, record: toLegacyBillRecord({ ...serializedBill, outlet_id: getBillOutletId(bill) || serializedBill.outlet_id }) };
+  });
 };
 
-const getDashboardStats = async (tenantId, outletId = null, period = "all") => {
-  const outlets = await getOutlets(tenantId);
-  const outletIds = new Set(outlets.map((outlet) => outlet.id));
-  const bills = await getAllRevenueBills(tenantId, outletId);
-  const revenueDetail = await buildRevenueAnalytics({ tenantId, bills, period, outletId });
-  const allTimeRevenueDetail = period === "all"
-    ? revenueDetail
-    : await buildRevenueAnalytics({ tenantId, bills, period: "all", outletId });
-  const kitchen = await getCentralKitchenSnapshot(tenantId, outletId ? [outletId] : null);
-  const inventorySummary = { at_risk_items: kitchen.low_stock_items, expiry_alerts: kitchen.central_inventory.filter((row) => row.expiry_date && daysBetween(row.expiry_date) <= 14), total_wastage_last_30_days: kitchen.central_inventory.reduce((sum, row) => sum + row.wastage_last_30_days, 0) };
+/** detail adds the per-bill lists (today's bills, online orders, bills of the period) used by the metric pages. */
+const getDashboardStats = async (tenantId, outletId = null, period = "all", { detail = false } = {}) => {
   const business = await ensureBusiness({ tenantId });
-  const lowStockProducts = await prisma.product.findMany({ where: { businessId: business.id, active: true, stock: { lte: 10 }, ...(outletId ? { outletLinks: { some: { outletId, enabled: true } } } : {}) } });
-  const [recipes, cashierCount] = await Promise.all([
-    recipeAnalytics({ businessId: business.id, outletId, bills: bills.filter(isRevenueBill), period: getPeriodRange(period) }),
+  const timezone = businessTimezone(await readBusinessProfile(business.id));
+  const today = localDate(new Date(), timezone);
+  const range = periodDays(period, timezone);
+  const periodBounds = localDayBounds({ from: range.from, to: range.to }, timezone);
+  const outlets = await getOutlets(tenantId);
+  // Saved daily totals (any day whose bills changed is recomputed first), sliced by period.
+  // Always checked for changed bills, so a sale made a moment ago is already counted.
+  const days = await loadSalesDays({ businessId: business.id, timezone });
+  const slice = (from, to) => summarizeSalesDays(days, { businessId: business.id, outletId, from, to });
+  const all = slice(null, null);
+  const [selected, lastMonth, todayTotals] = [range.key === "all" ? all : slice(range.from, range.to), slice(addDays(today, -29), today), slice(today, today)];
+  const [todayBills, recent, online, periodBills, products, kitchen, lowStockProducts, cashierCount] = await Promise.all([
+    detail ? newestBills({ businessId: business.id, outletId, bounds: localDayBounds({ from: today, to: today }, timezone), limit: DETAIL_LIMIT, where: revenueBillSql }) : [],
+    newestBills({ businessId: business.id, outletId, limit: 8 }),
+    // Online orders are looked for only in the newest days the saved totals say have them.
+    (() => {
+      const limit = detail ? DETAIL_LIMIT : 8, from = onlineWindow(days, { businessId: business.id, outletId, count: limit });
+      return from ? newestBills({ businessId: business.id, outletId, bounds: localDayBounds({ from }, timezone), limit, where: Prisma.sql`${revenueBillSql} ${onlineBillSql}` }) : [];
+    })(),
+    detail ? newestBills({ businessId: business.id, outletId, bounds: periodBounds, limit: DETAIL_LIMIT, where: revenueBillSql }) : [],
+    prisma.product.findMany({ where: { businessId: business.id }, select: { id: true, costPrice: true } }),
+    getCentralKitchenSnapshot(tenantId, outletId ? [outletId] : null),
+    prisma.product.findMany({ where: { businessId: business.id, active: true, stock: { lte: 10 }, ...(outletId ? { outletLinks: { some: { outletId, enabled: true } } } : {}) } }),
     prisma.user.count({ where: { businessId: business.id, active: true, role: { name: { equals: "Cashier", mode: "insensitive" } }, ...(outletId ? { OR: [{ outletAssignments: { none: {} } }, { outletAssignments: { some: { outletId } } }] } : {}) } }),
   ]);
-  const todayStart = new Date();
-  todayStart.setHours(0, 0, 0, 0);
-  const revenueBills = bills.filter(isRevenueBill);
-  const todayBills = revenueBills.filter((bill) => new Date(bill.created_at) >= todayStart);
-  const onlineOrders = bills.filter((bill) => isRevenueBill(bill) && getBillChannel(bill) === "online");
-  const topSellingMap = new Map();
-  revenueBills.forEach((bill) => {
-    (bill.items || []).forEach((item) => {
-      const current = topSellingMap.get(item.name) || { name: item.name, quantity: 0 };
-      current.quantity += toNumber(item.quantity, 0);
-      topSellingMap.set(item.name, current);
-    });
+  const recipes = await recipeAnalytics({ businessId: business.id, outletId, invoiceCounts: selected.product_bills, period: { start: periodBounds.gte, end: periodBounds.lt } });
+  const inventorySummary = { at_risk_items: kitchen.low_stock_items, expiry_alerts: kitchen.central_inventory.filter((row) => row.expiry_date && daysBetween(row.expiry_date) <= 14), total_wastage_last_30_days: kitchen.central_inventory.reduce((sum, row) => sum + row.wastage_last_30_days, 0) };
+  const onlineOrders = online.filter(({ raw }) => getBillChannel(normalizeBill(raw)) === "online").map(({ record }) => record);
+  // Profit per listed bill, with the same rules as Reports and the totals above.
+  const productById = new Map(products.map((product) => [product.id, product]));
+  const billRows = periodBills.map(({ raw, record }) => {
+    const bill = normalizeBill(raw);
+    const netSales = getBillSubtotal(bill);
+    const goodsCost = (bill.items || []).reduce((sum, item) => sum + getBillLineCost(bill, item, productById.get(item.productId)).amount, 0);
+    return { ...record, revenue: getBillNetRevenue(bill), net_sales: netSales, goods_cost: goodsCost, gross_profit: netSales - goodsCost, channel: getBillChannel(bill) };
   });
   // Keep closed outlets with revenue history, including fully refunded sales.
   // Empty inactive outlets do not belong in an operational sales ranking.
-  const historicalOutletIds = new Set(bills.map(getBillOutletId));
-  const salesByOutlet = reportOutlets(outlets, historicalOutletIds, outletId).map((outlet) => {
-    const outletBills = revenueBills.filter((bill) => getBillOutletId(bill) === outlet.id);
-    return {
-      outlet_id: outlet.id,
-      outlet_name: outlet.name,
-      bills: outletBills.length,
-      status: outlet.status || 'active',
-      sales: outletBills.reduce((sum, bill) => sum + getBillNetRevenue(bill), 0),
-    };
-  });
+  const historicalOutletIds = new Set([...all.outlets].filter(([, row]) => row.all_bills > 0).map(([id]) => id));
+  const salesByOutlet = reportOutlets(outlets, historicalOutletIds, outletId).map((outlet) => ({
+    outlet_id: outlet.id,
+    outlet_name: outlet.name,
+    bills: all.outlets.get(outlet.id)?.bills || 0,
+    status: outlet.status || 'active',
+    sales: all.outlets.get(outlet.id)?.revenue || 0,
+  }));
 
   return {
-    total_sales_today: todayBills.reduce((sum, bill) => sum + getBillNetRevenue(bill), 0),
-    sales_charts: buildSalesCharts(bills),
-    bills_count_today: todayBills.length,
-    online_orders_count: onlineOrders.length,
-    online_sales: onlineOrders.reduce((sum, bill) => sum + getBillNetRevenue(bill), 0),
-    recent_bills: bills.slice(0, 8),
-    today_bills: todayBills,
+    timezone,
+    total_sales_today: todayTotals.revenue,
+    sales_charts: { rows: last30Days(lastMonth.days, today), modes: lastMonth.modes, from: addDays(today, -29), to: today, timezone },
+    bills_count_today: todayTotals.bills,
+    online_orders_count: all.online_bills,
+    online_sales: all.online_revenue,
+    recent_bills: recent.map(({ record }) => record),
+    today_bills: todayBills.map(({ record }) => record),
+    today_bills_shown: todayBills.length,
     online_orders_details: onlineOrders,
+    online_orders_shown: onlineOrders.length,
     recent_online_orders: onlineOrders.slice(0, 8),
     sales_by_outlet: salesByOutlet,
     low_stock_products: lowStockProducts,
-    top_selling: Array.from(topSellingMap.values()).sort((left, right) => right.quantity - left.quantity),
+    top_selling: all.items,
     cashier_count: cashierCount,
-    total_revenue: allTimeRevenueDetail.revenue,
-    revenue_summary: {
-      net_sales: allTimeRevenueDetail.net_sales,
-      goods_cost: allTimeRevenueDetail.goods_cost,
-      gross_profit: allTimeRevenueDetail.gross_profit,
-      margin_percent: allTimeRevenueDetail.margin_percent,
-      items_without_cost: allTimeRevenueDetail.items_without_cost,
+    total_revenue: all.revenue,
+    revenue_summary: { net_sales: all.net_sales, goods_cost: all.goods_cost, gross_profit: all.gross_profit, margin_percent: all.margin_percent, items_without_cost: all.items_without_cost },
+    revenue_detail: {
+      period: range.key,
+      from: range.from,
+      to: range.to,
+      revenue: selected.revenue,
+      net_sales: selected.net_sales,
+      goods_cost: selected.goods_cost,
+      gross_profit: selected.gross_profit,
+      margin_percent: selected.margin_percent,
+      items_without_cost: selected.items_without_cost,
+      online_revenue: selected.online_revenue,
+      dine_in_revenue: selected.dine_in_revenue,
+      order_count: selected.bills,
+      avg_order_value: selected.bills ? selected.revenue / selected.bills : 0,
+      bills: billRows,
+      bills_shown: billRows.length,
+      bills_limit: DETAIL_LIMIT,
     },
-    revenue_detail: revenueDetail,
     inventory_summary: {
       at_risk_count: inventorySummary.at_risk_items.length,
       expiry_alert_count: inventorySummary.expiry_alerts.length,
@@ -472,14 +414,13 @@ const getDashboardStats = async (tenantId, outletId = null, period = "all") => {
   };
 };
 
-
 const getCentralKitchenSnapshot = (tenantId, outletIds = null) => centralKitchenService.snapshot({ tenantId, outletIds });
 
 router.get("/dashboard/stats", requirePermission("dashboard"), scopeOutletQuery, async (req, res, next) => {
   try {
     res
       .status(200)
-      .json(await getDashboardStats(req.context.tenantId, req.query?.outlet_id || null, req.query?.period || "all"));
+      .json(await getDashboardStats(req.context.tenantId, req.query?.outlet_id || null, req.query?.period || "all", { detail: req.query?.detail === "1" }));
   } catch (error) {
     next(error);
   }
@@ -1003,9 +944,7 @@ router.get("/central-kitchen", requireAnyPermission("central_kitchen", "inventor
 
 router.get("/customer-analytics", requireAnyPermission("reports", "dashboard"), scopeOutletQuery, async (req, res, next) => {
   try {
-    const context = await reportsService.getReportContext({ tenantId: req.context.tenantId, from: req.query.from, to: req.query.to, outletId: req.query.outlet_id || null });
-    const profiles = await prisma.customer.findMany({ where: { businessId: context.business.id, anonymizedAt: null }, select: { phone: true, loyaltyPoints: true } });
-    res.status(200).json(customerInsights(context.bills, profiles, context.feedback));
+    res.status(200).json(await reportsService.customerInsights({ tenantId: req.context.tenantId, from: req.query.from, to: req.query.to, outletId: req.query.outlet_id || null }));
   } catch (error) { next(error); }
 });
 

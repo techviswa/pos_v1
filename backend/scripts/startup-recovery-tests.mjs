@@ -12,6 +12,10 @@ let marketingStarted = false;
 let marketingStopped = false;
 let reportsStarted = false;
 let reportsStopped = false;
+let rollupWarmupStarted = false;
+let backupStarted = false;
+let backupStopped = false;
+let maintenanceStarted = false;
 const signals = {};
 const context = vm.createContext({
   app: { listen: (_port, ready) => { queueMicrotask(ready); return { on() {}, close(done) { done(); } }; } },
@@ -24,6 +28,11 @@ const context = vm.createContext({
   startReportScheduler: () => { reportsStarted = true; },
   stopReportScheduler: () => { reportsStopped = true; },
   reportSchedules: {},
+  startSalesRollupWarmup: () => { rollupWarmupStarted = true; },
+  startBackupScheduler: () => { backupStarted = true; },
+  stopBackupScheduler: () => { backupStopped = true; },
+  startMaintenance: () => { maintenanceStarted = true; },
+  stopMaintenance: () => {},
   initErrorReporting: () => false,
   flushErrorReporting: async () => {},
   errorMonitor: { captureException() {} }, logger: { info() {}, error() {} },
@@ -36,6 +45,9 @@ await new Promise(setImmediate);
 assert.equal(calls, 1);
 assert.equal(marketingStarted, true, "the marketing sender starts with the server");
 assert.equal(reportsStarted, true, "the scheduled-report sender starts with the server");
+assert.equal(rollupWarmupStarted, true, "saved sales totals are refreshed in the background after start-up");
+assert.equal(backupStarted, true, "the nightly backup scheduler starts with the server");
+assert.equal(maintenanceStarted, true, "hourly maintenance starts with the server");
 assert.equal(typeof retry, "function", "A failed startup must schedule recovery");
 retry();
 await new Promise(setImmediate);
@@ -45,6 +57,7 @@ await new Promise(setImmediate);
 assert.equal(stopped, true);
 assert.equal(marketingStopped, true, "the marketing sender stops during shutdown");
 assert.equal(reportsStopped, true, "the scheduled-report sender stops during shutdown");
+assert.equal(backupStopped, true, "the backup scheduler stops during shutdown");
 console.log("Startup retries a temporary database failure and stops jobs and the marketing sender during shutdown");
 let listened = false, startedWorkers = false, exitCode;
 const rejected = vm.createContext({

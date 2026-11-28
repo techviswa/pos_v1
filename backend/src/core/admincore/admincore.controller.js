@@ -237,5 +237,9 @@ export const getSaasUsage = async (req, res) => {
 };
 
 export const getSaasExport = async (req, res) => {
-  sendRawResponse(res, { data: await saasService.exportTenant({ businessId: req.params.businessId }) });
+  // Streamed: a large business's history is written in pieces instead of built in memory first.
+  res.status(200).type("application/json");
+  const write = (chunk) => (res.write(chunk) ? undefined : new Promise((resolve) => res.once("drain", resolve)));
+  await saasService.streamTenantExport({ businessId: req.params.businessId, write });
+  res.end();
 };

@@ -18,7 +18,15 @@ and verifies the database privileges before accepting HTTP requests.
 
 Configure `SMTP_HOST`, `SMTP_PORT` (587 with STARTTLS or 465 with TLS), `SMTP_FROM`, `SMTP_USER`, `SMTP_PASSWORD`, and `AUTH_PUBLIC_URL` (the HTTPS POS frontend origin). Reset emails link to `/reset-password?token=...`; invitations link to `/invite/...`. These values belong only in backend secret configuration. Production password-reset requests return 503 when email configuration is absent, rather than silently creating undeliverable tokens. Staff invitation responses retain a copyable link, and also send email when configured. SMTP acceptance is not proof of inbox delivery; verify the sender domain and delivery with your mail service before release.
 
-### PostgreSQL backup
+### Nightly off-site backup (built in)
+
+The backend backs up the whole database every night (BACKUP_HOUR, default 03:00 Asia/Kolkata) to any S3-compatible bucket: the snapshot is consistent (one REPEATABLE READ transaction), compressed and encrypted with AES-256-GCM, uploaded, downloaded again and verified table by table; 30 daily and 12 monthly copies are kept (BACKUP_KEEP_DAILY / BACKUP_KEEP_MONTHLY). Settings shows the real last backup to owners, and owners can download their own business data there.
+
+Set on Render: BACKUP_S3_ENDPOINT (R2: https://<account>.r2.cloudflarestorage.com; B2: its S3 endpoint; empty for AWS), BACKUP_S3_REGION (auto for R2), BACKUP_S3_BUCKET, BACKUP_S3_ACCESS_KEY_ID, BACKUP_S3_SECRET_ACCESS_KEY and BACKUP_ENCRYPTION_KEY (your own random 32+ character secret). Keep a copy of BACKUP_ENCRYPTION_KEY outside Render (password manager): without it no backup can be restored. Give the storage key access to that bucket only.
+
+Commands (backend/): `npm run backup:now` (take and verify one now), `npm run backup:restore -- --list`, `npm run backup:restore -- --name <file> --target "<empty database URL>"` (target must have the same migrations applied: `DATABASE_URL=<target> npx prisma migrate deploy`; the script refuses a non-empty target and the live database), `npm run backup:drill` (backs up, restores into a temporary schema with all foreign keys, compares every table, drops the schema). Run a drill after each schema change and at least monthly.
+
+### PostgreSQL backup (manual, pg_dump)
 
 Run `node backend/scripts/backup-database.mjs` from the repository root with the intended database configured in the backend environment. It creates a uniquely named custom-format `pg_dump` archive in ignored `backend/data/backups/` and checks its table-of-contents using `pg_restore --list`. PostgreSQL client tools must be installed. Database credentials are passed through the child environment, not command arguments.
 

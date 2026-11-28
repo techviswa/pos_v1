@@ -167,7 +167,9 @@ If migrations fail because Postgres user lacks schema permission, run as `postgr
 - KOT/kitchen: `backend/src/features/kitchen/kot`
 - QR ordering/table management: `backend/src/features/sales-extensions/qr-ordering`, `backend/src/features/sales-extensions/table-management`
 - QR Studio: `backend/src/features/sales-extensions/qr-studio` (printed design on all plans via `/api/table-management/qr-design`; smart codes `/q/<token>`, guest-menu branding and per-code performance under `/api/qr-studio`, plan feature `qr-studio` on Growth/Enterprise). Frontend `frontend/src/core/qr` — every printed code is decoded with jsQR before save/print (`qrArt.js`).
-- Reports: `backend/src/core/reports`
+- Reports: `backend/src/core/reports` — reports read bills in batches (`report-scan.js`) or from saved daily totals (`dashboard/sales-rollup.js`: `sales-day:`/`report-day:` documents, recomputed for any day whose bills changed); all days/hours use the business time zone (`shared/utils/business-time.js`, profile `timezone`). Pass instants to raw SQL with `sqlTime()` (database/prisma/sql-time.js). Never load all bills of a business into memory.
+- Backups: `backend/src/core/backup` (nightly encrypted S3-compatible backup, verify, retention, restore, drill); `npm --prefix backend run backup:drill`
+- Scale benchmark (isolated fixture): `node backend/scripts/scale-bench.mjs seed|bench|clean`
 - Inventory: `backend/src/core/inventory`
 - Printer/payment foundations: `backend/src/core/printer`, `backend/src/core/payments`
 

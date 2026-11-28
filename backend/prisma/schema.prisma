@@ -128,6 +128,7 @@ model RolePermission {
   permission   Permission @relation(fields: [permissionId], references: [id], onDelete: Cascade)
 
   @@id([roleId, permissionId])
+  @@index([permissionId])
 }
 
 model UserPermission {
@@ -137,6 +138,7 @@ model UserPermission {
   permission   Permission @relation(fields: [permissionId], references: [id], onDelete: Cascade)
 
   @@id([userId, permissionId])
+  @@index([permissionId])
 }
 
 model User {
@@ -169,6 +171,7 @@ model User {
   updatedAt           DateTime               @updatedAt
 
   @@unique([businessId, email])
+  @@index([roleId])
 }
 
 model AuthToken {
@@ -217,6 +220,7 @@ model UserOutletAssignment {
   outlet   Outlet @relation(fields: [outletId], references: [id], onDelete: Cascade)
 
   @@id([userId, outletId])
+  @@index([outletId])
 }
 
 model Product {
@@ -334,6 +338,7 @@ model Variation {
   product     Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
+  @@index([productId])
 }
 
 model Addon {
@@ -346,6 +351,7 @@ model Addon {
   product         Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
+  @@index([productId])
 }
 
 model Order {
@@ -365,6 +371,8 @@ model Order {
   kitchenTickets KitchenTicket[]
   createdAt      DateTime        @default(now())
   updatedAt      DateTime        @updatedAt
+  @@index([businessId, createdAt])
+  @@index([outletId])
 }
 
 model OrderItem {
@@ -380,6 +388,8 @@ model OrderItem {
   modifiers Json?
   order     Order    @relation(fields: [orderId], references: [id], onDelete: Cascade)
   product   Product? @relation(fields: [productId], references: [id])
+  @@index([orderId])
+  @@index([productId])
 }
 
 model Bill {
@@ -406,6 +416,8 @@ model Bill {
   updatedAt     DateTime   @updatedAt
 
   @@unique([businessId, invoiceNumber])
+  @@index([businessId, createdAt])
+  @@index([businessId, updatedAt])
 }
 
 model BillItem {
@@ -421,6 +433,8 @@ model BillItem {
   modifiers Json?
   bill      Bill     @relation(fields: [billId], references: [id], onDelete: Cascade)
   product   Product? @relation(fields: [productId], references: [id])
+  @@index([billId])
+  @@index([productId])
 }
 
 model InventoryItem {
@@ -456,6 +470,7 @@ model OutletProduct {
   updatedAt     DateTime @updatedAt
 
   @@unique([outletId, productId])
+  @@index([productId])
 }
 
 model OutletInventory {
@@ -472,6 +487,7 @@ model OutletInventory {
   updatedAt       DateTime      @updatedAt
 
   @@unique([outletId, inventoryItemId])
+  @@index([inventoryItemId])
 }
 
 model OutletFeatureToggle {
@@ -506,6 +522,7 @@ model InventoryMovement {
   createdAt       DateTime      @default(now())
 
   @@index([businessId, inventoryItemId, outletId, createdAt])
+  @@index([inventoryItemId])
 }
 
 model PurchaseOrder {
@@ -524,6 +541,9 @@ model PurchaseOrder {
   allocations   Allocation[]
   createdAt     DateTime     @default(now())
   updatedAt     DateTime     @updatedAt
+  @@index([businessId, createdAt])
+  @@index([outletId])
+  @@index([requestedById])
 }
 
 model Allocation {
@@ -541,6 +561,10 @@ model Allocation {
   routePlan       RoutePlan?     @relation(fields: [routePlanId], references: [id])
   createdAt       DateTime       @default(now())
   updatedAt       DateTime       @updatedAt
+  @@index([businessId, createdAt])
+  @@index([outletId])
+  @@index([purchaseOrderId])
+  @@index([routePlanId])
 }
 
 model RoutePlan {
@@ -556,6 +580,7 @@ model RoutePlan {
   allocations   Allocation[]
   createdAt     DateTime     @default(now())
   updatedAt     DateTime     @updatedAt
+  @@index([businessId, createdAt])
 }
 
 model RouteStop {
@@ -566,6 +591,8 @@ model RouteStop {
   eta         String?
   routePlan   RoutePlan @relation(fields: [routePlanId], references: [id], onDelete: Cascade)
   outlet      Outlet    @relation(fields: [outletId], references: [id], onDelete: Cascade)
+  @@index([routePlanId])
+  @@index([outletId])
 }
 
 model KitchenTicket {
@@ -577,6 +604,7 @@ model KitchenTicket {
   order      Order    @relation(fields: [orderId], references: [id], onDelete: Cascade)
   createdAt  DateTime @default(now())
   updatedAt  DateTime @updatedAt
+  @@index([businessId, createdAt])
 }
 
 /// A received lot of one ingredient (lot number and expiry) at the central store (outletId null) or an outlet.
@@ -648,6 +676,7 @@ model DiningTable {
   updatedAt     DateTime           @updatedAt
 
   @@unique([businessId, name])
+  @@index([areaId])
 }
 
 model TableQrCode {
@@ -665,6 +694,7 @@ model TableQrCode {
   createdAt     DateTime           @default(now())
   updatedAt     DateTime           @updatedAt
   rotatedAt     DateTime?
+  @@index([businessId, createdAt])
 }
 
 /// A permanent short QR link (menu, offer, review, contact card, web link) whose destination can change without reprinting.
@@ -761,6 +791,8 @@ model TableReservation {
   table           DiningTable? @relation(fields: [tableId], references: [id], onDelete: SetNull)
   createdAt       DateTime     @default(now())
   updatedAt       DateTime     @updatedAt
+  @@index([businessId, createdAt])
+  @@index([tableId])
 }
 
 model Feedback {
@@ -774,6 +806,8 @@ model Feedback {
   business     Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
   bill         Bill?    @relation(fields: [billId], references: [id])
   createdAt    DateTime @default(now())
+  @@index([businessId, createdAt])
+  @@index([billId])
 }
 
 model FeatureToggle {
@@ -793,6 +827,7 @@ model StaffActivity {
   actorName String?
   createdAt DateTime @default(now())
   user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  @@index([userId])
 }
 
 // One clock-in to clock-out. Staff names are copied so the history survives if the account is deleted.
@@ -935,6 +970,7 @@ model LoyaltyEntry {
 
   @@index([customerId, createdAt])
   @@index([billId])
+  @@index([businessId, createdAt])
 }
 
 model GiftCard {
@@ -961,6 +997,7 @@ model GiftCard {
   updatedAt      DateTime              @updatedAt
 
   @@index([businessId, createdAt])
+  @@index([customerId])
 }
 
 model GiftCardTransaction {
@@ -1020,6 +1057,7 @@ model PayProfile {
   user             User     @relation(fields: [userId], references: [id], onDelete: Cascade)
   createdAt        DateTime @default(now())
   updatedAt        DateTime @updatedAt
+  @@index([businessId, createdAt])
 }
 
 model PayrollRun {
@@ -1079,6 +1117,7 @@ model Payslip {
 
   @@unique([runId, userId])
   @@index([userId])
+  @@index([businessId, createdAt])
 }
 
 // A business's own WhatsApp Business / SMS accounts. Secrets are stored encrypted (AES-256-GCM).
@@ -1164,6 +1203,7 @@ model MarketingCampaign {
   updatedAt     DateTime           @updatedAt
 
   @@index([businessId, status])
+  @@index([templateId])
 }
 
 model MarketingMessage {
@@ -1197,6 +1237,7 @@ model MarketingMessage {
   @@index([status, nextAttemptAt])
   @@index([providerMessageId])
   @@index([customerId, sentAt])
+  @@index([businessId, createdAt])
 }
 
 // A restaurant's own Razorpay account. The key secret and webhook secret are stored encrypted.

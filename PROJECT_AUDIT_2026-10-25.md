@@ -449,3 +449,38 @@ drawer Rs 767 for 2 bills; Reports and GST report match.
 - Done: guest-menu look per outlet (logo, cover, accent, welcome, chef's picks, YouTube/Vimeo videos loaded on tap) on table menus and smart codes; QR performance per code (scans, approved QR orders and value, orders per scan, smart-code scans and devices, scans by hour, definitions shown).
 - Verified: `qr-studio-tests.mjs` (50 checks), full `deploy:check`, frontend build and 164 tests, browser run on an isolated Enterprise fixture (deleted afterwards).
 - Not built (needs paid storage and keys): uploading/hosting own videos; drag-and-drop page builder; campaign links in WhatsApp/SMS marketing.
+
+## 2026-11-28: production scale (billing, inventory, reports, staff sign-in, cloud backup)
+
+Measured on an isolated fixture: one year of a busy two-outlet cafe (120,451 bills, 361,351 lines, 204,765 stock
+movements; `scripts/scale-bench.mjs`), then deleted.
+
+| Request | Before | After |
+| --- | --- | --- |
+| Bills list (owner / cashier, page of 50) | 16 s / crash (32,767-parameter limit) | 0.1 s / 0.1 s |
+| Dashboard | crash after 22 s | 1.0-1.9 s |
+| Reports overview, 30 days / 1 year | 5.4 s / crash | 1.4 s / 3.3 s (guests load on their tab) |
+| Hourly, products, staff, outlets (30 days) | 4.2-4.6 s | 0.2-0.5 s |
+| Inventory list | 11.8 s | 0.05 s |
+| 40 bills at once on 2 tills | 0.29 s per bill | 0.13 s per bill, unique numbers, exact stock |
+
+- Fixed: 40 missing indexes (foreign keys followed by row-security rules; business/date lookups) — migrations
+  `20261128090000_scale_indexes`, `20261128091000_bill_updated_index` (additive). Schema drift: none.
+- Fixed: every "load all bills/orders/movements" path in these features (reports, dashboard, outlets list, outlet
+  detail, inventory list, central kitchen, stock valuation, shift summary, customer search/history sync, privacy
+  erasure, billing summary that counted only 100 bills, tenant export) now reads in batches, sums in SQL or uses saved
+  daily totals (`sales-day:`/`report-day:`, recomputed for any day whose bills change). Saved-day figures were checked
+  equal to live per-bill figures on the fixture (30 days, all outlets and one outlet).
+- Fixed: reports, dashboard, bill date filters and scheduled reports counted UTC days/hours (lunch at 13:00 appeared
+  at 07:30; bills before 05:30 went to the previous day). Business time zone added to Settings (default Asia/Kolkata).
+- Fixed: raw SQL compared timestamps in the database session's time zone (`sqlTime`).
+- Fixed: simultaneous QR payment requests with one key could create two payment links (reproducible).
+- Fixed: password/PIN checks blocked the server; expired sessions never deleted.
+- Limits by design: report ranges up to 366 days; guest analytics and invoice-level GST up to 92 days per request.
+  Dashboard and Reports always include the latest bills. Dashboard lists show the newest 200 bills with the
+  full count.
+- Done (storage keys pending from the owner): nightly encrypted off-site backup (S3-compatible), verified from the
+  stored copy, retention 30 daily + 12 monthly, Settings status, owner data download, restore and drill commands.
+  Local drill: 766,147 rows / 64 tables backed up (39 MB), verified, restored with 93 foreign keys, every table equal.
+- Verified: `scale-correctness-tests` (33), `backup-tests` (23), `auth-scale-tests` (8), full deploy check, frontend
+  build and 164 tests. Not verified here: live Render behaviour under this volume (free instance), real R2/B2 bucket.

@@ -1,5 +1,9 @@
 import { readBusinessProfile } from "../businesses/business-profile.js";
-import { readExportPage } from "../../shared/utils/export-cursor.js";
+import { sqlTime } from "../../database/prisma/sql-time.js";
+import { EXPORT_CURSOR, readExportPage } from "../../shared/utils/export-cursor.js";
+import { localDayBounds } from "../../shared/utils/business-time.js";
+import { businessTimezone } from "../reports/report-scan.js";
+import { billFromSql, billRevenueSql, billTaxSql, isRevenueBillSql } from "./bill-analytics.sql.js";
 import { assertFulfillmentEnabled } from "./fulfillment-policy.js";
 import prisma from "../../database/prisma/client.js";
 import { Prisma } from "@prisma/client";
@@ -122,6 +126,8 @@ class BillingService {
     for (const value of [from, to]) if (value && (typeof value !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(value) || !Number.isFinite(Date.parse(value)) || new Date(value).toISOString().slice(0, 10) !== value)) throw createHttpError({ statusCode: 400, message: "Use valid invoice dates (YYYY-MM-DD)" });
     if (from && to && from > to) throw createHttpError({ statusCode: 400, message: "Start date must not follow end date" });
     const pagination = getPagination({ limit, page, offset });
+    // Invoice dates are the business's local days.
+    const dayBounds = (from || to) ? localDayBounds({ from, to }, businessTimezone(await readBusinessProfile(business.id))) : {};
     const terms = [];
     const predicates = [Prisma.sql`b."businessId"=${business.id}`];
     if (createdBy) {
@@ -157,17 +163,32 @@ class BillingService {
       if (outletIds) predicates.push(outletIds.length
         ? Prisma.sql`COALESCE(NULLIF(b.metadata->>'outlet_id',''), NULLIF(b.metadata->>'outletId',''), o."outletId") IN (${Prisma.join(outletIds)})`
         : Prisma.sql`false`);
-      if (from) predicates.push(Prisma.sql`b."createdAt">=${`${from}T00:00:00`}::timestamp`);
-      if (to) predicates.push(Prisma.sql`b."createdAt"<${new Date(Date.parse(`${to}T00:00:00Z`) + 86400000).toISOString()}::timestamp`);
+      if (dayBounds.gte) predicates.push(Prisma.sql`b."createdAt">=${sqlTime(dayBounds.gte)}`);
+      if (dayBounds.lt) predicates.push(Prisma.sql`b."createdAt"<${sqlTime(dayBounds.lt)}`);
       const ids = await prisma.$queryRaw(Prisma.sql`SELECT b.id FROM "Bill" b LEFT JOIN "Order" o ON o.id=b."orderId"
         WHERE ${Prisma.join(predicates, ' AND ')} ORDER BY b."createdAt" DESC, b.id DESC LIMIT ${pagination.take} OFFSET ${pagination.skip}`);
       const bills = await prisma.bill.findMany({ where: { businessId: business.id, id: { in: ids.map(row => row.id) } },
         include: getBillInclude(), orderBy: [{ createdAt: 'desc' }, { id: 'desc' }] });
       return bills.map(serializeBill);
     }
-    const scopedIds = outletIds ? (outletIds.length ? await prisma.$queryRaw(Prisma.sql`SELECT b.id FROM "Bill" b LEFT JOIN "Order" o ON o.id=b."orderId" WHERE b."businessId"=${business.id} AND COALESCE(NULLIF(b.metadata->>'outlet_id',''), NULLIF(b.metadata->>'outletId',''), o."outletId") IN (${Prisma.join(outletIds)})`) : []) : null;
+    if (outletIds && !query[EXPORT_CURSOR]) {
+      // Outlet-restricted lists pick their page in PostgreSQL. Loading every bill id of the outlet first failed
+      // past 32,767 bills (PostgreSQL's parameter limit) and grew without bound.
+      if (!outletIds.length) return [];
+      predicates.push(Prisma.sql`COALESCE(NULLIF(b.metadata->>'outlet_id',''), NULLIF(b.metadata->>'outletId',''), o."outletId") IN (${Prisma.join(outletIds)})`);
+      if (dayBounds.gte) predicates.push(Prisma.sql`b."createdAt">=${sqlTime(dayBounds.gte)}`);
+      if (dayBounds.lt) predicates.push(Prisma.sql`b."createdAt"<${sqlTime(dayBounds.lt)}`);
+      const ids = await prisma.$queryRaw(Prisma.sql`SELECT b.id FROM "Bill" b LEFT JOIN "Order" o ON o.id=b."orderId"
+        WHERE ${Prisma.join(predicates, ' AND ')} ORDER BY b."createdAt" DESC, b.id DESC LIMIT ${pagination.take} OFFSET ${pagination.skip}`);
+      const bills = await prisma.bill.findMany({ where: { businessId: business.id, id: { in: ids.map(row => row.id) } },
+        include: getBillInclude(), orderBy: [{ createdAt: 'desc' }, { id: 'desc' }] });
+      return bills.map(serializeBill);
+    }
+    // AdminCore export pages: the outlet condition stays inside the query (no id list).
+    const outletWhere = outletIds ? { OR: outletIds.flatMap((id) => [{ metadata: { path: ['outlet_id'], equals: id } }, { metadata: { path: ['outletId'], equals: id } }, { order: { outletId: id } }]) } : null;
+    if (outletIds && !outletIds.length) return [];
     const bills = await readExportPage(prisma.bill, {
-      where: { businessId: business.id, ...(terms.length ? { AND: terms } : {}), ...(scopedIds ? { id: { in: scopedIds.map((row) => row.id) } } : {}), ...((from || to) ? { createdAt: { ...(from ? { gte: new Date(`${from}T00:00:00Z`) } : {}), ...(to ? { lt: new Date(Date.parse(`${to}T00:00:00Z`) + 86400000) } : {}) } } : {}) },
+      where: { businessId: business.id, AND: [...terms, ...(outletWhere ? [outletWhere] : [])], ...((from || to) ? { createdAt: dayBounds } : {}) },
       include: getBillInclude(),
       orderBy: { createdAt: "desc" },
       take: pagination.take,
@@ -660,18 +681,23 @@ class BillingService {
   }
 
   async getBillingSummary({ tenantId }) {
-    const bills = await this.listInvoices({ tenantId });
-    const subtotal = bills.reduce((sum, bill) => sum + Number(bill.subtotal || 0), 0);
-    const tax = bills.reduce((sum, bill) => sum + Number(bill.tax || 0), 0);
-    const total = bills.reduce((sum, bill) => sum + Number(bill.total || 0), 0);
-
+    const business = await ensureBusiness({ tenantId });
+    // Every bill of the business, summed in PostgreSQL (it used to add up only the newest 100).
+    const [row] = await prisma.$queryRaw(Prisma.sql`SELECT COUNT(*)::int AS count, COALESCE(SUM(b.subtotal), 0)::float8 AS subtotal,
+      COALESCE(SUM(b.tax), 0)::float8 AS tax, COALESCE(SUM(b.total), 0)::float8 AS total,
+      COALESCE(SUM(${billRevenueSql}) FILTER (WHERE ${isRevenueBillSql}), 0)::float8 AS revenue,
+      COALESCE(SUM(${billTaxSql}) FILTER (WHERE ${isRevenueBillSql}), 0)::float8 AS revenue_tax,
+      MAX(b.currency) AS currency FROM ${billFromSql} WHERE b."businessId" = ${business.id}`);
     return {
       tenantId,
-      currency: bills[0]?.currency || DEFAULT_BILLING_CURRENCY,
-      invoiceCount: bills.length,
-      subtotal,
-      tax,
-      total,
+      currency: row.currency || DEFAULT_BILLING_CURRENCY,
+      invoiceCount: row.count,
+      subtotal: row.subtotal,
+      tax: row.tax,
+      total: row.total,
+      // Sales after voids and refunds, as Reports count them.
+      revenue: row.revenue,
+      revenue_tax: row.revenue_tax,
     };
   }
 }

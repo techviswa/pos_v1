@@ -1,4 +1,5 @@
 import prisma from "../../database/prisma/client.js";
+import { sqlTime } from "../../database/prisma/sql-time.js";
 import { logger } from "../../shared/utils/logger.js";
 import { getCustomerSettings } from "../customers/customer-core.js";
 import { fieldValues, loadConfig, materialize, renderTemplate, webhookUrls } from "./marketing.service.js";
@@ -79,11 +80,11 @@ export const processMessage = async (id, now = new Date()) => {
 /** Claims and sends up to `limit` due messages. */
 export const dispatchBatch = async ({ limit = 25, now = new Date() } = {}) => {
   const claimed = await prisma.$queryRaw`
-    UPDATE "MarketingMessage" SET "status" = 'sending', "lockedUntil" = ${new Date(now.getTime() + 120000)},
-      "attempts" = "attempts" + 1, "updatedAt" = ${now}
+    UPDATE "MarketingMessage" SET "status" = 'sending', "lockedUntil" = ${sqlTime(now.getTime() + 120000)},
+      "attempts" = "attempts" + 1, "updatedAt" = ${sqlTime(now)}
     WHERE "id" IN (
       SELECT "id" FROM "MarketingMessage"
-      WHERE ("status" = 'queued' AND "nextAttemptAt" <= ${now}) OR ("status" = 'sending' AND "lockedUntil" < ${now})
+      WHERE ("status" = 'queued' AND "nextAttemptAt" <= ${sqlTime(now)}) OR ("status" = 'sending' AND "lockedUntil" < ${sqlTime(now)})
       ORDER BY "nextAttemptAt" ASC
       LIMIT ${limit}
       FOR UPDATE SKIP LOCKED

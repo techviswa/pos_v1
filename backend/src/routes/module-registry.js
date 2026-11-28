@@ -24,6 +24,7 @@ import tableManagementRoutes from "../features/sales-extensions/table-management
 import qrOrderingRoutes from "../features/sales-extensions/qr-ordering/qr-ordering.routes.js";
 import qrStudioRoutes from "../features/sales-extensions/qr-studio/qr-studio.routes.js";
 import qrStudioPublicRoutes from "../features/sales-extensions/qr-studio/qr-studio-public.routes.js";
+import backupRoutes from "../core/backup/backup.routes.js";
 import batchTrackingRoutes from "../features/inventory-advanced/batch-tracking/batch-tracking.routes.js";
 import outletInventoryAllocationRoutes from "../features/logistics/outlet-inventory-allocation/outlet-inventory-allocation.routes.js";
 import outletPurchaseOrdersRoutes from "../features/logistics/outlet-purchase-orders/outlet-purchase-orders.routes.js";
@@ -106,6 +107,7 @@ export const coreRouteModules = [
     path: `/${API_ROUTE_SEGMENTS.SYNC}`,
     router: syncRoutes,
   },
+  { type: "core", key: "backups", path: "/backups", router: backupRoutes },
   { type: "core", key: "public-qr-studio", path: "/public/qr-studio", router: qrStudioPublicRoutes },
   { type: "core", key: "public-qr-ordering", path: "/public/qr", router: qrOrderingRoutes },
 ];

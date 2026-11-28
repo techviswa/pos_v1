@@ -1,4 +1,5 @@
 import prisma from "../../database/prisma/client.js";
+import { recentMovementTotals } from "../inventory/movement-totals.js";
 import { ensureBusiness } from "../../database/prisma/helpers.js";
 import { createHttpError } from "../../shared/utils/http-error.js";
 import { admincoreChangeSyncService } from "../admincore/admincore-change-sync.service.js";
@@ -38,7 +39,7 @@ export const centralKitchenService = {
     const [ingredients, balances, movements, orders, routes, transfers, outletDetails] = await Promise.all([
       prisma.inventoryItem.findMany({ where: { businessId }, orderBy: { name: "asc" } }),
       prisma.outletInventory.findMany({ where: { outletId: { in: ids }, outlet: { businessId } }, include: { inventoryItem: true, outlet: { select: { name: true } } } }),
-      prisma.inventoryMovement.findMany({ where: { businessId, createdAt: { gte: since }, outletId: outletIds ? { in: ids } : null } }),
+      recentMovementTotals({ businessId, since, outletIds: outletIds ? ids : null }),
       prisma.purchaseOrder.findMany({ where: { businessId, outletId: { in: ids }, priority: { in: ["Low", "Medium", "High", "Urgent", "Critical", "low", "medium", "high", "urgent", "critical"] } }, include: { outlet: { select: { name: true } } }, orderBy: { createdAt: "desc" } }),
       prisma.routePlan.findMany({ where: { businessId, ...(outletIds ? { stops: { some: { outletId: { in: ids } } } } : {}) }, include: { stops: { where: { outletId: { in: ids } }, include: { outlet: { select: { name: true } } }, orderBy: { sequence: "asc" } } }, orderBy: { createdAt: "desc" } }),
       prisma.allocation.findMany({ where: { businessId, outletId: { in: ids } }, include: { outlet: { select: { name: true } } }, orderBy: { createdAt: "desc" } }),
@@ -49,14 +50,14 @@ export const centralKitchenService = {
       const configured = !outletIds || rows.length > 0;
       const current = !configured ? null : outletIds ? rows.reduce((sum, row) => sum + row.stock, 0) : item.stock;
       const reorder = !configured ? null : outletIds ? rows.reduce((sum, row) => sum + row.reorderLevel, 0) : item.reorderLevel;
-      const usage = movements.filter((row) => row.inventoryItemId === item.id && ["consumption", "bill_deduction"].includes(row.movementType) && row.quantity < 0);
+      const recent = movements.get(item.id) || { consumed: 0, consumption_movements: 0, wastage: 0, pilferage: 0 };
       const cost = !configured ? null : outletIds ? (current > 0 ? rows.reduce((sum, row) => sum + row.stock * Number(row.unitCost ?? item.conversionCost), 0) / current : Number(item.conversionCost)) : Number(item.conversionCost);
       return { id: item.id, name: item.name, unit: item.unit, current_stock: current, stock: current, reorder_level: reorder,
         conversion_cost: cost, vendor: item.vendor || "", stock_configured: configured,
         expiry_date: outletIds ? null : item.expiryDate?.toISOString() || null,
-        wastage_last_30_days: movements.filter((row) => row.inventoryItemId === item.id && row.movementType === "wastage").reduce((sum, row) => sum + Math.abs(row.quantity), 0),
-        pilferage_last_30_days: movements.filter((row) => row.inventoryItemId === item.id && row.movementType === "pilferage").reduce((sum, row) => sum + Math.abs(row.quantity), 0),
-        ...inventoryForecast({ stock: current, reorderLevel: reorder, consumed: usage.reduce((sum, row) => sum + Math.abs(row.quantity), 0), movementCount: usage.length }),
+        wastage_last_30_days: recent.wastage,
+        pilferage_last_30_days: recent.pilferage,
+        ...inventoryForecast({ stock: current, reorderLevel: reorder, consumed: recent.consumed, movementCount: recent.consumption_movements }),
         low_stock: configured && current <= reorder };
     });
     const week = new Date(); week.setUTCHours(0, 0, 0, 0); week.setUTCDate(week.getUTCDate() - (week.getUTCDay() + 6) % 7);

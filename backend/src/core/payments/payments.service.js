@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import prisma from "../../database/prisma/client.js";
 import { createHttpError } from "../../shared/utils/http-error.js";
 import { mutateBillPayment } from "../billing/billing-payments.service.js";
@@ -130,7 +130,10 @@ export class PaymentsService {
       }
     }
     const provider = viaGateway ? "razorpay" : (method === "UPI" ? "upi_manual" : "manual_gateway");
-    const id = `payint_${randomUUID()}`;
+    // A request key (client_request_id) maps to one fixed intent id, so simultaneous retries collide on the saved
+    // record and only one of them goes on to create a gateway link.
+    const requestKey = payload.client_request_id ? createHash("sha256").update(`${businessId}:${payload.client_request_id}`).digest("hex") : null;
+    const id = requestKey ? `payint_${requestKey.slice(0, 8)}-${requestKey.slice(8, 12)}-${requestKey.slice(12, 16)}-${requestKey.slice(16, 20)}-${requestKey.slice(20, 32)}` : `payint_${randomUUID()}`;
     const reference = payload.reference || payload.transaction_reference || id;
     const upiId = payload.upi_id || process.env.UPI_MERCHANT_ID || process.env.UPI_ID || "";
     const upiDeepLink = buildUpiDeepLink({
@@ -172,7 +175,14 @@ export class PaymentsService {
       intent.qrPayload = null;
       intent.providerPayload.mode = payload.razorpay_mode === "link" ? "link" : "qr";
     }
-    await this.database.stateDocument.create({ data: { key: intentKey(businessId, id), data: intent } });
+    try {
+      await this.database.stateDocument.create({ data: { key: intentKey(businessId, id), data: intent } });
+    } catch (error) {
+      if (error?.code !== "P2002") throw error;
+      const existing = await this.database.stateDocument.findUnique({ where: { key: intentKey(businessId, id) } });
+      if (existing?.data?.businessId === businessId) return serializeIntent(existing.data);
+      throw error;
+    }
     if (!viaGateway) return serializeIntent(intent);
 
     // Saved first, then created at Razorpay, so a payment can never arrive for a request the POS does not know.

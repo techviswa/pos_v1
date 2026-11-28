@@ -128,3 +128,15 @@ Frontend (AdminCore): leave `REACT_APP_BACKEND_URL` unset on Vercel so `/api` go
 - Razorpay checkout needs each restaurant's credentials, webhook configuration and a public API URL. Without it,
   UPI/card confirmation remains manual (manager + transaction reference). QR payment before order approval is not supported.
 - Staff with no outlet assignment keep business-wide access (single-outlet businesses rely on this).
+
+## 2026-11-28: scale and backup hardening
+- Passwords and time-clock PINs are checked with asynchronous PBKDF2 (worker pool): concurrent sign-ins no longer
+  block other requests; an unknown account costs the same work as a wrong password. Expired sessions are purged hourly.
+- Duplicate payment links: a payment request key now maps to one stored intent id, so simultaneous retries cannot
+  create two Razorpay links (was reproducible under load).
+- Raw SQL timestamps are always passed as UTC (`sqlTime`); before, a database whose session time zone was not UTC
+  shifted every raw-SQL date comparison and the marketing sender's lock times.
+- Backups are encrypted (AES-256-GCM, key only in BACKUP_ENCRYPTION_KEY) and verified from the stored copy.
+- Open (need major upgrades, planned separately): `prisma` CLI 7.x (high advisories in its config tooling, used at
+  build/migrate time, not at runtime) and `@sentry/node` 11.x (moderate OpenTelemetry advisories). Express-chain and
+  S3 client advisories were fixed (npm audit: 0 critical).

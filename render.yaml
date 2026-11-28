@@ -58,6 +58,25 @@ services:
         sync: false
       - key: ADMINCORE_ENABLED
         value: false
+      # Nightly encrypted off-site backup (S3-compatible: Cloudflare R2, Backblaze B2 or AWS S3). Until the bucket and
+      # key are set, Settings shows "Not set up yet". BACKUP_ENCRYPTION_KEY: your own random 32+ character secret;
+      # keep a copy in a password manager - without it no backup can be restored.
+      - key: BACKUP_S3_ENDPOINT
+        sync: false
+      - key: BACKUP_S3_REGION
+        value: auto
+      - key: BACKUP_S3_BUCKET
+        sync: false
+      - key: BACKUP_S3_ACCESS_KEY_ID
+        sync: false
+      - key: BACKUP_S3_SECRET_ACCESS_KEY
+        sync: false
+      - key: BACKUP_ENCRYPTION_KEY
+        sync: false
+      - key: BACKUP_HOUR
+        value: "3"
+      - key: BACKUP_TIMEZONE
+        value: Asia/Kolkata
       - key: ADMINCORE_API_BASE_URL
         sync: false
       - key: ADMINCORE_API_KEY

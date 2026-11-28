@@ -1,4 +1,10 @@
 import prisma from "../../database/prisma/client.js";
+import { sqlTime } from "../../database/prisma/sql-time.js";
+import { readSalesRollup } from "../dashboard/sales-rollup.js";
+import { businessTimezone } from "../reports/report-scan.js";
+import { readBusinessProfile } from "../businesses/business-profile.js";
+import { Prisma } from "@prisma/client";
+import { billFromSql, billOutletSql, billRevenueSql, isRevenueBillSql } from "../billing/bill-analytics.sql.js";
 import { operationalWrite } from "../../shared/utils/operational-write.js";
 import { moveStock } from "../inventory/stock-ledger.service.js";
 import { assertOwnedIds } from "../../database/prisma/scope.js";
@@ -15,9 +21,6 @@ import {
 import { DEFAULT_OUTLET_STATUS } from "../../shared/constants/domain.constants.js";
 import { FEATURE_REGISTRY } from "../../shared/constants/feature.constants.js";
 import {
-  getBillOutletId,
-  getBillRevenue,
-  isRevenueBill,
   toAnalyticsNumber,
 } from "../billing/bill-analytics.utils.js";
 import { admincoreChangeSyncService } from "../admincore/admincore-change-sync.service.js";
@@ -203,7 +206,11 @@ class OutletsService {
     return outlet;
   }
 
-  async listOutlets({ tenantId, businessId }) {
+  /**
+   * Outlets of the business. includeSales adds all-time sales and bill counts per outlet (from the saved daily
+   * totals); the plain list, which every screen loads, carries only the last 24 hours of activity.
+   */
+  async listOutlets({ tenantId, businessId, includeSales = false }) {
     const business = await ensureBusiness({ tenantId, businessId });
     await this.ensureDefaultOutlet({ business });
     const recentActivityThreshold = new Date(Date.now() - 1000 * 60 * 60 * 24);
@@ -228,61 +235,25 @@ class OutletsService {
         where: { businessId: business.id },
         _count: { _all: true },
       }),
-      prisma.order.findMany({
-        where: { businessId: business.id },
-        select: {
-          id: true,
-          outletId: true,
-          createdAt: true,
-        },
-      }),
-      prisma.bill.findMany({
-        where: { businessId: business.id },
-        select: {
-          orderId: true,
-          status: true,
-          total: true,
-          metadata: true,
-          createdAt: true,
-        },
-      }),
+      // Activity and sales per outlet are summed in PostgreSQL: this list loads on every screen, so it must not
+      // read every order and bill of the business.
+      prisma.order.groupBy({ by: ["outletId"], where: { businessId: business.id, outletId: { not: null }, createdAt: { gte: recentActivityThreshold } }, _count: { _all: true } }),
+      prisma.$queryRaw(Prisma.sql`SELECT ${billOutletSql} AS outlet_id, COUNT(*)::int AS recent
+        FROM ${billFromSql} WHERE b."businessId" = ${business.id} AND b."createdAt" >= ${sqlTime(recentActivityThreshold)} AND ${isRevenueBillSql} GROUP BY 1`),
     ]);
+    const sales = includeSales
+      ? (await readSalesRollup({ businessId: business.id, timezone: businessTimezone(await readBusinessProfile(business.id)) })).outlets
+      : null;
 
     const purchaseOrderMap = new Map(purchaseOrderCounts.map((entry) => [entry.outletId, entry._count._all]));
     const allocationMap = new Map(allocationCounts.map((entry) => [entry.outletId, entry._count._all]));
-    const orderOutletMap = new Map();
     const outletSalesMap = new Map();
     const outletBillCountMap = new Map();
     const outletRecentActivityMap = new Map();
 
-    orders.forEach((order) => {
-      if (!order.outletId) {
-        return;
-      }
-
-      orderOutletMap.set(order.id, order.outletId);
-
-      if (order.createdAt >= recentActivityThreshold) {
-        outletRecentActivityMap.set(
-          order.outletId,
-          (outletRecentActivityMap.get(order.outletId) || 0) + 1,
-        );
-      }
-    });
-
-    bills.filter(isRevenueBill).forEach((bill) => {
-      const outletId = getBillOutletId(bill, orderOutletMap);
-      if (!outletId) {
-        return;
-      }
-
-      outletSalesMap.set(outletId, (outletSalesMap.get(outletId) || 0) + getBillRevenue(bill));
-      outletBillCountMap.set(outletId, (outletBillCountMap.get(outletId) || 0) + 1);
-
-      if (bill.createdAt >= recentActivityThreshold) {
-        outletRecentActivityMap.set(outletId, (outletRecentActivityMap.get(outletId) || 0) + 1);
-      }
-    });
+    for (const row of orders) outletRecentActivityMap.set(row.outletId, row._count._all);
+    for (const row of bills) if (row.outlet_id) outletRecentActivityMap.set(row.outlet_id, (outletRecentActivityMap.get(row.outlet_id) || 0) + row.recent);
+    for (const [outletId, row] of sales || []) { outletSalesMap.set(outletId, row.revenue); outletBillCountMap.set(outletId, row.bills); }
 
     const outletNameCounts = outlets.reduce((counts, outlet) => {
       const name = normalizeOutletName(outlet.name);
@@ -290,6 +261,13 @@ class OutletsService {
       return counts;
     }, new Map());
 
+    // A generated duplicate "Main" outlet is hidden only if it never billed (checked just for those candidates).
+    const candidates = outlets.filter((outlet) => (outletNameCounts.get(normalizeOutletName(outlet.name)) || 0) >= 2 && normalizeOutletName(outlet.name) === normalizeOutletName(DEFAULT_OUTLET_NAME) && isGeneratedDefaultOutletCode(outlet.code));
+    for (const outlet of candidates) {
+      if (outletBillCountMap.has(outlet.id)) continue;
+      const [found] = await prisma.$queryRaw(Prisma.sql`SELECT EXISTS (SELECT 1 FROM ${billFromSql} WHERE b."businessId" = ${business.id} AND ${billOutletSql} = ${outlet.id}) AS billed`);
+      if (found?.billed) outletBillCountMap.set(outlet.id, 1);
+    }
     const shouldHideGeneratedDuplicate = (outlet) => {
       const name = normalizeOutletName(outlet.name);
       if ((outletNameCounts.get(name) || 0) < 2) return false;
@@ -321,24 +299,21 @@ class OutletsService {
           enabled_feature_count: outlet._count.featureToggles,
           open_purchase_orders: purchaseOrderMap.get(outlet.id) || 0,
           allocations_count: allocationMap.get(outlet.id) || 0,
-          total_sales: outletSalesMap.get(outlet.id) || 0,
-          bill_count: outletBillCountMap.get(outlet.id) || 0,
+          // Only in the sales view (?analytics=1); the everyday list leaves these out rather than showing zero.
+          ...(includeSales ? { total_sales: outletSalesMap.get(outlet.id) || 0, bill_count: outletBillCountMap.get(outlet.id) || 0 } : {}),
           recent_activity_count: outletRecentActivityMap.get(outlet.id) || 0,
         },
       };
     });
   }
 
-  buildOutletAnalytics({ outlet, purchaseOrderCount = 0, allocationCount = 0, billTotalsByOrderId = new Map(), salesTotal = null }) {
+  buildOutletAnalytics({ outlet, purchaseOrderCount = 0, allocationCount = 0, salesTotal = null }) {
     const activeProducts = outlet.productLinks.filter((item) => item.enabled).length;
     const lowInventoryItems = outlet.inventoryLinks.filter(
       (item) => item.enabled && toAnalyticsNumber(item.stock, 0) <= toAnalyticsNumber(item.reorderLevel, 0),
     ).length;
     const enabledFeatures = outlet.featureToggles.filter((item) => item.enabled).length;
-    const resolvedSalesTotal = salesTotal ?? (outlet.orders || []).reduce(
-      (sum, order) => sum + toAnalyticsNumber(billTotalsByOrderId.get(order.id), 0),
-      0,
-    );
+    const resolvedSalesTotal = salesTotal ?? 0;
 
     return {
       assigned_staff_count: outlet.userAssignments.length,
@@ -360,7 +335,6 @@ class OutletsService {
       },
       include: {
         ...getOutletInclude(),
-        orders: true,
       },
     });
 
@@ -382,21 +356,8 @@ class OutletsService {
         outletId,
       },
     });
-    const orderOutletMap = new Map((outlet.orders || []).map((order) => [order.id, outlet.id]));
-    const bills = await client.bill.findMany({
-      where: {
-        businessId: business.id,
-      },
-      select: {
-        orderId: true,
-        status: true,
-        total: true,
-        metadata: true,
-      },
-    });
-
-    const outletRevenueBills = bills.filter((bill) => isRevenueBill(bill) && getBillOutletId(bill, orderOutletMap) === outletId);
-    const billTotalsByOrderId = new Map(outletRevenueBills.map((bill) => [bill.orderId || bill.id, getBillRevenue(bill)]));
+    // This outlet's all-time sales from the saved daily totals (same rules as Reports).
+    const sales = { total: (await readSalesRollup({ businessId: business.id, timezone: businessTimezone(await readBusinessProfile(business.id)), outletId })).revenue };
 
     return {
       ...serializeOutlet(outlet),
@@ -408,8 +369,7 @@ class OutletsService {
         outlet,
         purchaseOrderCount,
         allocationCount,
-        billTotalsByOrderId,
-        salesTotal: outletRevenueBills.reduce((sum, bill) => sum + getBillRevenue(bill), 0),
+        salesTotal: sales.total,
       }),
     };
   }

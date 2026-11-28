@@ -1,4 +1,5 @@
 import prisma from "../../database/prisma/client.js";
+import { localDayBounds } from "../../shared/utils/business-time.js";
 import { operationalWrite } from "../../shared/utils/operational-write.js";
 import { createHash } from "node:crypto";
 import { moveStock } from "./stock-ledger.service.js";
@@ -549,10 +550,8 @@ class InventoryOperationsService {
     const movements = await prisma.inventoryMovement.findMany({ where: { businessId: report.business_id,
       movementType: { in: ["wastage", "spoilage", "pilferage"] },
       ...(input.outletId ? { outletId: input.outletId } : {}),
-      ...((input.from || input.to) ? { createdAt: {
-        ...(input.from ? { gte: new Date(`${input.from}T00:00:00Z`) } : {}),
-        ...(input.to ? { lte: new Date(`${input.to}T23:59:59.999Z`) } : {}),
-      } } : {}),
+      // The same local days as the profitability figures above.
+      createdAt: localDayBounds({ from: report.scope.from, to: report.scope.to }, report.scope.timezone),
     } });
     return { ...report, totals: { ...report.summary,
       wastage_quantity: movements.reduce((sum, row) => sum + Math.abs(row.quantity), 0),

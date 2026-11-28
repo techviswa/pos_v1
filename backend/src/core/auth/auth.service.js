@@ -12,7 +12,7 @@ import {
 import { userSeedData } from "../../shared/data/core-seed-data.js";
 import { createAuthToken, consumeAuthToken, getAuthToken } from "./auth-tokens.js";
 import { createSessionId, SESSION_TTL_MS } from "./auth-session.js";
-import { hashPassword, isPasswordHash, verifyPassword } from "./passwords.js";
+import { hashPassword, hashPasswordAsync, isPasswordHash, verifyPassword, verifyPasswordAsync } from "./passwords.js";
 import { sessions as sessionRecords } from "./session-store.js";
 import { ROLE_DEFAULT_PERMISSIONS } from "../../shared/constants/access.constants.js";
 import { createHttpError } from "../../shared/utils/http-error.js";
@@ -214,14 +214,15 @@ class AuthService {
   }
 
   async verifyAndUpgradePassword(user, password) {
-    if (!user || !verifyPassword(password, user.passwordHash)) {
+    // Checked off the main thread; an unknown account costs the same time as a wrong password.
+    if (!await verifyPasswordAsync(password, user?.passwordHash) || !user) {
       return false;
     }
 
     if (!isPasswordHash(user.passwordHash)) {
       await prisma.user.update({
         where: { id: user.id },
-        data: { passwordHash: hashPassword(password) },
+        data: { passwordHash: await hashPasswordAsync(password) },
       });
     }
 
@@ -411,13 +412,13 @@ class AuthService {
       throw createHttpError({ statusCode: 400, code: "PASSWORD_TOO_SHORT", message: "New password must be at least 8 characters" });
     }
     const user = await prisma.user.findUnique({ where: { id: userId } });
-    if (!user || !verifyPassword(String(currentPassword || ""), user.passwordHash)) {
+    if (!await verifyPasswordAsync(String(currentPassword || ""), user?.passwordHash) || !user) {
       throw createHttpError({ statusCode: 400, code: "CURRENT_PASSWORD_INCORRECT", message: "Current password is incorrect" });
     }
-    if (verifyPassword(String(newPassword), user.passwordHash)) {
+    if (await verifyPasswordAsync(String(newPassword), user.passwordHash)) {
       throw createHttpError({ statusCode: 400, code: "PASSWORD_UNCHANGED", message: "Choose a password different from the current one" });
     }
-    await prisma.user.update({ where: { id: userId }, data: { passwordHash: hashPassword(newPassword) } });
+    await prisma.user.update({ where: { id: userId }, data: { passwordHash: await hashPasswordAsync(newPassword) } });
     // Other devices signed in with the old password are signed out; this session stays.
     await sessionRecords.deleteOthers(userId, String(sessionId));
     return { changed: true };

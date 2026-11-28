@@ -1,4 +1,5 @@
 import { Prisma } from "@prisma/client";
+import { sqlTime } from "../../../database/prisma/sql-time.js";
 import prisma from "../../../database/prisma/client.js";
 import { analyticsRange } from "../qr-ordering/qr-service-analytics.js";
 import { tableOutletMap } from "../qr-ordering/table-outlet.js";
@@ -29,11 +30,11 @@ export async function qrInsights({ businessId, outletIds, query = {} }) {
     prisma.$queryRaw`
       SELECT hour, SUM(scans)::int AS scans FROM (
         SELECT EXTRACT(HOUR FROM ("scannedAt" AT TIME ZONE 'UTC' AT TIME ZONE ${TIMEZONE}))::int AS hour, COUNT(*) AS scans
-          FROM "TableQrScanEvent" WHERE "businessId" = ${businessId} AND "scannedAt" >= ${range.start} AND "scannedAt" < ${range.end}
+          FROM "TableQrScanEvent" WHERE "businessId" = ${businessId} AND "scannedAt" >= ${sqlTime(range.start)} AND "scannedAt" < ${sqlTime(range.end)}
           AND "tableId" IN (${tableIds.length ? Prisma.join(tableIds) : ""}) GROUP BY 1
         UNION ALL
         SELECT EXTRACT(HOUR FROM ("scannedAt" AT TIME ZONE 'UTC' AT TIME ZONE ${TIMEZONE}))::int AS hour, COUNT(*) AS scans
-          FROM "QrLinkScan" WHERE "businessId" = ${businessId} AND "scannedAt" >= ${range.start} AND "scannedAt" < ${range.end}
+          FROM "QrLinkScan" WHERE "businessId" = ${businessId} AND "scannedAt" >= ${sqlTime(range.start)} AND "scannedAt" < ${sqlTime(range.end)}
           AND "qrLinkId" IN (${linkIds.length ? Prisma.join(linkIds) : ""}) GROUP BY 1
       ) hours GROUP BY hour ORDER BY hour`,
   ]);

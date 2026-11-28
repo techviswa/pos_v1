@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
+import { Prisma } from "@prisma/client";
 import prisma from "../../database/prisma/client.js";
 import { ensureBusiness } from "../../database/prisma/helpers.js";
 import { createHttpError } from "../../shared/utils/http-error.js";
@@ -79,25 +80,40 @@ export async function stockValuation({ tenantId }) {
     const items = await tx.inventoryItem.findMany({ where: { businessId: business.id }, include: { outletLinks: { include: { outlet: true } } } });
     const locations = await tx.outlet.findMany({ where: { businessId: business.id }, select: { id: true, name: true } });
     const allocations = await tx.allocation.findMany({ where: { businessId: business.id, status: "approved" } });
-    const movements = await tx.inventoryMovement.findMany({ where: { businessId: business.id }, orderBy: { sequence: "asc" } });
+    // Ledger summary per item and location computed in PostgreSQL (the full movement history can be very large):
+    // first and last balances, totals, and entries whose opening does not continue the previous closing.
+    const ledgerRows = await tx.$queryRaw(Prisma.sql`WITH ledger AS (
+        SELECT m."inventoryItemId" AS item_id, m."outletId" AS outlet_id, m.quantity, m."quantityBefore" AS qb, m."quantityAfter" AS qa,
+          m."valueBefore"::float8 AS vb, m."valueAfter"::float8 AS va,
+          LAG(m."quantityAfter") OVER w AS prev_qa, LAG(m."valueAfter"::float8) OVER w AS prev_va,
+          ROW_NUMBER() OVER w AS rn, COUNT(*) OVER (PARTITION BY m."inventoryItemId", m."outletId") AS total
+        FROM "InventoryMovement" m WHERE m."businessId" = ${business.id} AND m."quantityAfter" IS NOT NULL
+        WINDOW w AS (PARTITION BY m."inventoryItemId", m."outletId" ORDER BY m.sequence))
+      SELECT item_id, outlet_id,
+        SUM(CASE WHEN rn > 1 AND (ABS(qb - prev_qa) > 1e-7 OR ABS(vb - prev_va) > 0.01) THEN 1 ELSE 0 END)::int AS breaks,
+        SUM(quantity)::float8 AS movement_quantity, COALESCE(SUM(va - vb), 0)::float8 AS movement_value,
+        MAX(CASE WHEN rn = 1 THEN qb END)::float8 AS opening_quantity, MAX(CASE WHEN rn = 1 THEN vb END)::float8 AS opening_value,
+        MAX(CASE WHEN rn = total THEN qa END)::float8 AS last_quantity, MAX(CASE WHEN rn = total THEN va END)::float8 AS last_value
+      FROM ledger GROUP BY item_id, outlet_id`);
+    const ledgerByLocation = new Map(ledgerRows.map((row) => [`${row.item_id}:${row.outlet_id ?? ""}`, row]));
     const rows = [];
     for (const item of items) {
       const locations = [{ outletId: null, name: "Central store", stock: item.stock, cost: item.conversionCost },
         ...item.outletLinks.map((link) => ({ outletId: link.outletId, name: link.outlet.name, stock: link.stock,
           cost: link.unitCost ?? item.conversionCost, estimated: link.unitCost == null }))];
       for (const location of locations) {
-        const ledger = movements.filter((row) => row.inventoryItemId === item.id && row.outletId === location.outletId && row.quantityAfter != null);
-        const last = ledger.at(-1);
-        const breaks = ledger.filter((entry, index) => index > 0 && (Math.abs(entry.quantityBefore - ledger[index - 1].quantityAfter) > 1e-7 || Math.abs(entry.valueBefore - ledger[index - 1].valueAfter) > 0.01)).length;
+        const ledger = ledgerByLocation.get(`${item.id}:${location.outletId ?? ""}`);
+        const last = ledger ? { quantityAfter: ledger.last_quantity, valueAfter: ledger.last_value } : null;
+        const breaks = ledger?.breaks || 0;
         const quantityDelta = last ? location.stock - last.quantityAfter : null;
         const valueDelta = last ? location.stock * location.cost - last.valueAfter : null;
         rows.push({ inventory_id: item.id, name: item.name, unit: item.unit, outlet_id: location.outletId,
           location: location.name, quantity: location.stock, unit_cost: location.cost, value: location.stock * location.cost,
           estimated_cost: Boolean(location.estimated), reconciliation: !last ? "opening_balance_unverified"
             : breaks || Math.abs(quantityDelta) > 1e-7 || Math.abs(valueDelta) > 0.01 ? "difference" : "matched",
-          ledger_breaks: breaks, opening_quantity: ledger[0]?.quantityBefore ?? null, opening_value: ledger[0]?.valueBefore ?? null,
-          movement_quantity: ledger.reduce((sum, entry) => sum + entry.quantity, 0),
-          movement_value: ledger.reduce((sum, entry) => sum + entry.valueAfter - entry.valueBefore, 0),
+          ledger_breaks: breaks, opening_quantity: ledger?.opening_quantity ?? null, opening_value: ledger?.opening_value ?? null,
+          movement_quantity: ledger?.movement_quantity || 0,
+          movement_value: ledger?.movement_value || 0,
           quantity_difference: quantityDelta, value_difference: valueDelta });
       }
     }

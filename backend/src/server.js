@@ -1,4 +1,7 @@
 import { startReportScheduler, stopReportScheduler } from "./core/reports/report-schedules.js";
+import { startSalesRollupWarmup } from "./core/dashboard/sales-rollup.js";
+import { startBackupScheduler, stopBackupScheduler } from "./core/backup/backup.service.js";
+import { startMaintenance, stopMaintenance } from "./core/maintenance/maintenance.js";
 import { reportSchedules } from "./core/reports/reports.service.js";
 import app from "./app.js";
 import env, { getProductionConfigIssues } from "./config/env.js";
@@ -40,6 +43,8 @@ const shutdown = async (signal) => {
   jobQueue.stop();
   stopMarketingWorker();
   stopReportScheduler();
+  stopBackupScheduler();
+  stopMaintenance();
   logger.info(`${signal} received. Shutting down gracefully.`);
 
   try {
@@ -81,6 +86,11 @@ const startServer = async () => {
   jobQueue.start();
   startMarketingWorker();
   startReportScheduler({ schedules: reportSchedules });
+  // Saved daily sales totals (dashboard and reports) are brought up to date in the background after start-up.
+  startSalesRollupWarmup({ logger });
+  // Nightly off-site backup (runs only when storage and the encryption key are configured).
+  startBackupScheduler({ logger });
+  startMaintenance({ logger });
   server = app.listen(env.port, () => {
     logger.info(`${env.appName} listening on port ${env.port}`);
     void connectDatabaseInBackground();

@@ -1,12 +1,14 @@
 import prisma from "../../database/prisma/client.js";
 import { convertRecipeQuantity } from "../inventory/recipe-units.js";
 
-export async function recipeAnalytics({ businessId, outletId = null, bills = [], period = {} }) {
+/** invoiceCounts: productId -> bills containing it (report-accumulators productInvoiceTally) for the period. */
+export async function recipeAnalytics({ businessId, outletId = null, invoiceCounts = new Map(), period = {} }) {
   const [catalog, ingredients, balances, movements] = await Promise.all([
     prisma.product.findMany({ where: { businessId }, include: { variations: true, addons: true, comboComponents: true, modifierGroups: { include: { options: true } }, outletLinks: outletId ? { where: { outletId } } : false } }),
     prisma.inventoryItem.findMany({ where: { businessId } }),
     outletId ? prisma.outletInventory.findMany({ where: { outletId, outlet: { businessId } } }) : [],
-    prisma.inventoryMovement.findMany({ where: { businessId, movementType: { in: ["consumption", "bill_deduction"] }, quantity: { lt: 0 }, ...(outletId ? { outletId } : {}), ...((period.start || period.end) ? { createdAt: { ...(period.start ? { gte: period.start } : {}), ...(period.end ? { lt: period.end } : {}) } } : {}) } }),
+    // Usage per ingredient summed in PostgreSQL rather than loading every movement of the period.
+    prisma.inventoryMovement.groupBy({ by: ["inventoryItemId"], _sum: { quantity: true }, where: { businessId, movementType: { in: ["consumption", "bill_deduction"] }, quantity: { lt: 0 }, ...(outletId ? { outletId } : {}), ...((period.start || period.end) ? { createdAt: { ...(period.start ? { gte: period.start } : {}), ...(period.end ? { lt: period.end } : {}) } } : {}) } }),
   ]);
   const byId = new Map(catalog.map((row) => [row.id, row]));
   const inventory = new Map(ingredients.map((row) => [row.id, row]));
@@ -49,7 +51,7 @@ export async function recipeAnalytics({ businessId, outletId = null, bills = [],
     const addonLines = product.addons.flatMap((row) => row.linkedProductId ? baseLines(byId.get(row.linkedProductId)) || [] : row.recipeLines || []);
     const choiceLines = product.modifierGroups.filter((group) => group.active !== false).flatMap((group) => group.options.filter((option) => option.active !== false)).flatMap((row) => row.linkedProductId ? baseLines(byId.get(row.linkedProductId)) || [] : row.recipeLines || []);
     const nodes = (lines?.length || 0) + product.variations.reduce((sum, row) => sum + (row.recipeLines?.length || 0), 0) + addonLines.length + choiceLines.length;
-    const invoiceCount = bills.filter((bill) => (bill.items || []).some((line) => (line.product_id || line.productId) === product.id || (!(line.product_id || line.productId) && line.name === product.name))).length;
+    const invoiceCount = invoiceCounts.get(product.id) || 0;
     return { id: product.id, name: product.name, category: product.category, price: Number(product.price), base_lines: lines?.length || 0, variation_lines: product.variations.reduce((sum, row) => sum + (row.recipeLines?.length || 0), 0), addon_lines: addonLines.length, total_recipe_nodes: nodes, base_recipe_cost: base.cost,
       variation_recipe_cost: variationCosts.some((row) => row.invalid) ? null : Math.max(0, ...variationCosts.map((row) => row.cost)),
       addon_recipe_cost: addonCosts.some((row) => row.invalid) ? null : addonCosts.reduce((sum, row) => sum + row.cost, 0),
@@ -61,7 +63,7 @@ export async function recipeAnalytics({ businessId, outletId = null, bills = [],
   for (const line of movements) {
     const item = inventory.get(line.inventoryItemId); if (!item) continue;
     const previous = usage.get(item.id) || { inventory_id: item.id, ingredient_name: item.name, unit: item.unit, quantity_used: 0 };
-    previous.quantity_used += Math.abs(line.quantity); usage.set(item.id, previous);
+    previous.quantity_used += Math.abs(line._sum.quantity || 0); usage.set(item.id, previous);
   }
   return { products: rows, ingredient_usage: [...usage.values()], recipe_product_count: covered.length, blocked_product_count: rows.filter((row) => row.ingredient_blocked).length,
     review_needed_products: rows.filter((row) => row.recipe_needs_review).length,

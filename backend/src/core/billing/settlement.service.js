@@ -30,7 +30,9 @@ export const ensureOpenShift = async (tx, businessId, outletId = null, user = nu
 };
 
 const summarize = async (tx, businessId, shift) => {
-  const bills = await tx.bill.findMany({ where: { businessId }, select: { id: true, status: true, metadata: true } });
+  // Only bills changed since the shift opened can hold its payments or tips (taking a payment updates the bill),
+  // so a shift never reads the business's whole bill history.
+  const bills = await tx.bill.findMany({ where: { businessId, updatedAt: { gte: new Date(shift.opened_at) } }, select: { id: true, status: true, metadata: true } });
   let cash = 0, nonCash = 0, refunds = 0, cashRefunds = 0, pending = 0, tips = 0, giftRedeemed = 0;
   // Gift cards sold (money in) and voided with a payout (money out) during this shift.
   let giftSoldCash = 0, giftSoldOther = 0, giftPendingSales = 0, giftRefundCash = 0;
